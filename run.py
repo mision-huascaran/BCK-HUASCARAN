@@ -184,8 +184,61 @@ def asegurar_env() -> None:
 
 # --- 5 y 6. Migraciones y seed -------------------------------------------------
 
+def base_desactualizada() -> bool:
+    chk_tabla = silencioso([
+        "docker", "exec", CONTENEDOR,
+        "psql", "-U", DB_USUARIO,
+        "-d", DB_NOMBRE,
+        "-tAc",
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='usuario');",
+    ])
+    if chk_tabla.returncode != 0 or chk_tabla.stdout.strip() != "t":
+        return False
+
+    chk_columna = silencioso([
+        "docker", "exec", CONTENEDOR,
+        "psql", "-U", DB_USUARIO,
+        "-d", DB_NOMBRE,
+        "-tAc",
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='usuario' AND column_name='creado_por');",
+    ])
+    return chk_columna.returncode != 0 or chk_columna.stdout.strip() != "t"
+
+
 def migrar() -> None:
     paso(5, "Migraciones de Alembic")
+
+    if base_desactualizada():
+        print("      La base de datos tiene un esquema antiguo o incompleto para este backend.", flush=True)
+        print("      Recreando la base de datos local desde cero para dejarla consistente con el modelo actual...", flush=True)
+        r = ejecutar([
+            "docker", "exec", CONTENEDOR,
+            "psql", "-U", DB_USUARIO,
+            "-d", "postgres",
+            "-c", f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{DB_NOMBRE}' AND pid <> pg_backend_pid();"
+        ])
+        if r.returncode != 0:
+            fallar("No se pudo liberar conexiones previas antes de recrear la base de datos local.")
+
+        r = ejecutar([
+            "docker", "exec", CONTENEDOR,
+            "psql", "-U", DB_USUARIO,
+            "-d", "postgres",
+            "-c", f"DROP DATABASE IF EXISTS {DB_NOMBRE};"
+        ])
+        if r.returncode != 0:
+            fallar("No se pudo recrear la base de datos local para dejarla en un estado consistente.")
+
+        r = ejecutar([
+            "docker", "exec", CONTENEDOR,
+            "psql", "-U", DB_USUARIO,
+            "-d", "postgres",
+            "-c", f"CREATE DATABASE {DB_NOMBRE};"
+        ])
+        if r.returncode != 0:
+            fallar("No se pudo crear la base de datos local para dejarla en un estado consistente.")
+        ok("Base de datos recreada")
+
     r = ejecutar([str(VENV_PYTHON), "-m", "alembic", "upgrade", "head"])
     if r.returncode != 0:
         fallar("Fallaron las migraciones (mira el error de arriba).")
