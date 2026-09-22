@@ -1,8 +1,23 @@
+# Backend SICEDU. Lo levanta Jenkins en el servidor del curso con el .env del
+# entorno (dev, qa o uat). Reglas del servidor: no se publica ningún puerto y
+# no se levantan servicios adicionales (la base de datos es la del curso). El
+# proxy del servidor llega al contenedor por la red externa proxy_net, usando
+# su nombre: <entorno>-bck-huascaran, puerto 8000.
+#
+# En local, crea la red una sola vez: docker network create proxy_net
 services:
   backend:
     build: .
-    ports:
-      - "8000:8000"
+    container_name: ${ENTORNO:-local}-bck-huascaran
     env_file:
       - .env
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    # Los usuarios de prueba solo se cargan si CARGAR_DATOS_PRUEBA=true en el
+    # .env (el seed no duplica si ya existen). En producción debe ir en false.
+    command: sh -c 'alembic upgrade head && if [ "$${CARGAR_DATOS_PRUEBA:-false}" = "true" ]; then python -m app.seed_data; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000'
+    networks:
+      - proxy_net
+    restart: unless-stopped
+
+networks:
+  proxy_net:
+    external: true

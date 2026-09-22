@@ -3,6 +3,7 @@ venv/
 __pycache__/
 *.pyc
 .env
+.env.*
 .git/
 .gitignore
 
@@ -17,3 +18,8 @@ tests/
 # artefactos del propio build de Docker
 Dockerfile
 .dockerignore
+.sonar/
+.coverage
+coverage.xml
+requirements-dev.txt
+pytest.ini

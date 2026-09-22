@@ -1,0 +1,4 @@
+# Solo para el stage de pruebas (Jenkins) y desarrollo local; no entra en la imagen.
+pytest==9.1.1
+pytest-cov==7.1.0
+httpx==0.28.1
