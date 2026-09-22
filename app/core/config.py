@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [origen.strip() for origen in self.CORS_ORIGINS.split(",") if origen.strip()]
 
+    GMAIL_SMTP_USER: str = ""
+    GMAIL_SMTP_APP_PASSWORD: str = ""
+
     class Config:
         env_file = ".env"
 

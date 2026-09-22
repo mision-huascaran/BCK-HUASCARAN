@@ -10,9 +10,22 @@ from sqlmodel import Session, select
 
 from app.core.database import engine
 from app.core.security import hash_password
-from app.models.organizacion import Colegio, Docente, Rol, Usuario
+from app.models.organizacion import CicloEbr, Colegio, Docente, Grado, Programa, Rol, Usuario
 
 ROLES = ["Docente", "Supervisor", "Directivo"]
+
+CICLOS = ["III", "IV", "V"]
+
+GRADOS_POR_CICLO = {
+    "1.º": "III",
+    "2.º": "III",
+    "3.º": "IV",
+    "4.º": "IV",
+    "5.º": "V",
+    "6.º": "V",
+}
+
+PROGRAMAS = ["Alfabetización", "Comprensión Lectora"]
 
 PROFESOR_CORREO = "profesor.prueba@sicedu.test"
 PROFESOR_PASSWORD = "ProfesorTest123"
@@ -34,10 +47,46 @@ def get_or_create_rol(session: Session, nombre: str) -> Rol:
     return rol
 
 
+def get_or_create_ciclo(session: Session, nombre: str) -> CicloEbr:
+    ciclo = session.exec(select(CicloEbr).where(CicloEbr.nombre == nombre)).first()
+    if ciclo is None:
+        ciclo = CicloEbr(nombre=nombre)
+        session.add(ciclo)
+        session.commit()
+        session.refresh(ciclo)
+    return ciclo
+
+
+def get_or_create_grado(session: Session, nombre: str, id_ciclo: int) -> Grado:
+    grado = session.exec(select(Grado).where(Grado.nombre == nombre)).first()
+    if grado is None:
+        grado = Grado(nombre=nombre, id_ciclo=id_ciclo)
+        session.add(grado)
+        session.commit()
+        session.refresh(grado)
+    return grado
+
+
+def get_or_create_programa(session: Session, nombre: str) -> Programa:
+    programa = session.exec(select(Programa).where(Programa.nombre == nombre)).first()
+    if programa is None:
+        programa = Programa(nombre=nombre)
+        session.add(programa)
+        session.commit()
+        session.refresh(programa)
+    return programa
+
+
 def seed() -> None:
     with Session(engine) as session:
         roles = {nombre: get_or_create_rol(session, nombre) for nombre in ROLES}
         hoy = date.today()
+
+        ciclos = {nombre: get_or_create_ciclo(session, nombre) for nombre in CICLOS}
+        for nombre_grado, nombre_ciclo in GRADOS_POR_CICLO.items():
+            get_or_create_grado(session, nombre_grado, ciclos[nombre_ciclo].id_ciclo)
+        for nombre_programa in PROGRAMAS:
+            get_or_create_programa(session, nombre_programa)
 
         # Primer usuario del sistema (Supervisor) — debe insertarse antes que cualquier
         # otra fila auditable, porque creado_por de todas las demás apunta a él.
@@ -81,6 +130,24 @@ def seed() -> None:
             session.add(colegio)
             session.commit()
             session.refresh(colegio)
+
+        colegios_ficticios = [
+            ("Colegio Yungay", "Yungay"),
+            ("Colegio Carhuaz", "Carhuaz"),
+        ]
+        for nombre_colegio, zona_colegio in colegios_ficticios:
+            colegio_ficticio = session.exec(
+                select(Colegio).where(Colegio.nombre == nombre_colegio)
+            ).first()
+            if colegio_ficticio is None:
+                colegio_ficticio = Colegio(
+                    nombre=nombre_colegio,
+                    zona=zona_colegio,
+                    creado_por=usuario_jefa.id_usuario,
+                    creado_en=hoy,
+                )
+                session.add(colegio_ficticio)
+                session.commit()
 
         docente = session.exec(
             select(Docente).where(
