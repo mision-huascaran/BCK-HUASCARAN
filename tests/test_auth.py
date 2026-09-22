@@ -9,6 +9,7 @@ from tests.conftest import PASSWORD
 
 MENSAJE_LOGIN = "Correo o contraseña incorrectos"
 MENSAJE_SESION = "Credenciales inválidas o sesión expirada"
+MENSAJE_INACTIVA = "Tu cuenta está deshabilitada. Contacta a tu supervisor."
 
 
 def test_raiz_responde(client):
@@ -41,10 +42,10 @@ def test_login_con_correo_inexistente_da_el_mismo_mensaje(client, usuarios):
     assert respuesta.json()["detail"] == MENSAJE_LOGIN
 
 
-def test_login_de_usuario_inactivo_da_el_mismo_mensaje(client, usuarios):
+def test_login_de_usuario_inactivo_avisa_que_la_cuenta_esta_deshabilitada(client, usuarios):
     respuesta = client.post("/login", json={"correo": "inactivo@prueba.test", "password": PASSWORD})
-    assert respuesta.status_code == 401
-    assert respuesta.json()["detail"] == MENSAJE_LOGIN
+    assert respuesta.status_code == 403
+    assert respuesta.json()["detail"] == MENSAJE_INACTIVA
 
 
 def test_login_sin_contrasena_es_error_de_validacion(client):

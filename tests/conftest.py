@@ -6,6 +6,7 @@ memoria, recién creada, que reemplaza a get_db. Así se ejecutan igual en local
 y en el stage de pruebas de Jenkins, donde no hay base de datos.
 """
 import os
+from datetime import date
 
 # Settings exige estas variables al importarse: deben existir antes de importar app.
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -51,6 +52,9 @@ def usuarios(session):
     session.commit()
     session.refresh(rol)
 
+    # El modelo v2 exige creado_por y creado_en en toda fila auditable. El primer
+    # usuario se auto-referencia, igual que en app/seed_data.py.
+    hoy = date.today()
     activo = Usuario(
         id_rol=rol.id_rol,
         correo="activo@prueba.test",
@@ -58,7 +62,16 @@ def usuarios(session):
         nombres="Ana",
         apellidos="Prueba",
         activo=True,
+        creado_por=1,
+        creado_en=hoy,
     )
+    session.add(activo)
+    session.commit()
+    session.refresh(activo)
+    activo.creado_por = activo.id_usuario
+    session.add(activo)
+    session.commit()
+
     inactivo = Usuario(
         id_rol=rol.id_rol,
         correo="inactivo@prueba.test",
@@ -66,10 +79,11 @@ def usuarios(session):
         nombres="Beto",
         apellidos="Prueba",
         activo=False,
+        creado_por=activo.id_usuario,
+        creado_en=hoy,
     )
-    session.add_all([activo, inactivo])
+    session.add(inactivo)
     session.commit()
-    session.refresh(activo)
     session.refresh(inactivo)
     return {"activo": activo, "inactivo": inactivo}
 
