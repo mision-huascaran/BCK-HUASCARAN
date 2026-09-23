@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
@@ -109,6 +109,9 @@ class Usuario(SQLModel, table=True):
     creado_en: date
     modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
     modificado_en: Optional[date] = Field(default=None)
+
+    codigo_verificacion: Optional[str] = Field(default=None, max_length=6)
+    codigo_verificacion_expira: Optional[datetime] = Field(default=None)
 
 
 class Alumno(SQLModel, table=True):

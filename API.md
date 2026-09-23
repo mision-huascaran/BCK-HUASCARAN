@@ -12,6 +12,7 @@ Esta referencia refleja el estado real del backend actual: autenticación, autor
 - [Flujo de autenticación](#flujo-de-autenticación)
 - [Roles](#roles)
 - [Endpoints principales](#endpoints-principales)
+- [Cambio de contraseña](#cambio-de-contraseña)
 - [Errores](#errores)
 - [CORS](#cors)
 - [Usuarios de prueba](#usuarios-de-prueba)
@@ -43,8 +44,14 @@ El backend ya implementa validación por rol con `require_role(...)` en `app/dep
 - `POST /colegios` → requiere `Supervisor`
 - `POST /alumnos` → requiere `Supervisor`
 - `POST /profesores` → requiere `Supervisor`
+- `GET /profesores` → requiere `Supervisor`
+- `PATCH /profesores/{id_usuario}/activar` → requiere `Supervisor`
+- `PATCH /profesores/{id_usuario}/desactivar` → requiere `Supervisor`
 - `GET /colegios`, `GET /grados`, `GET /programas` → cualquier usuario autenticado
 - `GET /me` → cualquier usuario autenticado
+- `POST /me/password/codigo` → cualquier usuario autenticado
+- `POST /me/password/verificar-codigo` → cualquier usuario autenticado
+- `POST /me/password` → cualquier usuario autenticado
 
 ---
 
@@ -295,6 +302,140 @@ Devuelve el catálogo de programas.
 
 ---
 
+### `GET /profesores` — requiere `Supervisor`
+
+Devuelve un array con todos los profesores, activos e inactivos por igual.
+
+**Respuesta `200`:**
+
+```json
+[
+  {
+    "id_usuario": 4,
+    "id_docente": 2,
+    "correo": "luis.ramos@sicedu.test",
+    "nombres": "Luis",
+    "apellidos": "Ramos",
+    "activo": true
+  }
+]
+```
+
+Este schema (`ProfesorListItem`) es más chico que la respuesta de `POST /profesores` — no trae `id_rol` ni `contraseña_temporal`, solo lo necesario para armar una tabla/listado.
+
+---
+
+### `PATCH /profesores/{id_usuario}/desactivar` — requiere `Supervisor`
+
+Sin body — el `id_usuario` va en la URL. Es borrado lógico: desactiva tanto la fila de `usuario` como la de `docente` juntas, no elimina ningún registro.
+
+**Respuesta `200`:**
+
+```json
+{
+  "id_usuario": 4,
+  "id_rol": 1,
+  "correo": "luis.ramos@sicedu.test",
+  "id_docente": 2,
+  "nombres": "Luis",
+  "apellidos": "Ramos",
+  "activo": false,
+  "contraseña_temporal": null
+}
+```
+
+`contraseña_temporal` siempre viene `null` en este endpoint — no aplica a esta operación.
+
+**Errores:**
+
+- `404` si el `id_usuario` no existe o no corresponde a un profesor (por ejemplo, si es el id de un Supervisor/Directivo): `{"detail": "No existe un profesor con id_usuario={id}"}`
+
+---
+
+### `PATCH /profesores/{id_usuario}/activar` — requiere `Supervisor`
+
+Sin body — el `id_usuario` va en la URL. Operación inversa a `desactivar`: reactiva tanto `usuario` como `docente`, y el login vuelve a funcionar normalmente.
+
+**Respuesta `200`:** misma forma que `desactivar`, con `"activo": true`.
+
+**Errores:**
+
+- `404` — mismo caso que `desactivar`.
+
+---
+
+## Cambio de contraseña
+
+El cambio de contraseña requiere verificar un código de 6 caracteres enviado al correo del usuario — reemplaza el chequeo de "contraseña actual". El flujo son 3 llamadas:
+
+1. `POST /me/password/codigo` — genera el código y lo envía por correo.
+2. `POST /me/password/verificar-codigo` — opcional, solo para UX. Permite mostrarle al usuario feedback inmediato ("código correcto"/"código incorrecto") antes de avanzar a la pantalla de nueva contraseña. No consume el código ni tiene ningún efecto en el backend.
+3. `POST /me/password` — el que realmente cambia la contraseña. Debe recibir el código de nuevo, el mismo que el usuario ingresó en el paso 2 — el backend nunca asume que el paso 2 se llamó antes, vuelve a validar el código de forma independiente. El frontend tiene que guardar el código que el usuario tipeó (en el estado de la pantalla 1) y reenviarlo en el request final del paso 3, no solo en el paso 2.
+
+### `POST /me/password/codigo` — cualquier usuario autenticado
+
+Sin body.
+
+**Respuesta `200`:**
+
+```json
+{ "detail": "Código enviado a tu correo" }
+```
+
+**Errores:**
+
+- `503` si el envío de correo falla: `{"detail": "No pudimos enviar el código, intenta de nuevo"}`
+
+---
+
+### `POST /me/password/verificar-codigo` — cualquier usuario autenticado
+
+**Body:**
+
+```json
+{ "codigo": "AB12CD" }
+```
+
+**Respuesta `200`:**
+
+```json
+{ "detail": "Código correcto" }
+```
+
+**Errores:**
+
+- `400`: `{"detail": "Código incorrecto o expirado"}`
+
+---
+
+### `POST /me/password` — cualquier usuario autenticado
+
+**Body:**
+
+```json
+{
+  "codigo": "AB12CD",
+  "contraseña_nueva": "nuevacontrasena123",
+  "confirmar_contraseña_nueva": "nuevacontrasena123"
+}
+```
+
+**Respuesta `200`:**
+
+```json
+{ "detail": "Contraseña actualizada correctamente" }
+```
+
+**Errores:**
+
+- `400` — código incorrecto o expirado, mismo mensaje que `POST /me/password/verificar-codigo`.
+- `400` — `{"detail": "La contraseña nueva no puede ser igual a la actual"}`
+- `422` — si `contraseña_nueva` y `confirmar_contraseña_nueva` no coinciden, o si la contraseña no cumple el formato (mínimo 8 caracteres, solo letras y números — sin símbolos, sin espacios).
+
+El código expira 10 minutos después de generado, y se consume (no reutilizable) apenas se usa con éxito para cambiar la contraseña.
+
+---
+
 ## Errores
 
 ### `401 Unauthorized`
@@ -380,8 +521,9 @@ El usuario de rol `Docente` tiene `id_docente` asociado. Los de `Supervisor` y `
 Lo que aún no está implementado en el backend:
 
 - Refresh token / renovación de sesión
-- CRUD completo de alumnos, colegios y profesores
-- Edición y eliminación de registros
+- Edición de datos (nombre, correo, etc.) de alumnos, colegios y profesores
+- CRUD de colegios y alumnos más allá de la creación (para profesores ya existe activar/desactivar y listado; para colegios y alumnos, todavía no)
+- Recuperar contraseña sin sesión iniciada ("olvidé mi contraseña") — el flujo de hoy requiere estar logueado
 - Endpoints de evaluaciones y periodos
 - Control de permisos más granular por módulo
 

@@ -48,6 +48,11 @@ JWT_SECRET_KEY=dev-secret-key-cambiar-en-produccion
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
+# Cuenta de Gmail dedicada al proyecto, para enviar correos (bienvenida de profesor,
+# codigo de verificacion de cambio de contrasena). Sin esto, el envio de correos falla
+# en silencio (la API sigue funcionando, pero nadie recibe los correos).
+GMAIL_SMTP_USER=
+GMAIL_SMTP_APP_PASSWORD=
 """
 
 DOCKER_DESKTOP = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
