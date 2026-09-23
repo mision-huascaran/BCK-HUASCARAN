@@ -21,3 +21,14 @@ class ProfesorResponse(BaseModel):
     apellidos: str
     activo: bool
     contraseña_temporal: Optional[str] = None
+
+
+class ProfesorListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_usuario: int
+    id_docente: int
+    correo: str
+    nombres: str
+    apellidos: str
+    activo: bool

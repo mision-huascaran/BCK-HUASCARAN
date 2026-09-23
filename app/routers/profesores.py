@@ -4,11 +4,14 @@ from sqlmodel import Session
 from app.core.database import get_db
 from app.dependencies import require_role
 from app.models.organizacion import Usuario
-from app.schemas.profesor import ProfesorCreate, ProfesorResponse
+from app.schemas.profesor import ProfesorCreate, ProfesorListItem, ProfesorResponse
 from app.services.profesor_service import (
     CorreoYaRegistrado,
+    ProfesorNoExiste,
     RolDocenteNoConfigurado,
+    cambiar_estado_profesor,
     crear_profesor,
+    listar_profesores,
 )
 
 router = APIRouter(tags=["profesores"])
@@ -37,3 +40,37 @@ def crear_profesor_endpoint(
         **usuario.model_dump(),
         contraseña_temporal=contraseña_temporal,
     )
+
+
+@router.get("/profesores", response_model=list[ProfesorListItem])
+def listar_profesores_endpoint(
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(require_role("Supervisor")),
+):
+    return listar_profesores(db)
+
+
+@router.patch("/profesores/{id_usuario}/desactivar", response_model=ProfesorResponse)
+def desactivar_profesor_endpoint(
+    id_usuario: int,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(require_role("Supervisor")),
+):
+    try:
+        usuario = cambiar_estado_profesor(db, id_usuario, activo=False, usuario_actual=usuario_actual)
+    except ProfesorNoExiste:
+        raise HTTPException(status_code=404, detail=f"No existe un profesor con id_usuario={id_usuario}")
+    return usuario
+
+
+@router.patch("/profesores/{id_usuario}/activar", response_model=ProfesorResponse)
+def activar_profesor_endpoint(
+    id_usuario: int,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(require_role("Supervisor")),
+):
+    try:
+        usuario = cambiar_estado_profesor(db, id_usuario, activo=True, usuario_actual=usuario_actual)
+    except ProfesorNoExiste:
+        raise HTTPException(status_code=404, detail=f"No existe un profesor con id_usuario={id_usuario}")
+    return usuario
