@@ -7,7 +7,7 @@
 // El .env de cada entorno está en Jenkins como credencial "Secret file":
 // HUASCARAN_BACKEND_DEV, _QA y _UAT. Nunca se imprime en el log.
 // El contenedor no publica puertos: el proxy del servidor lo alcanza por la red
-// proxy_net con el nombre <entorno>-bck-huascaran (ver docker-compose.yml).
+// externa proxy_net con el nombre <entorno>-bck-huascaran (ver docker-compose.yml).
 
 pipeline {
     agent any
