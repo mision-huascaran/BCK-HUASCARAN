@@ -5,9 +5,9 @@
 //   main        → todavía no despliega
 //
 // El .env de cada entorno está en Jenkins como credencial "Secret file":
-// HUASCARAN_SECRETS_BACKEND_DEV, _QA y _UAT. Nunca se imprime en el log.
+// HUASCARAN_BACKEND_DEV, _QA y _UAT. Nunca se imprime en el log.
 // El contenedor no publica puertos: el proxy del servidor lo alcanza por la red
-// proxy_net con el nombre <entorno>-bck-huascaran (ver docker-compose.yml).
+// externa proxy_net con el nombre <entorno>-bck-huascaran (ver docker-compose.yml).
 
 pipeline {
     agent any
@@ -31,6 +31,9 @@ pipeline {
 
         stage('Pruebas') {
             when {
+                // Sin esto, Jenkins levanta el contenedor del agente antes de
+                // evaluar la condición y lo descarta enseguida en development.
+                beforeAgent true
                 anyOf {
                     branch 'qa'
                     branch 'uat'
@@ -94,7 +97,7 @@ pipeline {
             }
             steps {
                 withCredentials([
-                    file(credentialsId: "HUASCARAN_SECRETS_BACKEND_${env.ENTORNO.toUpperCase()}", variable: 'ENV_FILE')
+                    file(credentialsId: "HUASCARAN_BACKEND_${env.ENTORNO.toUpperCase()}", variable: 'ENV_FILE')
                 ]) {
                     sh '''
                         rm -f .env
