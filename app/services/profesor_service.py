@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.core.email import enviar_correo_bienvenida_profesor
 from app.core.security import hash_password
 from app.models.organizacion import Docente, Rol, Usuario
-from app.schemas.profesor import ProfesorCreate
+from app.schemas.profesor import ProfesorCreate, ProfesorUpdate
 
 
 class CorreoYaRegistrado(Exception):
@@ -98,3 +98,45 @@ def listar_profesores(db: Session) -> list[Usuario]:
     return db.exec(
         select(Usuario).where(Usuario.id_docente.is_not(None)).order_by(Usuario.id_usuario)
     ).all()
+
+
+def actualizar_profesor(
+    db: Session, id_usuario: int, data: ProfesorUpdate, usuario_actual: Usuario
+) -> Usuario:
+    """Actualiza al profesor manteniendo `usuario` y `docente` en sincronia.
+
+    Los nombres viven duplicados en las dos tablas, asi que se escriben en ambas:
+    si solo se tocara `usuario`, el listado de docentes seguiria mostrando el nombre viejo.
+    """
+    usuario = db.get(Usuario, id_usuario)
+    if usuario is None or usuario.id_docente is None:
+        raise ProfesorNoExiste()
+
+    cambios = data.model_dump(exclude_unset=True)
+
+    nuevo_correo = cambios.get("correo")
+    if nuevo_correo is not None and nuevo_correo != usuario.correo:
+        ocupado = db.exec(select(Usuario).where(Usuario.correo == nuevo_correo)).first()
+        if ocupado is not None:
+            raise CorreoYaRegistrado()
+
+    hoy = date.today()
+    for campo, valor in cambios.items():
+        setattr(usuario, campo, valor)
+    usuario.modificado_por = usuario_actual.id_usuario
+    usuario.modificado_en = hoy
+    db.add(usuario)
+
+    docente = db.get(Docente, usuario.id_docente)
+    if docente is not None:
+        if "nombres" in cambios:
+            docente.nombres = cambios["nombres"]
+        if "apellidos" in cambios:
+            docente.apellidos = cambios["apellidos"]
+        docente.modificado_por = usuario_actual.id_usuario
+        docente.modificado_en = hoy
+        db.add(docente)
+
+    db.commit()
+    db.refresh(usuario)
+    return usuario

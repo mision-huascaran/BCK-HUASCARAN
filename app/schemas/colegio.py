@@ -19,3 +19,8 @@ class ColegioResponse(BaseModel):
     creado_en: date
     modificado_por: Optional[int]
     modificado_en: Optional[date]
+
+
+class ColegioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    zona: Optional[str] = None

@@ -2,7 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import alumnos, auth, catalogos, colegios, password, profesores
+from app.routers import (
+    alumnos,
+    asignaciones,
+    auth,
+    catalogos,
+    colegios,
+    password,
+    profesores,
+    usuarios,
+)
 
 app = FastAPI(title="SICEDU API")
 
@@ -20,6 +29,8 @@ app.include_router(alumnos.router)
 app.include_router(profesores.router)
 app.include_router(catalogos.router)
 app.include_router(password.router)
+app.include_router(usuarios.router)
+app.include_router(asignaciones.router)
 
 
 @app.get("/")

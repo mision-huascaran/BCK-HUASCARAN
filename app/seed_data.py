@@ -10,7 +10,18 @@ from sqlmodel import Session, select
 
 from app.core.database import engine
 from app.core.security import hash_password
-from app.models.organizacion import CicloEbr, Colegio, Docente, Grado, Programa, Rol, Usuario
+from app.models.organizacion import (
+    AnioEscolar,
+    CicloEbr,
+    Colegio,
+    Docente,
+    DocenteColegioGrado,
+    Grado,
+    PeriodoAcademico,
+    Programa,
+    Rol,
+    Usuario,
+)
 
 ROLES = ["Docente", "Supervisor", "Directivo"]
 
@@ -202,10 +213,71 @@ def seed() -> None:
 
         session.commit()
 
+        # Año escolar y periodo académico vigentes. Sin un periodo que contenga la fecha
+        # de hoy no se puede crear ninguna asignación docente↔colegio/grado, y sin
+        # asignaciones un Docente no tiene ningún alumno a la vista: el recorte por
+        # alcance lo dejaría con la lista vacía. Se siembra el año en curso completo.
+        anio = session.exec(
+            select(AnioEscolar).where(AnioEscolar.nombre == str(hoy.year))
+        ).first()
+        if anio is None:
+            anio = AnioEscolar(
+                nombre=str(hoy.year),
+                fecha_inicio=date(hoy.year, 1, 1),
+                fecha_fin=date(hoy.year, 12, 31),
+                creado_por=usuario_jefa.id_usuario,
+                creado_en=hoy,
+            )
+            session.add(anio)
+            session.commit()
+            session.refresh(anio)
+
+        periodo = session.exec(
+            select(PeriodoAcademico).where(
+                PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
+                PeriodoAcademico.numero == 1,
+            )
+        ).first()
+        if periodo is None:
+            periodo = PeriodoAcademico(
+                id_anio_escolar=anio.id_anio_escolar,
+                numero=1,
+                fecha_inicio=date(hoy.year, 1, 1),
+                fecha_fin=date(hoy.year, 12, 31),
+                creado_por=usuario_jefa.id_usuario,
+                creado_en=hoy,
+            )
+            session.add(periodo)
+            session.commit()
+            session.refresh(periodo)
+
+        # Asignación de ejemplo para el docente de prueba, para que el recorte por
+        # alcance se pueda ver funcionando sin tener que crearla a mano.
+        asignacion = session.exec(
+            select(DocenteColegioGrado).where(
+                DocenteColegioGrado.id_docente == docente.id_docente,
+                DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
+            )
+        ).first()
+        if asignacion is None:
+            primer_grado = session.exec(select(Grado).order_by(Grado.id_grado)).first()
+            session.add(
+                DocenteColegioGrado(
+                    id_docente=docente.id_docente,
+                    id_colegio=colegio.id_colegio,
+                    id_grado=primer_grado.id_grado,
+                    id_periodo_academico=periodo.id_periodo_academico,
+                    creado_por=usuario_jefa.id_usuario,
+                    creado_en=hoy,
+                )
+            )
+            session.commit()
+
         print("Seed completado.")
         print(f"Docente     -> correo: {PROFESOR_CORREO}  password: {PROFESOR_PASSWORD}")
         print(f"Supervisor  -> correo: {JEFA_CORREO}  password: {JEFA_PASSWORD}")
         print(f"Directivo   -> correo: {DIRECTIVO_CORREO}  password: {DIRECTIVO_PASSWORD}")
+        print(f"Periodo académico vigente: id={periodo.id_periodo_academico}")
 
 
 if __name__ == "__main__":

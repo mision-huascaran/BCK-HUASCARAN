@@ -1,11 +1,11 @@
 from datetime import date, datetime, timedelta
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.email import enviar_correo_codigo_verificacion, enviar_correo_confirmacion_cambio
 from app.core.security import generar_codigo_verificacion, hash_password, verify_password
 from app.models.organizacion import Usuario
-from app.schemas.password import CambiarContraseñaRequest
+from app.schemas.password import CambiarContraseñaRequest, RestablecerContraseñaRequest
 
 
 class CodigoInvalidoOExpirado(Exception):
@@ -57,3 +57,51 @@ def cambiar_contraseña(db: Session, usuario_actual: Usuario, data: CambiarContr
     db.commit()
 
     enviar_correo_confirmacion_cambio(usuario_actual.correo, usuario_actual.nombres)
+
+
+def solicitar_codigo_publico(db: Session, correo: str) -> None:
+    """Envia un codigo al correo indicado, sin sesion iniciada.
+
+    No lanza excepcion si el correo no existe o la cuenta esta inactiva: el endpoint
+    responde 200 siempre, para que nadie pueda averiguar que correos estan registrados
+    probandolos uno por uno.
+    """
+    usuario = db.exec(select(Usuario).where(Usuario.correo == correo)).first()
+    if usuario is None or not usuario.activo:
+        return
+
+    codigo = generar_codigo_verificacion()
+    usuario.codigo_verificacion = codigo
+    usuario.codigo_verificacion_expira = datetime.utcnow() + timedelta(minutes=10)
+    db.add(usuario)
+    db.commit()
+
+    enviar_correo_codigo_verificacion(usuario.correo, codigo, usuario.nombres)
+
+
+def restablecer_contraseña(db: Session, data: RestablecerContraseñaRequest) -> None:
+    """Cierra el flujo publico de recuperacion.
+
+    Si el correo no existe se levanta CodigoInvalidoOExpirado, el mismo error que un
+    codigo equivocado: asi la respuesta no distingue entre 'ese correo no existe' y
+    'ese codigo esta mal'.
+    """
+    usuario = db.exec(select(Usuario).where(Usuario.correo == data.correo)).first()
+    if usuario is None or not usuario.activo:
+        raise CodigoInvalidoOExpirado()
+
+    if not verificar_codigo(usuario, data.codigo):
+        raise CodigoInvalidoOExpirado()
+
+    if verify_password(data.contraseña_nueva, usuario.password_hash):
+        raise ContraseñaIgualALaActual()
+
+    usuario.password_hash = hash_password(data.contraseña_nueva)
+    usuario.codigo_verificacion = None
+    usuario.codigo_verificacion_expira = None
+    usuario.modificado_por = usuario.id_usuario
+    usuario.modificado_en = date.today()
+    db.add(usuario)
+    db.commit()
+
+    enviar_correo_confirmacion_cambio(usuario.correo, usuario.nombres)

@@ -32,3 +32,11 @@ class ProfesorListItem(BaseModel):
     nombres: str
     apellidos: str
     activo: bool
+
+
+class ProfesorUpdate(BaseModel):
+    """Actualiza los datos del profesor. Se aplican a `usuario` y a su ficha `docente`."""
+
+    nombres: Optional[str] = None
+    apellidos: Optional[str] = None
+    correo: Optional[str] = None
