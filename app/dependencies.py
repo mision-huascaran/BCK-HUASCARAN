@@ -5,7 +5,7 @@ from sqlmodel import Session
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
-from app.models.organizacion import Usuario
+from app.models.organizacion import Rol, Usuario
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
@@ -34,3 +34,18 @@ def get_current_user(
         raise credentials_exception
 
     return usuario
+
+
+def require_role(*roles_permitidos: str):
+    def dependency(
+        current_user: Usuario = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> Usuario:
+        rol = db.get(Rol, current_user.id_rol)
+        if rol is None or rol.nombre not in roles_permitidos:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para realizar esta acción",
+            )
+        return current_user
+    return dependency

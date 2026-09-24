@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -7,6 +8,12 @@ from passlib.context import CryptContext
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+CODIGO_ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # sin O/0, I/1/L — se confunden al leer/tipear
+
+
+def generar_codigo_verificacion() -> str:
+    return "".join(secrets.choice(CODIGO_ALFABETO) for _ in range(6))
 
 
 def hash_password(password: str) -> str:
