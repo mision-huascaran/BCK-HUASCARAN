@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     GMAIL_SMTP_USER: str = ""
     GMAIL_SMTP_APP_PASSWORD: str = ""
+    #GMAIL_SMTP_USER_2: str = ""
 
     class Config:
         env_file = ".env"
