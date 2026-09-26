@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     # Origenes permitidos por CORS, separados por coma.
     # localhost y 127.0.0.1 son origenes distintos para el navegador: van ambos.
     CORS_ORIGINS: str = (
-        "http://localhost:5173,http://127.0.0.1:5173,"
-        "http://localhost:3000,http://127.0.0.1:3000"
+        "https://localhost:5173,https://127.0.0.1:5173,"
+        "https://localhost:3000,https://127.0.0.1:3000"
     )
 
     @property
