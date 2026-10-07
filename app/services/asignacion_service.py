@@ -2,7 +2,7 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
-from app.core.tiempo import hoy_lima
+from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     Colegio,
     Docente,
@@ -99,7 +99,7 @@ def crear_asignacion(
         id_grado=data.id_grado,
         id_periodo_academico=data.id_periodo_academico,
         creado_por=usuario_actual.id_usuario,
-        creado_en=hoy_lima(),
+        creado_en=ahora_utc(),
     )
     db.add(asignacion)
     db.commit()

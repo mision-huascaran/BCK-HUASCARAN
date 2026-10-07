@@ -3,7 +3,7 @@ from typing import Optional
 from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
-from app.core.tiempo import hoy_lima
+from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import Alumno, Colegio, Grado, Programa, Usuario
 from app.schemas.alumno import AlumnoCreate, AlumnoUpdate
 
@@ -64,7 +64,7 @@ def crear_alumno(
         activo=data.activo,
         fecha_registro=hoy,
         creado_por=usuario_actual.id_usuario,
-        creado_en=hoy,
+        creado_en=ahora_utc(),
     )
     db.add(alumno)
     db.commit()
@@ -176,7 +176,7 @@ def actualizar_alumno(
         setattr(alumno, campo, valor)
 
     alumno.modificado_por = usuario_actual.id_usuario
-    alumno.modificado_en = hoy_lima()
+    alumno.modificado_en = ahora_utc()
     db.add(alumno)
     db.commit()
     db.refresh(alumno)

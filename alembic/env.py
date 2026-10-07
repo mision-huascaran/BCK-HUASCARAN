@@ -8,7 +8,8 @@ from alembic import context
 from app.core.config import settings
 from sqlmodel import SQLModel
 
-from app.models import organizacion  # noqa: F401  (registra las tablas del Grupo 1 en SQLModel.metadata)
+# Registra en SQLModel.metadata las tablas de los 4 módulos de modelos (Grupos 1 a 6 del diseño v3).
+from app.models import evaluacion, organizacion, seguridad, trazabilidad  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

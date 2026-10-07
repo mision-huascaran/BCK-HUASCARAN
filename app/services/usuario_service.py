@@ -5,7 +5,7 @@ from sqlmodel import Session, func, select
 
 from app.core.email import enviar_correo_bienvenida_profesor
 from app.core.security import hash_password
-from app.core.tiempo import hoy_lima
+from app.core.tiempo import ahora_utc
 from app.models.organizacion import Docente, Rol, Usuario
 from app.schemas.usuario import UsuarioCreate, UsuarioUpdate
 
@@ -108,7 +108,7 @@ def crear_usuario(
         raise RolNoAdministrable()
 
     contrasena_temporal = secrets.token_urlsafe(9)
-    hoy = hoy_lima()
+    ahora = ahora_utc()
 
     usuario = Usuario(
         id_rol=rol.id_rol,
@@ -119,7 +119,7 @@ def crear_usuario(
         apellidos=data.apellidos,
         activo=data.activo,
         creado_por=usuario_actual.id_usuario,
-        creado_en=hoy,
+        creado_en=ahora,
     )
     db.add(usuario)
     db.commit()
@@ -158,10 +158,10 @@ def cambiar_estado_usuario(
         if _contar_activos_por_rol(db, usuario.id_rol) <= 1:
             raise UltimaCuentaActivaDelRol(rol_objetivo)
 
-    hoy = hoy_lima()
+    ahora = ahora_utc()
     usuario.activo = activo
     usuario.modificado_por = usuario_actual.id_usuario
-    usuario.modificado_en = hoy
+    usuario.modificado_en = ahora
     db.add(usuario)
 
     if usuario.id_docente is not None:
@@ -169,7 +169,7 @@ def cambiar_estado_usuario(
         if docente is not None:
             docente.activo = activo
             docente.modificado_por = usuario_actual.id_usuario
-            docente.modificado_en = hoy
+            docente.modificado_en = ahora
             db.add(docente)
 
     db.commit()
@@ -197,6 +197,7 @@ def listar_usuarios(db: Session, usuario_actual: Usuario, rol: Optional[str] = N
             "rol": rol_fila.nombre,
             "correo": usuario.correo,
             "id_docente": usuario.id_docente,
+            "dni": usuario.dni,
             "nombres": usuario.nombres,
             "apellidos": usuario.apellidos,
             "activo": usuario.activo,
@@ -227,11 +228,11 @@ def actualizar_usuario(
         if ocupado is not None:
             raise CorreoYaRegistrado()
 
-    hoy = hoy_lima()
+    ahora = ahora_utc()
     for campo, valor in cambios.items():
         setattr(usuario, campo, valor)
     usuario.modificado_por = usuario_actual.id_usuario
-    usuario.modificado_en = hoy
+    usuario.modificado_en = ahora
     db.add(usuario)
 
     if usuario.id_docente is not None:
@@ -242,7 +243,7 @@ def actualizar_usuario(
             if "apellidos" in cambios:
                 docente.apellidos = cambios["apellidos"]
             docente.modificado_por = usuario_actual.id_usuario
-            docente.modificado_en = hoy
+            docente.modificado_en = ahora
             db.add(docente)
 
     db.commit()

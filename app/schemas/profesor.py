@@ -17,6 +17,7 @@ class ProfesorResponse(BaseModel):
     id_rol: int
     correo: str
     id_docente: Optional[int] = None
+    dni: Optional[str] = None
     nombres: str
     apellidos: str
     activo: bool
@@ -28,6 +29,7 @@ class ProfesorListItem(BaseModel):
 
     id_usuario: int
     id_docente: int
+    dni: Optional[str] = None
     correo: str
     nombres: str
     apellidos: str

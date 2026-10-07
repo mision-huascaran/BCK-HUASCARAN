@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 from app.core.email import enviar_correo_codigo_verificacion, enviar_correo_confirmacion_cambio
 from app.core.security import generar_codigo_verificacion, hash_password, verify_password
-from app.core.tiempo import ahora_utc, hoy_lima
+from app.core.tiempo import ahora_utc
 from app.models.organizacion import Usuario
 from app.schemas.password import CambiarContrasenaRequest, RestablecerContrasenaRequest
 
@@ -53,7 +53,7 @@ def cambiar_contrasena(db: Session, usuario_actual: Usuario, data: CambiarContra
     usuario_actual.codigo_verificacion = None
     usuario_actual.codigo_verificacion_expira = None
     usuario_actual.modificado_por = usuario_actual.id_usuario
-    usuario_actual.modificado_en = hoy_lima()
+    usuario_actual.modificado_en = ahora_utc()
     db.add(usuario_actual)
     db.commit()
 
@@ -101,7 +101,7 @@ def restablecer_contrasena(db: Session, data: RestablecerContrasenaRequest) -> N
     usuario.codigo_verificacion = None
     usuario.codigo_verificacion_expira = None
     usuario.modificado_por = usuario.id_usuario
-    usuario.modificado_en = hoy_lima()
+    usuario.modificado_en = ahora_utc()
     db.add(usuario)
     db.commit()
 

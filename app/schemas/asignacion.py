@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -20,9 +20,9 @@ class AsignacionResponse(BaseModel):
     id_grado: int
     id_periodo_academico: int
     creado_por: int
-    creado_en: date
+    creado_en: datetime
     modificado_por: Optional[int] = None
-    modificado_en: Optional[date] = None
+    modificado_en: Optional[datetime] = None
 
 
 class AsignacionListItem(BaseModel):

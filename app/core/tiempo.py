@@ -2,14 +2,14 @@
 
 Hay dos clases de valores temporales y cada una tiene su tipo, su columna y su fuente:
 
-- INSTANTE (cuándo pasó o vence algo; p. ej. el vencimiento de un código de
-  verificación o el `exp` de un JWT): columna `timestamptz` (`UTCDateTime` en el
-  modelo), valor `datetime` con zona en UTC, obtenido con `ahora_utc()`. Se convierte a
-  hora local solo al mostrarlo.
-- DÍA DE CALENDARIO (qué día es para el usuario; p. ej. `creado_en`, `modificado_en`,
-  la vigencia de un periodo académico): columna `date`, obtenido con `hoy_lima()`. El
-  servidor corre en UTC, así que `date.today()` daría el día siguiente entre las 19:00 y
-  las 24:00 de Lima.
+- INSTANTE (cuándo pasó o vence algo; p. ej. los campos de auditoría `creado_en` y
+  `modificado_en`, el vencimiento de un código de verificación o el `exp` de un JWT):
+  columna `timestamptz` (`UTCDateTime` en el modelo), valor `datetime` con zona en UTC,
+  obtenido con `ahora_utc()`. Se convierte a hora local solo al mostrarlo.
+- DÍA DE CALENDARIO (qué día es para el usuario; p. ej. `alumno.fecha_registro` o el
+  inicio y fin de un periodo académico y su vigencia): columna `date`, obtenido con
+  `hoy_lima()`. El servidor corre en UTC, así que `date.today()` daría el día siguiente
+  entre las 19:00 y las 24:00 de Lima.
 
 La zona se obtiene por nombre con zoneinfo ("America/Lima"). Prohibido restar horas a
 mano (-5): si Perú vuelve a cambiar de horario, la base de zonas lo resuelve.

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -27,9 +27,9 @@ class AlumnoResponse(BaseModel):
     fecha_registro: date
     activo: bool
     creado_por: int
-    creado_en: date
+    creado_en: datetime
     modificado_por: Optional[int] = None
-    modificado_en: Optional[date] = None
+    modificado_en: Optional[datetime] = None
 
 
 class AlumnoUpdate(BaseModel):

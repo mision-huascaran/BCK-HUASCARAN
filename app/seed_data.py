@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.core.database import engine
 from app.core.security import hash_password
-from app.core.tiempo import hoy_lima
+from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     AnioEscolar,
     CicloEbr,
@@ -41,14 +41,19 @@ PROGRAMAS = ["Alfabetización", "Comprensión Lectora"]
 
 APELLIDOS_PRUEBA = "de Prueba"
 
+DEPARTAMENTO = "Áncash"
+
 PROFESOR_CORREO = "profesor.prueba@sicedu.test"
 PROFESOR_PASSWORD = "ProfesorTest123"
+PROFESOR_DNI = "00000002"
 
 JEFA_CORREO = "jefa.prueba@sicedu.test"
 JEFA_PASSWORD = "JefaTest123"
+JEFA_DNI = "00000001"
 
 DIRECTIVO_CORREO = "directivo.prueba@sicedu.test"
 DIRECTIVO_PASSWORD = "DirectivoTest123"
+DIRECTIVO_DNI = "00000003"
 
 
 def get_or_create_rol(session: Session, nombre: str) -> Rol:
@@ -91,10 +96,27 @@ def get_or_create_programa(session: Session, nombre: str) -> Programa:
     return programa
 
 
+def completar_dni(session: Session, usuario: Usuario, dni: str) -> None:
+    """Las cuentas sembradas antes de la v3 no tienen DNI: se completa sin pisar uno existente."""
+    if usuario.dni is None:
+        usuario.dni = dni
+        session.add(usuario)
+        session.commit()
+
+
+def completar_distrito(session: Session, colegio: Colegio, distrito: str) -> None:
+    """Los colegios sembrados antes de la v3 no tienen distrito: se completa si falta."""
+    if colegio.distrito is None:
+        colegio.distrito = distrito
+        session.add(colegio)
+        session.commit()
+
+
 def seed() -> None:
     with Session(engine) as session:
         roles = {nombre: get_or_create_rol(session, nombre) for nombre in ROLES}
         hoy = hoy_lima()
+        ahora = ahora_utc()
 
         ciclos = {nombre: get_or_create_ciclo(session, nombre) for nombre in CICLOS}
         for nombre_grado, nombre_ciclo in GRADOS_POR_CICLO.items():
@@ -118,9 +140,10 @@ def seed() -> None:
                 id_docente=None,
                 nombres="Jefa",
                 apellidos=APELLIDOS_PRUEBA,
+                dni=JEFA_DNI,
                 activo=True,
                 creado_por=1,
-                creado_en=hoy,
+                creado_en=ahora,
             )
             session.add(usuario_jefa)
             session.commit()
@@ -130,6 +153,7 @@ def seed() -> None:
             session.add(usuario_jefa)
             session.commit()
             session.refresh(usuario_jefa)
+        completar_dni(session, usuario_jefa, JEFA_DNI)
 
         colegio = session.exec(
             select(Colegio).where(Colegio.nombre == "Colegio de Prueba")
@@ -137,31 +161,38 @@ def seed() -> None:
         if colegio is None:
             colegio = Colegio(
                 nombre="Colegio de Prueba",
-                zona="Zona de Prueba",
+                departamento=DEPARTAMENTO,
+                provincia="Provincia de Prueba",
+                distrito="Distrito de Prueba",
                 creado_por=usuario_jefa.id_usuario,
-                creado_en=hoy,
+                creado_en=ahora,
             )
             session.add(colegio)
             session.commit()
             session.refresh(colegio)
+        completar_distrito(session, colegio, "Distrito de Prueba")
 
+        # (nombre, provincia, distrito): distritos capitales de su provincia.
         colegios_ficticios = [
-            ("Colegio Yungay", "Yungay"),
-            ("Colegio Carhuaz", "Carhuaz"),
+            ("Colegio Yungay", "Yungay", "Yungay"),
+            ("Colegio Carhuaz", "Carhuaz", "Carhuaz"),
         ]
-        for nombre_colegio, zona_colegio in colegios_ficticios:
+        for nombre_colegio, provincia_colegio, distrito_colegio in colegios_ficticios:
             colegio_ficticio = session.exec(
                 select(Colegio).where(Colegio.nombre == nombre_colegio)
             ).first()
             if colegio_ficticio is None:
                 colegio_ficticio = Colegio(
                     nombre=nombre_colegio,
-                    zona=zona_colegio,
+                    departamento=DEPARTAMENTO,
+                    provincia=provincia_colegio,
+                    distrito=distrito_colegio,
                     creado_por=usuario_jefa.id_usuario,
-                    creado_en=hoy,
+                    creado_en=ahora,
                 )
                 session.add(colegio_ficticio)
                 session.commit()
+            completar_distrito(session, colegio_ficticio, distrito_colegio)
 
         docente = session.exec(
             select(Docente).where(
@@ -174,7 +205,7 @@ def seed() -> None:
                 apellidos=APELLIDOS_PRUEBA,
                 activo=True,
                 creado_por=usuario_jefa.id_usuario,
-                creado_en=hoy,
+                creado_en=ahora,
             )
             session.add(docente)
             session.commit()
@@ -189,11 +220,12 @@ def seed() -> None:
                 correo=PROFESOR_CORREO,
                 password_hash=hash_password(PROFESOR_PASSWORD),
                 id_docente=docente.id_docente,
+                dni=PROFESOR_DNI,
                 nombres="Docente",
                 apellidos=APELLIDOS_PRUEBA,
                 activo=True,
                 creado_por=usuario_jefa.id_usuario,
-                creado_en=hoy,
+                creado_en=ahora,
             )
             session.add(usuario_profesor)
 
@@ -208,13 +240,16 @@ def seed() -> None:
                 id_docente=None,
                 nombres="Directivo",
                 apellidos=APELLIDOS_PRUEBA,
+                dni=DIRECTIVO_DNI,
                 activo=True,
                 creado_por=usuario_jefa.id_usuario,
-                creado_en=hoy,
+                creado_en=ahora,
             )
             session.add(usuario_directivo)
 
         session.commit()
+        completar_dni(session, usuario_profesor, PROFESOR_DNI)
+        completar_dni(session, usuario_directivo, DIRECTIVO_DNI)
 
         # Año escolar y periodo académico vigentes. Sin un periodo que contenga la fecha
         # de hoy no se puede crear ninguna asignación docente↔colegio/grado, y sin
@@ -229,7 +264,7 @@ def seed() -> None:
                 fecha_inicio=date(hoy.year, 1, 1),
                 fecha_fin=date(hoy.year, 12, 31),
                 creado_por=usuario_jefa.id_usuario,
-                creado_en=hoy,
+                creado_en=ahora,
             )
             session.add(anio)
             session.commit()
@@ -248,7 +283,7 @@ def seed() -> None:
                 fecha_inicio=date(hoy.year, 1, 1),
                 fecha_fin=date(hoy.year, 12, 31),
                 creado_por=usuario_jefa.id_usuario,
-                creado_en=hoy,
+                creado_en=ahora,
             )
             session.add(periodo)
             session.commit()
@@ -271,7 +306,7 @@ def seed() -> None:
                     id_grado=primer_grado.id_grado,
                     id_periodo_academico=periodo.id_periodo_academico,
                     creado_por=usuario_jefa.id_usuario,
-                    creado_en=hoy,
+                    creado_en=ahora,
                 )
             )
             session.commit()
