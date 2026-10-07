@@ -1,8 +1,8 @@
-from datetime import date
 from typing import Optional
 
 from sqlmodel import Session, select
 
+from app.core.tiempo import hoy_lima
 from app.models.organizacion import (
     Colegio,
     Docente,
@@ -45,7 +45,7 @@ def periodos_vigentes(db: Session) -> list[int]:
     la lista sale vacia, y entonces ningun docente tiene alcance: el recorte por
     asignaciones no puede inventarse un periodo que la coordinacion no ha creado.
     """
-    hoy = date.today()
+    hoy = hoy_lima()
     return list(
         db.exec(
             select(PeriodoAcademico.id_periodo_academico).where(
@@ -99,7 +99,7 @@ def crear_asignacion(
         id_grado=data.id_grado,
         id_periodo_academico=data.id_periodo_academico,
         creado_por=usuario_actual.id_usuario,
-        creado_en=date.today(),
+        creado_en=hoy_lima(),
     )
     db.add(asignacion)
     db.commit()

@@ -48,7 +48,7 @@ def crear_usuario_endpoint(
     usuario_actual: Usuario = Depends(require_role(*GESTORES_DE_CUENTAS)),
 ):
     try:
-        usuario, contraseña_temporal, correo_enviado = crear_usuario(db, data, usuario_actual)
+        usuario, contrasena_temporal, correo_enviado = crear_usuario(db, data, usuario_actual)
     except CorreoYaRegistrado:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -70,7 +70,7 @@ def crear_usuario_endpoint(
 
     return UsuarioCreado(
         **usuario.model_dump(),
-        contraseña_temporal=contraseña_temporal,
+        contraseña_temporal=contrasena_temporal,
         correo_enviado=correo_enviado,
     )
 

@@ -1,7 +1,6 @@
-from datetime import date
-
 from sqlmodel import Session
 
+from app.core.tiempo import hoy_lima
 from app.models.organizacion import Colegio, Usuario
 from app.schemas.colegio import ColegioCreate, ColegioUpdate
 
@@ -11,7 +10,7 @@ def crear_colegio(db: Session, data: ColegioCreate, usuario_actual: Usuario) -> 
         nombre=data.nombre,
         zona=data.zona,
         creado_por=usuario_actual.id_usuario,
-        creado_en=date.today(),
+        creado_en=hoy_lima(),
     )
     db.add(colegio)
     db.commit()
@@ -34,7 +33,7 @@ def actualizar_colegio(
         setattr(colegio, campo, valor)
 
     colegio.modificado_por = usuario_actual.id_usuario
-    colegio.modificado_en = date.today()
+    colegio.modificado_en = hoy_lima()
     db.add(colegio)
     db.commit()
     db.refresh(colegio)

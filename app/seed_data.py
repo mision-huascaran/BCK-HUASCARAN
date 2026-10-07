@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from app.core.database import engine
 from app.core.security import hash_password
+from app.core.tiempo import hoy_lima
 from app.models.organizacion import (
     AnioEscolar,
     CicloEbr,
@@ -37,6 +38,8 @@ GRADOS_POR_CICLO = {
 }
 
 PROGRAMAS = ["Alfabetización", "Comprensión Lectora"]
+
+APELLIDOS_PRUEBA = "de Prueba"
 
 PROFESOR_CORREO = "profesor.prueba@sicedu.test"
 PROFESOR_PASSWORD = "ProfesorTest123"
@@ -91,7 +94,7 @@ def get_or_create_programa(session: Session, nombre: str) -> Programa:
 def seed() -> None:
     with Session(engine) as session:
         roles = {nombre: get_or_create_rol(session, nombre) for nombre in ROLES}
-        hoy = date.today()
+        hoy = hoy_lima()
 
         ciclos = {nombre: get_or_create_ciclo(session, nombre) for nombre in CICLOS}
         for nombre_grado, nombre_ciclo in GRADOS_POR_CICLO.items():
@@ -114,7 +117,7 @@ def seed() -> None:
                 password_hash=hash_password(JEFA_PASSWORD),
                 id_docente=None,
                 nombres="Jefa",
-                apellidos="de Prueba",
+                apellidos=APELLIDOS_PRUEBA,
                 activo=True,
                 creado_por=1,
                 creado_en=hoy,
@@ -162,13 +165,13 @@ def seed() -> None:
 
         docente = session.exec(
             select(Docente).where(
-                Docente.nombres == "Docente", Docente.apellidos == "de Prueba"
+                Docente.nombres == "Docente", Docente.apellidos == APELLIDOS_PRUEBA
             )
         ).first()
         if docente is None:
             docente = Docente(
                 nombres="Docente",
-                apellidos="de Prueba",
+                apellidos=APELLIDOS_PRUEBA,
                 activo=True,
                 creado_por=usuario_jefa.id_usuario,
                 creado_en=hoy,
@@ -187,7 +190,7 @@ def seed() -> None:
                 password_hash=hash_password(PROFESOR_PASSWORD),
                 id_docente=docente.id_docente,
                 nombres="Docente",
-                apellidos="de Prueba",
+                apellidos=APELLIDOS_PRUEBA,
                 activo=True,
                 creado_por=usuario_jefa.id_usuario,
                 creado_en=hoy,
@@ -204,7 +207,7 @@ def seed() -> None:
                 password_hash=hash_password(DIRECTIVO_PASSWORD),
                 id_docente=None,
                 nombres="Directivo",
-                apellidos="de Prueba",
+                apellidos=APELLIDOS_PRUEBA,
                 activo=True,
                 creado_por=usuario_jefa.id_usuario,
                 creado_en=hoy,

@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
@@ -16,7 +18,7 @@ router = APIRouter(tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(data: LoginRequest, db: Annotated[Session, Depends(get_db)]):
     try:
         usuario = authenticate_user(db, data.correo, data.password)
     except CredencialesInvalidas:
@@ -47,5 +49,5 @@ def logout():
 
 
 @router.get("/me", response_model=UsuarioResponse)
-def me(current_user: Usuario = Depends(get_current_user)):
+def me(current_user: Annotated[Usuario, Depends(get_current_user)]):
     return current_user

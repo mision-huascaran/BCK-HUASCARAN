@@ -1,9 +1,9 @@
-from datetime import date
 from typing import Optional
 
 from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
+from app.core.tiempo import hoy_lima
 from app.models.organizacion import Alumno, Colegio, Grado, Programa, Usuario
 from app.schemas.alumno import AlumnoCreate, AlumnoUpdate
 
@@ -54,7 +54,7 @@ def crear_alumno(
     if db.get(Programa, data.id_programa_actual) is None:
         raise ProgramaNoExiste()
 
-    hoy = date.today()
+    hoy = hoy_lima()
     alumno = Alumno(
         nombres=data.nombres,
         apellidos=data.apellidos,
@@ -176,7 +176,7 @@ def actualizar_alumno(
         setattr(alumno, campo, valor)
 
     alumno.modificado_por = usuario_actual.id_usuario
-    alumno.modificado_en = date.today()
+    alumno.modificado_en = hoy_lima()
     db.add(alumno)
     db.commit()
     db.refresh(alumno)

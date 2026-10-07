@@ -14,11 +14,11 @@ class ColegioResponse(BaseModel):
 
     id_colegio: int
     nombre: str
-    zona: Optional[str]
+    zona: Optional[str] = None
     creado_por: int
     creado_en: date
-    modificado_por: Optional[int]
-    modificado_en: Optional[date]
+    modificado_por: Optional[int] = None
+    modificado_en: Optional[date] = None
 
 
 class ColegioUpdate(BaseModel):

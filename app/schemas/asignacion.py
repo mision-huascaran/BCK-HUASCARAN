@@ -21,8 +21,8 @@ class AsignacionResponse(BaseModel):
     id_periodo_academico: int
     creado_por: int
     creado_en: date
-    modificado_por: Optional[int]
-    modificado_en: Optional[date]
+    modificado_por: Optional[int] = None
+    modificado_en: Optional[date] = None
 
 
 class AsignacionListItem(BaseModel):

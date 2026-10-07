@@ -1,11 +1,11 @@
 import secrets
-from datetime import date
 from typing import Optional
 
 from sqlmodel import Session, func, select
 
 from app.core.email import enviar_correo_bienvenida_profesor
 from app.core.security import hash_password
+from app.core.tiempo import hoy_lima
 from app.models.organizacion import Docente, Rol, Usuario
 from app.schemas.usuario import UsuarioCreate, UsuarioUpdate
 
@@ -107,13 +107,13 @@ def crear_usuario(
     if rol.nombre not in ROLES_ADMINISTRATIVOS:
         raise RolNoAdministrable()
 
-    contraseña_temporal = secrets.token_urlsafe(9)
-    hoy = date.today()
+    contrasena_temporal = secrets.token_urlsafe(9)
+    hoy = hoy_lima()
 
     usuario = Usuario(
         id_rol=rol.id_rol,
         correo=data.correo,
-        password_hash=hash_password(contraseña_temporal),
+        password_hash=hash_password(contrasena_temporal),
         id_docente=None,
         nombres=data.nombres,
         apellidos=data.apellidos,
@@ -126,11 +126,11 @@ def crear_usuario(
     db.refresh(usuario)
 
     correo_enviado = enviar_correo_bienvenida_profesor(
-        data.correo, contraseña_temporal, data.nombres
+        data.correo, contrasena_temporal, data.nombres
     )
     if correo_enviado:
         return usuario, None, True
-    return usuario, contraseña_temporal, False
+    return usuario, contrasena_temporal, False
 
 
 def cambiar_estado_usuario(
@@ -158,7 +158,7 @@ def cambiar_estado_usuario(
         if _contar_activos_por_rol(db, usuario.id_rol) <= 1:
             raise UltimaCuentaActivaDelRol(rol_objetivo)
 
-    hoy = date.today()
+    hoy = hoy_lima()
     usuario.activo = activo
     usuario.modificado_por = usuario_actual.id_usuario
     usuario.modificado_en = hoy
@@ -227,7 +227,7 @@ def actualizar_usuario(
         if ocupado is not None:
             raise CorreoYaRegistrado()
 
-    hoy = date.today()
+    hoy = hoy_lima()
     for campo, valor in cambios.items():
         setattr(usuario, campo, valor)
     usuario.modificado_por = usuario_actual.id_usuario

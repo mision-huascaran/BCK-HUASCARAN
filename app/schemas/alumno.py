@@ -19,8 +19,8 @@ class AlumnoResponse(BaseModel):
     id_alumno: int
     # Opcionales porque la vista de Directivo los devuelve en null: su acceso a datos
     # identificables de alumnos esta fuera del alcance acordado.
-    nombres: Optional[str]
-    apellidos: Optional[str]
+    nombres: Optional[str] = None
+    apellidos: Optional[str] = None
     id_colegio: int
     id_grado: int
     id_programa_actual: int
@@ -28,8 +28,8 @@ class AlumnoResponse(BaseModel):
     activo: bool
     creado_por: int
     creado_en: date
-    modificado_por: Optional[int]
-    modificado_en: Optional[date]
+    modificado_por: Optional[int] = None
+    modificado_en: Optional[date] = None
 
 
 class AlumnoUpdate(BaseModel):

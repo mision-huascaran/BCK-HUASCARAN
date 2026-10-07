@@ -1,11 +1,12 @@
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any
 
 from jose import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
+from app.core.tiempo import ahora_utc
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -25,7 +26,7 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 
 
 def create_access_token(data: dict[str, Any]) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = ahora_utc() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {**data, "exp": expire}
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 

@@ -5,7 +5,7 @@ class VerificarCodigoRequest(BaseModel):
     codigo: str
 
 
-class CambiarContraseñaRequest(BaseModel):
+class CambiarContrasenaRequest(BaseModel):
     codigo: str
     contraseña_nueva: str
     confirmar_contraseña_nueva: str
@@ -26,13 +26,13 @@ class CambiarContraseñaRequest(BaseModel):
         return v
 
 
-class RecuperarContraseñaRequest(BaseModel):
+class RecuperarContrasenaRequest(BaseModel):
     """Inicio del flujo publico: solo el correo, sin sesion iniciada."""
 
     correo: str
 
 
-class RestablecerContraseñaRequest(BaseModel):
+class RestablecerContrasenaRequest(BaseModel):
     """Cierre del flujo publico: el correo identifica al usuario, el codigo lo autoriza."""
 
     correo: str

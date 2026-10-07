@@ -5,23 +5,25 @@ from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models.organizacion import Usuario
 from app.schemas.password import (
-    CambiarContraseñaRequest,
-    RecuperarContraseñaRequest,
-    RestablecerContraseñaRequest,
+    CambiarContrasenaRequest,
+    RecuperarContrasenaRequest,
+    RestablecerContrasenaRequest,
     VerificarCodigoRequest,
 )
 from app.services.password_service import (
     CodigoInvalidoOExpirado,
-    ContraseñaIgualALaActual,
+    ContrasenaIgualALaActual,
     EnvioDeCodigoFallido,
-    cambiar_contraseña,
-    restablecer_contraseña,
+    cambiar_contrasena,
+    restablecer_contrasena,
     solicitar_codigo,
     solicitar_codigo_publico,
     verificar_codigo,
 )
 
 router = APIRouter(tags=["password"])
+
+CODIGO_INVALIDO = "Código incorrecto o expirado"
 
 
 @router.post("/me/password/codigo")
@@ -47,25 +49,25 @@ def verificar_codigo_endpoint(
     if not verificar_codigo(usuario_actual, data.codigo):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Código incorrecto o expirado",
+            detail=CODIGO_INVALIDO,
         )
     return {"detail": "Código correcto"}
 
 
 @router.post("/me/password")
-def cambiar_contraseña_endpoint(
-    data: CambiarContraseñaRequest,
+def cambiar_contrasena_endpoint(
+    data: CambiarContrasenaRequest,
     db: Session = Depends(get_db),
     usuario_actual: Usuario = Depends(get_current_user),
 ):
     try:
-        cambiar_contraseña(db, usuario_actual, data)
+        cambiar_contrasena(db, usuario_actual, data)
     except CodigoInvalidoOExpirado:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Código incorrecto o expirado",
+            detail=CODIGO_INVALIDO,
         )
-    except ContraseñaIgualALaActual:
+    except ContrasenaIgualALaActual:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La contraseña nueva no puede ser igual a la actual",
@@ -74,8 +76,8 @@ def cambiar_contraseña_endpoint(
 
 
 @router.post("/password/recuperar")
-def recuperar_contraseña_endpoint(
-    data: RecuperarContraseñaRequest,
+def recuperar_contrasena_endpoint(
+    data: RecuperarContrasenaRequest,
     db: Session = Depends(get_db),
 ):
     """Flujo publico, sin token: envia el codigo al correo indicado.
@@ -89,19 +91,19 @@ def recuperar_contraseña_endpoint(
 
 
 @router.post("/password/restablecer")
-def restablecer_contraseña_endpoint(
-    data: RestablecerContraseñaRequest,
+def restablecer_contrasena_endpoint(
+    data: RestablecerContrasenaRequest,
     db: Session = Depends(get_db),
 ):
     """Flujo publico, sin token: cambia la contraseña con el codigo recibido por correo."""
     try:
-        restablecer_contraseña(db, data)
+        restablecer_contrasena(db, data)
     except CodigoInvalidoOExpirado:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Código incorrecto o expirado",
+            detail=CODIGO_INVALIDO,
         )
-    except ContraseñaIgualALaActual:
+    except ContrasenaIgualALaActual:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La contraseña nueva no puede ser igual a la actual",

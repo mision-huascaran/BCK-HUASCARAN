@@ -3,6 +3,10 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
+from app.core.tiempo import UTCDateTime
+
+FK_USUARIO = "usuario.id_usuario"
+
 
 class AnioEscolar(SQLModel, table=True):
     """Antes `PeriodoAcademico` (v1). Ver diseno_bd_sicedu_v2.md §1.2 sobre el swap de nombres."""
@@ -14,9 +18,9 @@ class AnioEscolar(SQLModel, table=True):
     fecha_inicio: date
     fecha_fin: date
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)
 
 
@@ -31,9 +35,9 @@ class PeriodoAcademico(SQLModel, table=True):
     fecha_inicio: date
     fecha_fin: date
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)
 
 
@@ -44,9 +48,9 @@ class Colegio(SQLModel, table=True):
     nombre: str
     zona: Optional[str] = Field(default=None)
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)
 
 
@@ -80,9 +84,9 @@ class Docente(SQLModel, table=True):
     apellidos: str
     activo: bool = Field(default=True)
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)
 
 
@@ -105,13 +109,13 @@ class Usuario(SQLModel, table=True):
     apellidos: str
     activo: bool = Field(default=True)
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)
 
     codigo_verificacion: Optional[str] = Field(default=None, max_length=6)
-    codigo_verificacion_expira: Optional[datetime] = Field(default=None)
+    codigo_verificacion_expira: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
 class Alumno(SQLModel, table=True):
@@ -126,9 +130,9 @@ class Alumno(SQLModel, table=True):
     fecha_registro: date
     activo: bool = Field(default=True)
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)
 
 
@@ -141,9 +145,9 @@ class DocenteColegioGrado(SQLModel, table=True):
     id_grado: int = Field(foreign_key="grado.id_grado")
     id_periodo_academico: int = Field(foreign_key="periodo_academico.id_periodo_academico")
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)
 
 
@@ -155,7 +159,7 @@ class AlumnoProgramaHistorial(SQLModel, table=True):
     id_programa: int = Field(foreign_key="programa.id_programa")
     id_periodo_academico: int = Field(foreign_key="periodo_academico.id_periodo_academico")
 
-    creado_por: int = Field(foreign_key="usuario.id_usuario")
+    creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: date
-    modificado_por: Optional[int] = Field(default=None, foreign_key="usuario.id_usuario")
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[date] = Field(default=None)

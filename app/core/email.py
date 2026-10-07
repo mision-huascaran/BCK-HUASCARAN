@@ -4,9 +4,11 @@ from email.mime.text import MIMEText
 
 from app.core.config import settings
 
+SMTP_HOST = "smtp.gmail.com"
+
 
 def enviar_correo_bienvenida_profesor(
-    correo_destino: str, contraseña_temporal: str, nombres: str
+    correo_destino: str, contrasena_temporal: str, nombres: str
 ) -> bool:
     """Intenta enviar el correo de bienvenida con la contraseña temporal.
     Devuelve False (sin lanzar excepción) si algo falla — el llamador decide el fallback."""
@@ -15,7 +17,7 @@ def enviar_correo_bienvenida_profesor(
 Tu cuenta en SICEDU (Sistema de Centralización de Datos Educativos) fue creada.
 
 Correo: {correo_destino}
-Contraseña temporal: {contraseña_temporal}
+Contraseña temporal: {contrasena_temporal}
 
 Por seguridad, cambia esta contraseña la primera vez que inicies sesión.
 
@@ -32,7 +34,7 @@ Equipo SICEDU - Misión Huascarán
 
   <div style="background-color: #f3f4f6; border-radius: 6px; padding: 16px; margin: 16px 0;">
     <p style="margin: 4px 0;"><strong>Correo:</strong> {correo_destino}</p>
-    <p style="margin: 4px 0;"><strong>Contraseña temporal:</strong> {contraseña_temporal}</p>
+    <p style="margin: 4px 0;"><strong>Contraseña temporal:</strong> {contrasena_temporal}</p>
   </div>
 
   <p style="font-size: 13px; color: #6b7280;">
@@ -53,7 +55,7 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(html, "html"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
+        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
             servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
             servidor.send_message(mensaje)
         return True
@@ -108,7 +110,7 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(html, "html"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
+        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
             servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
             servidor.send_message(mensaje)
         return True
@@ -155,7 +157,7 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(html, "html"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
+        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
             servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
             servidor.send_message(mensaje)
         return True

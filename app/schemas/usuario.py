@@ -23,7 +23,7 @@ class UsuarioCreado(BaseModel):
     id_usuario: int
     id_rol: int
     correo: str
-    id_docente: Optional[int]
+    id_docente: Optional[int] = None
     nombres: str
     apellidos: str
     activo: bool
@@ -38,7 +38,7 @@ class UsuarioListItem(BaseModel):
     id_rol: int
     rol: str
     correo: str
-    id_docente: Optional[int]
+    id_docente: Optional[int] = None
     nombres: str
     apellidos: str
     activo: bool
@@ -50,7 +50,7 @@ class UsuarioResponse(BaseModel):
     id_usuario: int
     id_rol: int
     correo: str
-    id_docente: Optional[int]
+    id_docente: Optional[int] = None
     nombres: str
     apellidos: str
     activo: bool

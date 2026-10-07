@@ -30,7 +30,7 @@ def crear_profesor_endpoint(
     usuario_actual: Usuario = Depends(require_role("Supervisor")),
 ):
     try:
-        usuario, contraseña_temporal = crear_profesor(db, data, usuario_actual)
+        usuario, contrasena_temporal = crear_profesor(db, data, usuario_actual)
     except CorreoYaRegistrado:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -44,7 +44,7 @@ def crear_profesor_endpoint(
 
     return ProfesorResponse(
         **usuario.model_dump(),
-        contraseña_temporal=contraseña_temporal,
+        contraseña_temporal=contrasena_temporal,
     )
 
 
@@ -56,7 +56,11 @@ def listar_profesores_endpoint(
     return listar_profesores(db)
 
 
-@router.patch("/profesores/{id_usuario}/desactivar", response_model=ProfesorResponse)
+@router.patch(
+    "/profesores/{id_usuario}/desactivar",
+    response_model=ProfesorResponse,
+    responses={404: {"description": "No existe el profesor"}},
+)
 def desactivar_profesor_endpoint(
     id_usuario: int,
     db: Session = Depends(get_db),
@@ -69,7 +73,11 @@ def desactivar_profesor_endpoint(
     return usuario
 
 
-@router.patch("/profesores/{id_usuario}/activar", response_model=ProfesorResponse)
+@router.patch(
+    "/profesores/{id_usuario}/activar",
+    response_model=ProfesorResponse,
+    responses={404: {"description": "No existe el profesor"}},
+)
 def activar_profesor_endpoint(
     id_usuario: int,
     db: Session = Depends(get_db),

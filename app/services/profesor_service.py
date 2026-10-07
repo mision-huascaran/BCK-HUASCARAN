@@ -1,11 +1,11 @@
 import secrets
-from datetime import date
 from typing import Optional
 
 from sqlmodel import Session, select
 
 from app.core.email import enviar_correo_bienvenida_profesor
 from app.core.security import hash_password
+from app.core.tiempo import hoy_lima
 from app.models.organizacion import Docente, Rol, Usuario
 from app.schemas.profesor import ProfesorCreate, ProfesorUpdate
 
@@ -33,8 +33,8 @@ def crear_profesor(
     if rol_docente is None:
         raise RolDocenteNoConfigurado()
 
-    contraseña_temporal = secrets.token_urlsafe(9)
-    hoy = date.today()
+    contrasena_temporal = secrets.token_urlsafe(9)
+    hoy = hoy_lima()
 
     docente = Docente(
         nombres=data.nombres,
@@ -49,7 +49,7 @@ def crear_profesor(
     usuario = Usuario(
         id_rol=rol_docente.id_rol,
         correo=data.correo,
-        password_hash=hash_password(contraseña_temporal),
+        password_hash=hash_password(contrasena_temporal),
         id_docente=docente.id_docente,
         nombres=data.nombres,
         apellidos=data.apellidos,
@@ -63,11 +63,11 @@ def crear_profesor(
     db.refresh(usuario)
 
     correo_enviado = enviar_correo_bienvenida_profesor(
-        data.correo, contraseña_temporal, data.nombres
+        data.correo, contrasena_temporal, data.nombres
     )
     if correo_enviado:
         return usuario, None
-    return usuario, contraseña_temporal
+    return usuario, contrasena_temporal
 
 
 def cambiar_estado_profesor(
@@ -81,11 +81,11 @@ def cambiar_estado_profesor(
 
     usuario.activo = activo
     usuario.modificado_por = usuario_actual.id_usuario
-    usuario.modificado_en = date.today()
+    usuario.modificado_en = hoy_lima()
 
     docente.activo = activo
     docente.modificado_por = usuario_actual.id_usuario
-    docente.modificado_en = date.today()
+    docente.modificado_en = hoy_lima()
 
     db.add(usuario)
     db.add(docente)
@@ -120,7 +120,7 @@ def actualizar_profesor(
         if ocupado is not None:
             raise CorreoYaRegistrado()
 
-    hoy = date.today()
+    hoy = hoy_lima()
     for campo, valor in cambios.items():
         setattr(usuario, campo, valor)
     usuario.modificado_por = usuario_actual.id_usuario
