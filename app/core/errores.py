@@ -11,7 +11,17 @@ frontend lee el mensaje siempre del mismo campo.
 from typing import Any, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.core.validacion import documentar_formato_422, manejar_error_validacion
+
+# Textos por defecto de Starlette para rutas inexistentes o métodos no admitidos.
+TRADUCCIONES_HTTP = {
+    "Not Found": "Recurso no encontrado.",
+    "Method Not Allowed": "Método no permitido.",
+}
 
 
 class ErrorNegocio(Exception):
@@ -43,5 +53,18 @@ def manejar_error_negocio(_request: Request, error: ErrorNegocio) -> JSONRespons
     return JSONResponse(status_code=error.status_code, content=error.cuerpo(), headers=error.headers)
 
 
+def manejar_error_http(_request: Request, error: StarletteHTTPException) -> JSONResponse:
+    """`{"detail": "..."}` para cualquier HTTPException, con los textos por defecto de
+    Starlette (404 y 405 de rutas inexistentes) en español. Conserva las cabeceras
+    (p. ej. `Allow` en el 405)."""
+    detail = TRADUCCIONES_HTTP.get(error.detail, error.detail)
+    return JSONResponse(
+        status_code=error.status_code, content={"detail": detail}, headers=getattr(error, "headers", None)
+    )
+
+
 def registrar_manejadores(app: FastAPI) -> None:
     app.add_exception_handler(ErrorNegocio, manejar_error_negocio)
+    app.add_exception_handler(RequestValidationError, manejar_error_validacion)
+    app.add_exception_handler(StarletteHTTPException, manejar_error_http)
+    documentar_formato_422(app)

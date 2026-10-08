@@ -19,9 +19,11 @@ from app.models.organizacion import (
     DocenteColegioGrado,
     Grado,
     PeriodoAcademico,
+    Programa,
     Usuario,
 )
 from app.services.calendario import periodo_vigente
+from app.services.colegio_service import completar_oferta
 
 APELLIDOS_PRUEBA = "de Prueba"
 
@@ -122,6 +124,15 @@ def seed() -> None:
             session.commit()
             session.refresh(colegio)
         completar_distrito(session, colegio, "Distrito de Prueba")
+        # Los 6 grados y los 2 programas, para poder asignarle docentes y alumnos.
+        completar_oferta(
+            session,
+            colegio,
+            list(session.exec(select(Grado).order_by(Grado.id_grado)).all()),
+            list(session.exec(select(Programa).order_by(Programa.id_programa)).all()),
+            {"creado_por": usuario_jefa.id_usuario, "creado_en": ahora},
+        )
+        session.commit()
 
         # (nombre, provincia, distrito): distritos capitales de su provincia.
         colegios_ficticios = [

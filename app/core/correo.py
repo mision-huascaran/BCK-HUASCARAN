@@ -34,7 +34,7 @@ def _validar_formato(correo: str) -> str:
         and all(partes)
     )
     if not valido:
-        raise ValueError("El correo no tiene un formato válido")
+        raise ValueError("El correo no tiene un formato válido.")
     return correo
 
 

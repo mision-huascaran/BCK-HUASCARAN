@@ -1,13 +1,10 @@
 """Gestión de cuentas de usuario (CU016). Solo el Supervisor."""
-from typing import Annotated, Optional
+from typing import Optional
 
-from pydantic import BaseModel, Field, StringConstraints, model_validator
+from pydantic import BaseModel, Field
 
 from app.core.correo import CorreoValido
-
-Texto = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-# Texto y no número: un DNI puede empezar con 0.
-Dni = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^\d{8}$")]
+from app.schemas.comun import Dni, ParcheSinNulos, Texto
 
 
 # ── Requests ────────────────────────────────────────────────────────────────────────
@@ -29,19 +26,7 @@ class UsuarioCrear(BaseModel):
     asignacion: Optional[AsignacionCrear] = None
 
 
-class _SinNulos(BaseModel):
-    """En un PATCH, omitir un campo es "no cambiarlo"; enviarlo en null no tiene sentido
-    para estos campos y se rechaza con 422 (antes terminaba en un 500 de la BD)."""
-
-    @model_validator(mode="after")
-    def rechazar_nulos(self):
-        nulos = sorted(c for c in self.model_fields_set if getattr(self, c) is None)
-        if nulos:
-            raise ValueError(f"Estos campos no pueden ser null: {', '.join(nulos)}")
-        return self
-
-
-class AsignacionEditar(_SinNulos):
+class AsignacionEditar(ParcheSinNulos):
     id_colegio: Optional[int] = None
     grados: Optional[list[int]] = Field(default=None, min_length=1)
     id_anio_escolar: Optional[int] = None
@@ -49,7 +34,7 @@ class AsignacionEditar(_SinNulos):
     desde_periodo: Optional[int] = None
 
 
-class UsuarioEditar(_SinNulos):
+class UsuarioEditar(ParcheSinNulos):
     nombres: Optional[Texto] = None
     apellidos: Optional[Texto] = None
     dni: Optional[Dni] = None
