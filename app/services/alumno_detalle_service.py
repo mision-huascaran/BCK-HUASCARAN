@@ -5,7 +5,7 @@ ya empezó (`calendario.anio_de_referencia`). Los permisos (alcance del Docente)
 el router con `alumno_service.alumno_visible`.
 """
 from collections import defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import func
@@ -13,7 +13,7 @@ from sqlalchemy.orm import aliased
 from sqlmodel import Session, col, select
 
 from app.core.paginacion import Paginado, pagina, paginar
-from app.core.tiempo import ZONA_LIMA
+from app.core.tiempo import limites_lima
 from app.models.evaluacion import (
     AsistenciaSemanal,
     EvaluacionDiagnostica,
@@ -225,9 +225,7 @@ ESTADOS = {"true": "Activo", "false": "Inactivo"}
 
 def _limites_del_anio(anio: AnioEscolar) -> tuple[datetime, datetime]:
     """Instantes UTC que cubren el año escolar en hora de Lima: [inicio, fin)."""
-    inicio = datetime.combine(anio.fecha_inicio, time.min, tzinfo=ZONA_LIMA)
-    fin = datetime.combine(anio.fecha_fin + timedelta(days=1), time.min, tzinfo=ZONA_LIMA)
-    return inicio, fin
+    return limites_lima(anio.fecha_inicio, anio.fecha_fin)
 
 
 def _nombres_de_catalogo(db: Session, filas: list[Auditoria]) -> dict[str, dict[str, str]]:

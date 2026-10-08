@@ -200,7 +200,14 @@ class DocenteColegioGrado(SQLModel, table=True):
 
 
 class AlumnoProgramaHistorial(SQLModel, table=True):
+    """Subprograma del alumno en cada periodo: una sola fila por alumno y periodo."""
+
     __tablename__ = "alumno_programa_historial"
+    __table_args__ = (
+        UniqueConstraint(
+            "id_alumno", "id_periodo_academico", name="uq_alumno_programa_historial_periodo"
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     id_alumno: int = Field(foreign_key="alumno.id_alumno")

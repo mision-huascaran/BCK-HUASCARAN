@@ -30,6 +30,7 @@ CIERRE_MANUAL = "Manual"
 CIERRE_POR_EXPIRACION = "Automático por expiración"
 CIERRE_POR_RESTABLECIMIENTO = "Invalidada por restablecimiento de contraseña"
 
+CIERRE_ACTIVIDAD_MANUAL = "Manual por finalización de actividad"
 CIERRE_ACTIVIDAD_FORZADO = "Forzado por cierre de sesión"
 CIERRE_ACTIVIDAD_POR_EXPIRACION = "Automático por expiración de sesión"
 

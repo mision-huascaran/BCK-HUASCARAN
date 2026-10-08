@@ -4,11 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.errores import registrar_manejadores
 from app.routers import (
+    actividades,
     alumnos,
     asignaciones,
     auth,
     catalogos,
     colegios,
+    inicio,
     password,
     usuarios,
 )
@@ -31,6 +33,8 @@ app.include_router(catalogos.router)
 app.include_router(password.router)
 app.include_router(usuarios.router)
 app.include_router(asignaciones.router)
+app.include_router(actividades.router)
+app.include_router(inicio.router)
 
 
 @app.get("/")

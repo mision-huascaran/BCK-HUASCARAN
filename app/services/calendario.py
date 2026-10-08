@@ -1,10 +1,16 @@
-"""Calendario escolar: qué año y qué periodo están en curso hoy (día de Lima)."""
+"""Calendario escolar: qué año y qué periodo están en curso hoy (día de Lima) y qué días
+son hábiles."""
+from bisect import bisect_left
+from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlmodel import Session, col, select
 
 from app.core.tiempo import hoy_lima
-from app.models.organizacion import AnioEscolar, PeriodoAcademico
+from app.models.organizacion import AnioEscolar, DiaNoLaborable, PeriodoAcademico
+
+VIERNES = 4
 
 
 def periodo_vigente(db: Session) -> Optional[PeriodoAcademico]:
@@ -76,3 +82,50 @@ def anio_de_referencia(db: Session) -> Optional[AnioEscolar]:
     return ya_empezado or db.exec(
         select(AnioEscolar).order_by(col(AnioEscolar.fecha_inicio).desc())
     ).first()
+
+
+# ── Días hábiles ────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class DiasHabiles:
+    """Días hábiles de un rango, ya cargados y en orden, para contar muchos subrangos
+    (p. ej. uno por docente) sin volver a consultar la BD."""
+
+    dias: tuple[date, ...]
+
+    def contar(self, desde: date, hasta: date) -> int:
+        """Cuántos días hábiles hay en [desde, hasta). Solo ve los días cargados."""
+        if hasta <= desde:
+            return 0
+        return bisect_left(self.dias, hasta) - bisect_left(self.dias, desde)
+
+
+def cargar_dias_habiles(db: Session, desde: date, hasta: date) -> DiasHabiles:
+    """Días hábiles de [desde, hasta): lunes a viernes, dentro de algún periodo académico
+    y que no estén en `dia_no_laborable`. Dos consultas, sin importar el largo del rango."""
+    if hasta <= desde:
+        return DiasHabiles(())
+    periodos = db.exec(
+        select(PeriodoAcademico.fecha_inicio, PeriodoAcademico.fecha_fin).where(
+            PeriodoAcademico.fecha_inicio < hasta, PeriodoAcademico.fecha_fin >= desde
+        )
+    ).all()
+    no_laborables = set(
+        db.exec(
+            select(DiaNoLaborable.fecha).where(DiaNoLaborable.fecha >= desde, DiaNoLaborable.fecha < hasta)
+        ).all()
+    )
+    dias: set[date] = set()
+    for fecha_inicio, fecha_fin in periodos:
+        dia = max(fecha_inicio, desde)
+        ultimo = min(fecha_fin, hasta - timedelta(days=1))
+        while dia <= ultimo:
+            if dia.weekday() <= VIERNES and dia not in no_laborables:
+                dias.add(dia)
+            dia += timedelta(days=1)
+    return DiasHabiles(tuple(sorted(dias)))
+
+
+def dias_habiles(db: Session, desde: date, hasta: date) -> int:
+    """Cuántos días hábiles hay en [desde, hasta)."""
+    return cargar_dias_habiles(db, desde, hasta).contar(desde, hasta)

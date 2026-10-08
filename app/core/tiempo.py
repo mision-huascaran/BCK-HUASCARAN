@@ -16,7 +16,7 @@ mano (-5): si Perú vuelve a cambiar de horario, la base de zonas lo resuelve.
 
 Fuera de este módulo no se usa `datetime.now()`, `datetime.utcnow()` ni `date.today()`.
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import DateTime
@@ -33,6 +33,19 @@ def ahora_utc() -> datetime:
 def hoy_lima() -> date:
     """Día de calendario actual en Lima, sin importar la zona del servidor."""
     return datetime.now(ZONA_LIMA).date()
+
+
+def fecha_lima(instante: datetime) -> date:
+    """Día de calendario de Lima en que ocurrió un instante."""
+    return instante.astimezone(ZONA_LIMA).date()
+
+
+def limites_lima(desde: date, hasta: date) -> tuple[datetime, datetime]:
+    """Instantes UTC que cubren los días [desde, hasta] (ambos inclusive) en hora de Lima,
+    como rango semiabierto [inicio, fin) para filtrar columnas `timestamptz`."""
+    inicio = datetime.combine(desde, time.min, tzinfo=ZONA_LIMA)
+    fin = datetime.combine(hasta + timedelta(days=1), time.min, tzinfo=ZONA_LIMA)
+    return inicio.astimezone(timezone.utc), fin.astimezone(timezone.utc)
 
 
 def _a_utc(valor: datetime) -> datetime:

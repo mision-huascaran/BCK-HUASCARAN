@@ -1,5 +1,7 @@
 from typing import Any, Generator
 
+from sqlalchemy import Table
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, create_engine
 
@@ -23,3 +25,14 @@ engine = create_engine(settings.DATABASE_URL, connect_args=opciones_de_conexion(
 def get_db() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
+
+
+def insert_con_conflicto(db: Session, tabla: Table):
+    """INSERT con soporte de ON CONFLICT del dialecto en uso (PostgreSQL o SQLite), para
+    escribir de forma atómica filas que dos peticiones simultáneas podrían crear a la vez."""
+    dialecto = db.get_bind().dialect.name
+    if dialecto == "postgresql":
+        return postgresql.insert(tabla)
+    if dialecto == "sqlite":
+        return sqlite.insert(tabla)
+    raise NotImplementedError(f"ON CONFLICT no está soportado para el dialecto {dialecto}")

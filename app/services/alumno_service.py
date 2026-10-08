@@ -15,6 +15,7 @@ from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.core.ciclo import calcular_ciclo, ciclo_sql, programa_permitido_en_grado
+from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
 from app.core.paginacion import Paginado, pagina, paginar
 from app.core.tiempo import ahora_utc, hoy_lima
@@ -38,6 +39,7 @@ from app.services.calendario import periodo_de_referencia
 from app.services.usuario_service import DOCENTE, nombre_rol
 
 TABLA = "alumno"
+_historial = AlumnoProgramaHistorial.__table__
 
 # Quien busca escribe "perez", no "Pérez": se comparan ambos lados sin tildes. Se usa
 # translate() en vez de la extensión unaccent porque no requiere instalar nada en la BD.
@@ -225,32 +227,33 @@ def validar_estado(db: Session, id_colegio: int, id_grado: int, id_programa: int
 
 def registrar_programa(db: Session, alumno: Alumno, id_actor: int, ahora: datetime) -> None:
     """Deja el subprograma actual del alumno en `alumno_programa_historial`, en el periodo
-    de referencia (vigente, próximo o último cargado). Si ya hay una fila para ese
-    periodo, la actualiza en vez de duplicarla."""
+    de referencia (vigente, próximo o último cargado).
+
+    Una sola sentencia INSERT ... ON CONFLICT sobre el UNIQUE (alumno, periodo): si ya hay
+    fila para ese periodo, la actualiza (solo si el subprograma cambió) en vez de
+    duplicarla, y dos peticiones simultáneas nunca chocan en un 500.
+    """
     periodo = periodo_de_referencia(db)
     if periodo is None:
         return
-    fila = db.exec(
-        select(AlumnoProgramaHistorial).where(
-            AlumnoProgramaHistorial.id_alumno == alumno.id_alumno,
-            AlumnoProgramaHistorial.id_periodo_academico == periodo.id_periodo_academico,
+    sentencia = insert_con_conflicto(db, _historial).values(
+        id_alumno=alumno.id_alumno,
+        id_programa=alumno.id_programa_actual,
+        id_periodo_academico=periodo.id_periodo_academico,
+        creado_por=id_actor,
+        creado_en=ahora,
+    )
+    db.execute(
+        sentencia.on_conflict_do_update(
+            index_elements=[_historial.c.id_alumno, _historial.c.id_periodo_academico],
+            set_={
+                "id_programa": sentencia.excluded.id_programa,
+                "modificado_por": id_actor,
+                "modificado_en": ahora,
+            },
+            where=_historial.c.id_programa != sentencia.excluded.id_programa,
         )
-    ).first()
-    if fila is None:
-        db.add(
-            AlumnoProgramaHistorial(
-                id_alumno=alumno.id_alumno,
-                id_programa=alumno.id_programa_actual,
-                id_periodo_academico=periodo.id_periodo_academico,
-                creado_por=id_actor,
-                creado_en=ahora,
-            )
-        )
-    elif fila.id_programa != alumno.id_programa_actual:
-        fila.id_programa = alumno.id_programa_actual
-        fila.modificado_por = id_actor
-        fila.modificado_en = ahora
-        db.add(fila)
+    )
 
 
 # ── Escritura ───────────────────────────────────────────────────────────────────────

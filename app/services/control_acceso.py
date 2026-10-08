@@ -16,9 +16,9 @@ from datetime import timedelta
 
 from fastapi import status
 from sqlalchemy import case, literal, or_
-from sqlalchemy.dialects import postgresql, sqlite
 from sqlmodel import Session, select
 
+from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
 from app.core.tiempo import UTCDateTime, ahora_utc
 from app.models.seguridad import ControlAccesoCorreo
@@ -35,13 +35,7 @@ _tabla = ControlAccesoCorreo.__table__
 
 
 def _insert(db: Session):
-    """INSERT con soporte de ON CONFLICT del dialecto en uso (PostgreSQL o SQLite)."""
-    dialecto = db.get_bind().dialect.name
-    if dialecto == "postgresql":
-        return postgresql.insert(_tabla)
-    if dialecto == "sqlite":
-        return sqlite.insert(_tabla)
-    raise NotImplementedError(f"control_acceso no soporta el dialecto {dialecto}")
+    return insert_con_conflicto(db, _tabla)
 
 
 # ── Límite de solicitudes de PIN ────────────────────────────────────────────────────
