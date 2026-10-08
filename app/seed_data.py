@@ -21,7 +21,7 @@ from app.models.organizacion import (
     PeriodoAcademico,
     Usuario,
 )
-from app.services.asignacion_service import periodos_vigentes
+from app.services.calendario import periodo_vigente
 
 APELLIDOS_PRUEBA = "de Prueba"
 
@@ -43,9 +43,9 @@ DIRECTIVO_DNI = "00000003"
 def periodo_para_asignaciones(session: Session) -> Optional[PeriodoAcademico]:
     """Periodo del calendario real del que cuelgan las asignaciones de prueba: el vigente
     hoy o, si no hay ninguno vigente, el último. None si no hay calendario cargado."""
-    vigentes = periodos_vigentes(session)
-    if vigentes:
-        return session.get(PeriodoAcademico, vigentes[0])
+    vigente = periodo_vigente(session)
+    if vigente is not None:
+        return vigente
     return session.exec(
         select(PeriodoAcademico).order_by(col(PeriodoAcademico.fecha_inicio).desc())
     ).first()

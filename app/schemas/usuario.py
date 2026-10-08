@@ -1,73 +1,105 @@
-from typing import Optional
+"""Gestión de cuentas de usuario (CU016). Solo el Supervisor."""
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from app.core.correo import CorreoNormalizado
+from app.core.correo import CorreoValido
+
+Texto = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# Texto y no número: un DNI puede empezar con 0.
+Dni = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^\d{8}$")]
 
 
-class UsuarioCreate(BaseModel):
+# ── Requests ────────────────────────────────────────────────────────────────────────
+
+class AsignacionCrear(BaseModel):
+    id_colegio: int
+    id_anio_escolar: int
+    # Sin `grados`: todos los que ofrece el colegio. Si viene, no puede estar vacía.
+    grados: Optional[list[int]] = Field(default=None, min_length=1)
+
+
+class UsuarioCrear(BaseModel):
+    nombres: Texto
+    apellidos: Texto
+    dni: Dni
+    correo: CorreoValido
+    id_rol: int
+    # Obligatoria para Docente, prohibida para los demás roles.
+    asignacion: Optional[AsignacionCrear] = None
+
+
+class _SinNulos(BaseModel):
+    """En un PATCH, omitir un campo es "no cambiarlo"; enviarlo en null no tiene sentido
+    para estos campos y se rechaza con 422 (antes terminaba en un 500 de la BD)."""
+
+    @model_validator(mode="after")
+    def rechazar_nulos(self):
+        nulos = sorted(c for c in self.model_fields_set if getattr(self, c) is None)
+        if nulos:
+            raise ValueError(f"Estos campos no pueden ser null: {', '.join(nulos)}")
+        return self
+
+
+class AsignacionEditar(_SinNulos):
+    id_colegio: Optional[int] = None
+    grados: Optional[list[int]] = Field(default=None, min_length=1)
+    id_anio_escolar: Optional[int] = None
+    # Id del periodo desde el que aplica el cambio; por defecto el vigente (o el próximo).
+    desde_periodo: Optional[int] = None
+
+
+class UsuarioEditar(_SinNulos):
+    nombres: Optional[Texto] = None
+    apellidos: Optional[Texto] = None
+    dni: Optional[Dni] = None
+    correo: Optional[CorreoValido] = None
+    id_rol: Optional[int] = None
+    asignacion: Optional[AsignacionEditar] = None
+
+
+# ── Responses ───────────────────────────────────────────────────────────────────────
+
+class UsuarioItem(BaseModel):
+    id: int
     nombres: str
     apellidos: str
-    correo: CorreoNormalizado
-    id_rol: int
-    activo: bool = True
+    dni: Optional[str] = None
+    correo: str
+    rol: str
+    activo: bool
+    es_supervisor_original: bool
+    # Docente: colegios de sus asignaciones del periodo vigente. Supervisor y
+    # Directivo: ["Global"].
+    colegios_asignados: list[str]
+
+
+class GradoAsignado(BaseModel):
+    id_grado: int
+    nombre: str
+
+
+class PeriodoAsignado(BaseModel):
+    id_periodo: int
+    numero: int
+    vigente: bool
+    id_colegio: int
+    colegio: str
+    grados: list[GradoAsignado]
+
+
+class AsignacionDetalle(BaseModel):
+    id_anio_escolar: int
+    periodos: list[PeriodoAsignado]
+
+
+class UsuarioDetalle(UsuarioItem):
+    # Solo para Docentes con asignaciones; null en los demás casos.
+    asignacion: Optional[AsignacionDetalle] = None
 
 
 class UsuarioCreado(BaseModel):
-    """Respuesta de POST /usuarios.
-
-    `contraseña_temporal` solo viaja cuando el correo no se pudo enviar; si se envio,
-    llega en null y la credencial queda unicamente en el buzon del usuario.
-    """
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id_usuario: int
-    id_rol: int
-    correo: str
-    id_docente: Optional[int] = None
-    dni: Optional[str] = None
-    nombres: str
-    apellidos: str
-    activo: bool
+    usuario: UsuarioItem
+    correo_enviado: bool
+    # Solo trae valor si el correo de bienvenida no se pudo enviar.
     contraseña_temporal: Optional[str] = None
-    correo_enviado: bool = True
-
-
-class UsuarioListItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id_usuario: int
-    id_rol: int
-    rol: str
-    correo: str
-    id_docente: Optional[int] = None
-    dni: Optional[str] = None
-    nombres: str
-    apellidos: str
-    activo: bool
-
-
-class UsuarioResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id_usuario: int
-    id_rol: int
-    correo: str
-    id_docente: Optional[int] = None
-    dni: Optional[str] = None
-    nombres: str
-    apellidos: str
-    activo: bool
-
-
-class UsuarioUpdate(BaseModel):
-    """Edicion de una cuenta. Parcial: solo los campos presentes se modifican.
-
-    No incluye `id_rol`: cambiar el rol de una cuenta ya creada mueve la cuenta de
-    parcela y afecta a las reglas de ultima cuenta activa, asi que se deja fuera.
-    """
-
-    nombres: Optional[str] = None
-    apellidos: Optional[str] = None
-    correo: Optional[CorreoNormalizado] = None

@@ -10,7 +10,6 @@ from app.routers import (
     catalogos,
     colegios,
     password,
-    profesores,
     usuarios,
 )
 
@@ -28,7 +27,6 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(colegios.router)
 app.include_router(alumnos.router)
-app.include_router(profesores.router)
 app.include_router(catalogos.router)
 app.include_router(password.router)
 app.include_router(usuarios.router)

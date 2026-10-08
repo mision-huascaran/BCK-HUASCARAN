@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.organizacion import Colegio, Usuario
 from app.schemas.colegio import ColegioCreate, ColegioResponse, ColegioUpdate
-from app.services.asignacion_service import alcance_del_docente
+from app.services.alcance import alcance_docente
 from app.services.colegio_service import ColegioNoExiste, actualizar_colegio, crear_colegio
 
 router = APIRouter(tags=["colegios"])
@@ -29,7 +29,7 @@ def listar_colegios(
 ):
     """Todos los colegios; al Docente, solo aquellos donde tiene asignacion vigente."""
     if usuario_actual.id_docente is not None:
-        ids = {c for c, _ in alcance_del_docente(db, usuario_actual.id_docente)}
+        ids = {c for c, _ in alcance_docente(db, usuario_actual.id_docente)}
         if not ids:
             return []
         return db.exec(select(Colegio).where(Colegio.id_colegio.in_(ids))).all()

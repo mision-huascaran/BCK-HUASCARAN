@@ -17,7 +17,7 @@ from app.services.alumno_service import (
     crear_alumno,
     listar_alumnos,
 )
-from app.services.asignacion_service import alcance_del_docente
+from app.services.alcance import alcance_docente
 from app.services.usuario_service import nombre_rol
 
 router = APIRouter(tags=["alumnos"])
@@ -28,15 +28,15 @@ ERROR_FUERA_DE_ALCANCE = HTTPException(
 )
 
 
-def _alcance_si_es_docente(db: Session, usuario_actual: Usuario) -> Optional[list]:
+def _alcance_si_es_docente(db: Session, usuario_actual: Usuario) -> Optional[set]:
     """Pares (colegio, grado) del docente, o None si quien pregunta no es docente.
 
-    `None` significa "sin recorte"; una lista vacia significa "no tiene nada a cargo",
+    `None` significa "sin recorte"; un conjunto vacío significa "no tiene nada a cargo",
     que no es lo mismo y no debe confundirse.
     """
     if usuario_actual.id_docente is None:
         return None
-    return alcance_del_docente(db, usuario_actual.id_docente)
+    return alcance_docente(db, usuario_actual.id_docente)
 
 
 @router.post("/alumnos", response_model=AlumnoResponse, status_code=status.HTTP_201_CREATED)

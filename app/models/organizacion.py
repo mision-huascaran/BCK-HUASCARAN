@@ -117,6 +117,11 @@ class Usuario(SQLModel, table=True):
         CheckConstraint("dni ~ '^[0-9]{8}$'", name="ck_usuario_dni_formato").ddl_if(
             dialect="postgresql"
         ),
+        # Correo siempre normalizado (minúsculas, sin espacios alrededor): las búsquedas por
+        # correo usan igualdad exacta y el índice. Solo PostgreSQL, como el CHECK del DNI.
+        CheckConstraint(
+            "correo = lower(btrim(correo))", name="ck_usuario_correo_normalizado"
+        ).ddl_if(dialect="postgresql"),
         # Solo una fila puede ser el Supervisor original.
         Index(
             "uq_usuario_supervisor_original",
@@ -174,6 +179,13 @@ class Alumno(SQLModel, table=True):
 
 class DocenteColegioGrado(SQLModel, table=True):
     __tablename__ = "docente_colegio_grado"
+    __table_args__ = (
+        # Un solo docente por colegio, grado y periodo.
+        UniqueConstraint(
+            "id_colegio", "id_grado", "id_periodo_academico",
+            name="uq_docente_colegio_grado_periodo",
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     id_docente: int = Field(foreign_key="docente.id_docente")

@@ -34,7 +34,7 @@ def _supervisor_original(db: Session, correo: str) -> Usuario | None:
     return db.exec(
         select(Usuario)
         .where(
-            func.lower(Usuario.correo) == normalizar_correo(correo),
+            Usuario.correo == normalizar_correo(correo),
             col(Usuario.es_supervisor_original).is_(True),
             col(Usuario.activo).is_(True),
         )

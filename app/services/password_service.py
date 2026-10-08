@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from fastapi import status
-from sqlalchemy import func, update
+from sqlalchemy import update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -57,12 +57,12 @@ def buscar_usuario_para_actualizar(db: Session, correo: str) -> Optional[Usuario
 
     El bloqueo (FOR UPDATE) hace que dos verificaciones simultáneas del PIN se evalúen
     de a una: sin él, varias peticiones en paralelo podrían probar más de 5 PIN antes de
-    que el contador de intentos las alcance. Compara en minúsculas por si quedan cuentas
-    antiguas guardadas con mayúsculas.
+    que el contador de intentos las alcance. Igualdad exacta: el correo se guarda
+    normalizado (CHECK ck_usuario_correo_normalizado), así la búsqueda usa el índice.
     """
     return db.exec(
         select(Usuario)
-        .where(func.lower(Usuario.correo) == normalizar_correo(correo))
+        .where(Usuario.correo == normalizar_correo(correo))
         .with_for_update()
         .execution_options(populate_existing=True)
     ).first()

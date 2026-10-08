@@ -9,7 +9,6 @@ import uuid
 from dataclasses import dataclass
 
 from fastapi import status
-from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.core.correo import normalizar_correo
@@ -72,7 +71,7 @@ def iniciar_sesion(db: Session, correo: str, password: str) -> InicioDeSesion:
     correo = normalizar_correo(correo)
     control = bloquear_y_verificar(db, correo)
 
-    usuario = db.exec(select(Usuario).where(func.lower(Usuario.correo) == correo)).first()
+    usuario = db.exec(select(Usuario).where(Usuario.correo == correo)).first()
     # Sin cuenta se verifica igual contra un hash ficticio: misma demora que con una real.
     hash_a_verificar = usuario.password_hash if usuario is not None else HASH_FICTICIO
     if not verify_password(password, hash_a_verificar) or usuario is None:
