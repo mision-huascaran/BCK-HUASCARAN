@@ -1,9 +1,9 @@
-import secrets
 from typing import Optional
 
 from sqlmodel import Session, func, select
 
 from app.core.email import enviar_correo_bienvenida_profesor
+from app.core.politica_contrasena import generar_contrasena_temporal
 from app.core.security import hash_password
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Docente, Rol, Usuario
@@ -107,7 +107,7 @@ def crear_usuario(
     if rol.nombre not in ROLES_ADMINISTRATIVOS:
         raise RolNoAdministrable()
 
-    contrasena_temporal = secrets.token_urlsafe(9)
+    contrasena_temporal = generar_contrasena_temporal()
     ahora = ahora_utc()
 
     usuario = Usuario(

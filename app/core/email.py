@@ -1,10 +1,42 @@
+import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from app.core.config import settings
+from app.core.pin import VIGENCIA_PIN
 
 SMTP_HOST = "smtp.gmail.com"
+MINUTOS_VIGENCIA_PIN = int(VIGENCIA_PIN.total_seconds() // 60)
+
+logger = logging.getLogger(__name__)
+
+
+def enmascarar_correo(correo: str) -> str:
+    """`rosa.c@mh.org` -> `ro***@mh.org`. Para los logs: identifica el caso sin exponer
+    la dirección completa."""
+    usuario, arroba, dominio = correo.partition("@")
+    if not arroba:
+        return "***"
+    return f"{usuario[:2]}***@{dominio}"
+
+
+def _enviar(mensaje: MIMEMultipart, tipo: str) -> bool:
+    """Envía el mensaje por el SMTP de Gmail. Devuelve False (sin lanzar) si algo falla.
+
+    El error queda en el log con su traza, pero sin el cuerpo del mensaje (que puede
+    llevar un PIN o una contraseña temporal) y con el destinatario enmascarado.
+    """
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
+            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
+            servidor.send_message(mensaje)
+        return True
+    except Exception:
+        logger.exception(
+            "No se pudo enviar el correo de %s a %s", tipo, enmascarar_correo(mensaje["To"] or "")
+        )
+        return False
 
 
 def enviar_correo_bienvenida_profesor(
@@ -54,13 +86,7 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(texto_plano, "plain"))
     mensaje.attach(MIMEText(html, "html"))
 
-    try:
-        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
-            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
-            servidor.send_message(mensaje)
-        return True
-    except Exception:
-        return False
+    return _enviar(mensaje, "bienvenida")
 
 
 def enviar_correo_codigo_verificacion(correo_destino: str, codigo: str, nombres: str) -> bool:
@@ -72,7 +98,7 @@ Recibimos una solicitud para cambiar la contraseña de tu cuenta en SICEDU.
 
 Tu código de verificación es: {codigo}
 
-Este código expira en 10 minutos.
+Este código expira en {MINUTOS_VIGENCIA_PIN} minutos.
 
 Si no solicitaste este cambio, ignora este correo.
 
@@ -93,7 +119,7 @@ Equipo SICEDU - Misión Huascarán
   </div>
 
   <p style="font-size: 13px; color: #6b7280;">
-    Este código expira en 10 minutos. Si no solicitaste este cambio, ignora este correo.
+    Este código expira en {MINUTOS_VIGENCIA_PIN} minutos. Si no solicitaste este cambio, ignora este correo.
   </p>
 
   <p style="margin-top: 32px; font-size: 13px; color: #6b7280;">
@@ -109,13 +135,7 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(texto_plano, "plain"))
     mensaje.attach(MIMEText(html, "html"))
 
-    try:
-        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
-            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
-            servidor.send_message(mensaje)
-        return True
-    except Exception:
-        return False
+    return _enviar(mensaje, "código de verificación")
 
 
 def enviar_correo_confirmacion_cambio(correo_destino: str, nombres: str) -> bool:
@@ -156,10 +176,4 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(texto_plano, "plain"))
     mensaje.attach(MIMEText(html, "html"))
 
-    try:
-        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
-            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
-            servidor.send_message(mensaje)
-        return True
-    except Exception:
-        return False
+    return _enviar(mensaje, "confirmación de cambio de contraseña")

@@ -4,30 +4,18 @@ No toca la BD. Escribe las llaves en texto plano en un .txt (que se entrega a la
 dirección y nunca entra al repositorio) y devuelve la línea para el .env con sus hashes
 bcrypt; el comando inicializar-supervisor-original los guarda en `recovery_key`.
 """
-import secrets
 from pathlib import Path
 
 from app.cli.comun import RAIZ_PROYECTO
-from app.core.security import CODIGO_ALFABETO, hash_password
+from app.core.recovery_key import CANTIDAD_LLAVES, generar_llave
+from app.core.security import hash_password
 from app.core.tiempo import ZONA_LIMA, ahora_utc
 
-CANTIDAD_LLAVES = 10
-# 28 símbolos de un alfabeto de 32 (5 bits cada uno) = 140 bits de entropía por llave.
-GRUPOS_POR_LLAVE = 7
-SIMBOLOS_POR_GRUPO = 4
 VARIABLE_ENV = "SUPERVISOR_ORIGINAL_RECOVERY_HASHES"
 
 
 class SalidaNoPermitida(Exception):
     """La ruta de salida no se puede usar (ya existe o cae dentro del repositorio)."""
-
-
-def generar_llave() -> str:
-    grupos = (
-        "".join(secrets.choice(CODIGO_ALFABETO) for _ in range(SIMBOLOS_POR_GRUPO))
-        for _ in range(GRUPOS_POR_LLAVE)
-    )
-    return "-".join(grupos)
 
 
 def generar_llaves(cantidad: int = CANTIDAD_LLAVES) -> list[str]:

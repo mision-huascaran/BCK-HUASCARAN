@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.errores import registrar_manejadores
 from app.routers import (
     alumnos,
     asignaciones,
@@ -14,6 +15,7 @@ from app.routers import (
 )
 
 app = FastAPI(title="SICEDU API")
+registrar_manejadores(app)
 
 app.add_middleware(
     CORSMiddleware,

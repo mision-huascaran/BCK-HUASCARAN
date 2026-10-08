@@ -1,3 +1,6 @@
+import uuid
+from typing import Optional
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
@@ -34,6 +37,19 @@ def get_current_user(
         raise credentials_exception
 
     return usuario
+
+
+def get_id_sesion_actual(token: str = Depends(oauth2_scheme)) -> Optional[uuid.UUID]:
+    """Id de la sesión del token (claim `jti`), o None si el token no lo trae.
+
+    Hoy el login no agrega `jti` (llega en la Tanda 2) y siempre devuelve None. Se usa
+    junto con get_current_user, que ya rechaza los tokens inválidos.
+    """
+    try:
+        jti = decode_access_token(token).get("jti")
+        return uuid.UUID(str(jti)) if jti else None
+    except (JWTError, ValueError):
+        return None
 
 
 def require_role(*roles_permitidos: str):

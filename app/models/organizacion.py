@@ -146,7 +146,8 @@ class Usuario(SQLModel, table=True):
     modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
-    codigo_verificacion: Optional[str] = Field(default=None, max_length=6)
+    # HMAC-SHA256 del PIN en hexadecimal (ver app/core/pin.py); null si no hay PIN vigente.
+    codigo_verificacion: Optional[str] = Field(default=None, max_length=64)
     codigo_verificacion_expira: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
     codigo_verificacion_intentos: int = Field(
         default=0, sa_column_kwargs={"server_default": text("0")}

@@ -1,4 +1,3 @@
-import secrets
 from datetime import timedelta
 from typing import Any
 
@@ -13,16 +12,17 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 CODIGO_ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # sin O/0, I/1/L — se confunden al leer/tipear
 
 
-def generar_codigo_verificacion() -> str:
-    return "".join(secrets.choice(CODIGO_ALFABETO) for _ in range(6))
-
-
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
     return pwd_context.verify(plain_password, password_hash)
+
+
+# Hash de un valor que nadie conoce. Se verifica contra él cuando la cuenta no existe,
+# para que la respuesta tarde lo mismo que con una cuenta real.
+HASH_FICTICIO = hash_password("valor-usado-solo-para-igualar-el-tiempo-de-respuesta")
 
 
 def create_access_token(data: dict[str, Any]) -> str:
