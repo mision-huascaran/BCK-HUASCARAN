@@ -53,6 +53,8 @@ class Sesion(SQLModel, table=True):
             postgresql_where=text("fin IS NULL"),
             sqlite_where=text("fin IS NULL"),
         ),
+        # Última conexión de cada usuario (CU020): máximo de `inicio` por usuario.
+        Index("ix_sesion_usuario_inicio", "id_usuario", "inicio"),
     )
 
     id_sesion: uuid.UUID = Field(default_factory=uuid.uuid4, sa_type=Uuid, primary_key=True)

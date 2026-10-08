@@ -42,6 +42,8 @@ class Actividad(SQLModel, table=True):
             postgresql_where=text("fin IS NULL"),
             sqlite_where=text("fin IS NULL"),
         ),
+        # Listados de actividades de un docente, de la más reciente a la más antigua.
+        Index("ix_actividad_docente_inicio", "id_docente", "inicio"),
     )
 
     # Lo genera el cliente, para no duplicar actividades iniciadas sin conexión: sin default.

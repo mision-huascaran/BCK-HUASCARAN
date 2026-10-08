@@ -9,12 +9,16 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from app.schemas.actividad import ActividadActiva
-from app.schemas.asignacion import MiAsignacion
+from app.schemas.asignacion import MiAsignacion, TotalesACargo
 
 
 class InicioDocente(BaseModel):
+    # Por colegio y, dentro, por asignación (colegio + grado).
     asignaciones: list[MiAsignacion]
+    # Lo mismo sumado sobre todas sus asignaciones vigentes.
+    totales: TotalesACargo
     actividad_activa: Optional[ActividadActiva] = None
+    # Vencimiento de la sesión del token; viene siempre, haya o no actividad (CU010).
     sesion_expira: datetime
     puede_iniciar_actividad: bool
     registros_offline_pendientes: Optional[int] = None

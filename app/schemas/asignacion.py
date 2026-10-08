@@ -21,12 +21,29 @@ class AsignacionItem(BaseModel):
     vigente: bool
 
 
+class GradoACargo(GradoAsignado):
+    """Una asignación (colegio + grado) con lo que tiene en la práctica: sus alumnos
+    activos, los subprogramas de esos alumnos y sus ciclos (misma regla que Alumnos)."""
+
+    ciclos: list[str]
+    subprogramas: list[str]
+    cantidad_alumnos: int
+
+
 class MiAsignacion(BaseModel):
     """Lo que el Docente tiene a cargo en el periodo vigente, por colegio."""
 
     id_colegio: int
     colegio: str
-    grados: list[GradoAsignado]
+    grados: list[GradoACargo]
+    ciclos: list[str]
+    subprogramas: list[str]
+    cantidad_alumnos: int
+
+
+class TotalesACargo(BaseModel):
+    """Lo mismo, sumado sobre todas sus asignaciones vigentes."""
+
     ciclos: list[str]
     subprogramas: list[str]
     cantidad_alumnos: int

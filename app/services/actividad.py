@@ -28,8 +28,8 @@ from app.services.usuario_service import DOCENTE, nombre_rol
 # se acepta (relojes que se adelantan un poco); más allá es un dato inválido.
 MARGEN_RELOJ = timedelta(minutes=2)
 
-ACTIVA = "Activa"
-FINALIZADA = "Finalizada"
+EN_CURSO = "en_curso"
+FINALIZADA = "finalizada"
 
 
 def a_item(actividad: Actividad) -> ActividadItem:
@@ -38,7 +38,7 @@ def a_item(actividad: Actividad) -> ActividadItem:
         inicio=actividad.inicio,
         fin=actividad.fin,
         tipo_cierre=actividad.tipo_cierre,
-        estado=ACTIVA if actividad.fin is None else FINALIZADA,
+        estado=EN_CURSO if actividad.fin is None else FINALIZADA,
     )
 
 

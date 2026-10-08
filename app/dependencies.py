@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlmodel import Session
@@ -29,6 +29,8 @@ MOTIVO_SESION_INVALIDA = "sesion_invalida"
 MOTIVO_SESION_EXPIRADA = "sesion_expirada"
 MENSAJE_SESION_INVALIDA = "La sesión no es válida. Inicie sesión nuevamente."
 MENSAJE_SESION_EXPIRADA = "La sesión ha expirado. Inicie sesión nuevamente."
+MOTIVO_SIN_PERMISO = "sin_permiso"
+MENSAJE_SIN_PERMISO = "No tienes permisos para realizar esta acción"
 
 
 def _no_autenticado(mensaje: str, motivo: str) -> ErrorNegocio:
@@ -117,9 +119,6 @@ def require_role(*roles_permitidos: str):
     ) -> Usuario:
         rol = db.get(Rol, current_user.id_rol)
         if rol is None or rol.nombre not in roles_permitidos:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permisos para realizar esta acción",
-            )
+            raise ErrorNegocio(status.HTTP_403_FORBIDDEN, MENSAJE_SIN_PERMISO, motivo=MOTIVO_SIN_PERMISO)
         return current_user
     return dependency

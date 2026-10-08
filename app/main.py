@@ -12,6 +12,7 @@ from app.routers import (
     colegios,
     inicio,
     password,
+    seguimiento,
     usuarios,
 )
 
@@ -35,6 +36,7 @@ app.include_router(usuarios.router)
 app.include_router(asignaciones.router)
 app.include_router(actividades.router)
 app.include_router(inicio.router)
+app.include_router(seguimiento.router)
 
 
 @app.get("/")

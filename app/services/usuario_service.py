@@ -22,6 +22,7 @@ from app.core.politica_contrasena import generar_contrasena_temporal
 from app.core.security import hash_password
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Docente, Rol, Usuario
+from app.schemas.comun import ItemCatalogo
 from app.schemas.usuario import (
     AsignacionEditar,
     UsuarioCrear,
@@ -113,9 +114,9 @@ def _confirmar(db: Session) -> None:
 
 # ── Respuestas ──────────────────────────────────────────────────────────────────────
 
-def _item(usuario: Usuario, rol: str, colegios: dict[int, list[str]]) -> UsuarioItem:
+def _item(usuario: Usuario, rol: str, colegios: dict[int, list[ItemCatalogo]]) -> UsuarioItem:
     if rol == DOCENTE:
-        asignados = colegios.get(usuario.id_docente, []) if usuario.id_docente is not None else []
+        asignados = [c.nombre for c in colegios.get(usuario.id_docente, [])]
     else:
         asignados = [ALCANCE_GLOBAL]
     return UsuarioItem(

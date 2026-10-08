@@ -16,7 +16,7 @@ from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadActiva
 from app.schemas.inicio import AlertaInactividad, InicioDirectivo, InicioDocente, InicioSupervisor
 from app.services.actividad import actividad_activa, cerrar_vencidas_y_confirmar
-from app.services.asignacion_service import mis_asignaciones
+from app.services.asignacion_service import a_cargo
 from app.services.calendario import cargar_dias_habiles, periodo_vigente
 from app.services.usuario_service import DOCENTE
 
@@ -28,10 +28,11 @@ UMBRAL_DIAS_INACTIVIDAD = 4
 
 def inicio_docente(db: Session, usuario: Usuario, sesion: Sesion) -> InicioDocente:
     cerrar_vencidas_y_confirmar(db, usuario.id_usuario)
-    asignaciones = mis_asignaciones(db, usuario.id_docente) if usuario.id_docente is not None else []
+    asignaciones, totales = a_cargo(db, usuario.id_docente)
     activa = actividad_activa(db, usuario.id_docente)
     return InicioDocente(
         asignaciones=asignaciones,
+        totales=totales,
         actividad_activa=None if activa is None else ActividadActiva(id=activa.id_actividad, inicio=activa.inicio),
         sesion_expira=sesion.expira,
         puede_iniciar_actividad=activa is None and bool(asignaciones),
@@ -65,13 +66,27 @@ def alertas_inactividad(db: Session, periodo: PeriodoAcademico, hoy: date) -> li
     """CU011: docentes activos con asignación vigente que llevan UMBRAL_DIAS_INACTIVIDAD o
     más días hábiles sin iniciar actividad.
 
-    Referencia: el día (en Lima) de su último inicio de actividad dentro del periodo o, si
-    no tiene ninguno, el día anterior al inicio del periodo (así el primer día cuenta). Se
-    cuentan los días hábiles desde el día siguiente a la referencia hasta ayer: hoy todavía
-    puede iniciar. Tres consultas en total, sin importar cuántos docentes haya.
+    Se cuentan los días hábiles desde el más reciente de:
+    - el día siguiente a su último inicio de actividad dentro del periodo;
+    - el primer día del periodo;
+    - el día siguiente al que quedó asignado a su colegio en el periodo (el `creado_en`
+      más antiguo de sus asignaciones del periodo: las filas que no cambian se conservan,
+      así que una rotación o una reactivación lo reinician y un cambio de grados no);
+    hasta ayer inclusive: hoy todavía puede iniciar. Cuatro consultas en total, sin
+    importar cuántos docentes haya.
     """
     docentes = db.exec(
-        _docentes_activos().where(col(Usuario.id_docente).in_(_asignaciones_en(periodo, DocenteColegioGrado.id_docente)))
+        select(Usuario, func.min(DocenteColegioGrado.creado_en))
+        .join(Rol, Rol.id_rol == Usuario.id_rol)
+        .join(DocenteColegioGrado, DocenteColegioGrado.id_docente == Usuario.id_docente)
+        .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
+        .where(
+            col(Usuario.activo).is_(True),
+            Rol.nombre == DOCENTE,
+            DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
+            col(Colegio.activo).is_(True),
+        )
+        .group_by(Usuario.id_usuario)
     ).all()
     if not docentes:
         return []
@@ -80,21 +95,25 @@ def alertas_inactividad(db: Session, periodo: PeriodoAcademico, hoy: date) -> li
         db.exec(
             select(Actividad.id_docente, func.max(Actividad.inicio))
             .where(
-                col(Actividad.id_docente).in_([u.id_docente for u in docentes]),
+                col(Actividad.id_docente).in_([u.id_docente for u, _ in docentes]),
                 Actividad.inicio >= desde,
                 Actividad.inicio < hasta,
             )
             .group_by(Actividad.id_docente)
         ).all()
     )
-    sin_actividad = periodo.fecha_inicio - timedelta(days=1)
     calendario = cargar_dias_habiles(db, periodo.fecha_inicio, hoy)
+    un_dia = timedelta(days=1)
 
     alertas = []
-    for usuario in docentes:
+    for usuario, asignado_en in docentes:
         ultimo = ultimos_inicios.get(usuario.id_docente)
-        referencia = sin_actividad if ultimo is None else fecha_lima(ultimo)
-        dias = calendario.contar(referencia + timedelta(days=1), hoy)
+        desde_dia = max(
+            periodo.fecha_inicio,
+            fecha_lima(asignado_en) + un_dia,
+            fecha_lima(ultimo) + un_dia if ultimo is not None else periodo.fecha_inicio,
+        )
+        dias = calendario.contar(desde_dia, hoy)
         if dias >= UMBRAL_DIAS_INACTIVIDAD:
             nombre = f"{usuario.nombres} {usuario.apellidos}"
             alertas.append(
