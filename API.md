@@ -1025,6 +1025,5 @@ La configuración mínima del `.env` debe incluir:
 DATABASE_URL=postgresql+psycopg2://admin:postgres123@localhost:5433/sicedu
 JWT_SECRET_KEY=dev-secret-key-cambiar-en-produccion
 JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=480
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
 ```

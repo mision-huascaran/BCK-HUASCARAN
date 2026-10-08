@@ -1,53 +1,68 @@
-from typing import Annotated
+"""Inicio de sesión, cierre de sesión y perfil (CU002, CU003, CU007)."""
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlmodel import Session
 
 from app.core.database import get_db
-from app.core.security import create_access_token
-from app.dependencies import get_current_user
-from app.models.organizacion import Usuario
-from app.schemas.auth import LoginRequest, TokenResponse, UsuarioResponse
-from app.services.auth_service import (
-    CredencialesInvalidas,
-    CuentaInactiva,
-    authenticate_user,
+from app.dependencies import (
+    SesionActual,
+    get_sesion_actual,
+    ids_del_token,
+    oauth2_scheme,
+    verificar_firma,
 )
+from app.schemas.auth import (
+    LoginRequest,
+    SesionLogin,
+    SesionMe,
+    TokenResponse,
+    UsuarioLogin,
+    MeResponse,
+)
+from app.services.auth_service import cerrar_sesion, iniciar_sesion
 
 router = APIRouter(tags=["auth"])
 
+Db = Annotated[Session, Depends(get_db)]
+
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest, db: Annotated[Session, Depends(get_db)]):
-    try:
-        usuario = authenticate_user(db, data.correo, data.password)
-    except CredencialesInvalidas:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Correo o contraseña incorrectos",
-        )
-    except CuentaInactiva:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tu cuenta está deshabilitada. Contacta a tu supervisor.",
-        )
+def login(data: LoginRequest, db: Db):
+    """Abre una sesión de 8 horas. Errores: 401 `credenciales_invalidas`,
+    403 `cuenta_desactivada`, 429 `bloqueo_temporal`."""
+    inicio = iniciar_sesion(db, data.correo, data.password)
+    return TokenResponse(
+        access_token=inicio.token,
+        sesion=SesionLogin(
+            id=inicio.sesion.id_sesion, inicio=inicio.sesion.inicio, expira=inicio.sesion.expira
+        ),
+        usuario=UsuarioLogin(
+            id=inicio.usuario.id_usuario,
+            nombres=inicio.usuario.nombres,
+            apellidos=inicio.usuario.apellidos,
+            rol=inicio.rol,
+            es_supervisor_original=inicio.usuario.es_supervisor_original,
+        ),
+    )
 
-    access_token = create_access_token(
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def logout(db: Db, token: Annotated[Optional[str], Depends(oauth2_scheme)] = None):
+    """Cierra la sesión del token. Idempotente: si la sesión ya estaba cerrada, venció o
+    no existe, responde 204 igual. Solo exige un token con firma válida (si no, 401)."""
+    ids = ids_del_token(verificar_firma(token))
+    if ids is not None:
+        cerrar_sesion(db, *ids)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me", response_model=MeResponse)
+def me(actual: Annotated[SesionActual, Depends(get_sesion_actual)]):
+    usuario = actual.usuario
+    return MeResponse.model_validate(
         {
-            "id_usuario": usuario.id_usuario,
-            "id_rol": usuario.id_rol,
-            "correo": usuario.correo,
-            "id_docente": usuario.id_docente,
+            **usuario.model_dump(),
+            "sesion": SesionMe(inicio=actual.sesion.inicio, expira=actual.sesion.expira),
         }
     )
-    return TokenResponse(access_token=access_token)
-
-
-@router.post("/logout")
-def logout():
-    return {"detail": "Sesión cerrada correctamente"}
-
-
-@router.get("/me", response_model=UsuarioResponse)
-def me(current_user: Annotated[Usuario, Depends(get_current_user)]):
-    return current_user

@@ -2,11 +2,13 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from app.core.correo import CorreoNormalizado
+
 
 class ProfesorCreate(BaseModel):
     nombres: str
     apellidos: str
-    correo: str
+    correo: CorreoNormalizado
     activo: bool = True
 
 
@@ -41,4 +43,4 @@ class ProfesorUpdate(BaseModel):
 
     nombres: Optional[str] = None
     apellidos: Optional[str] = None
-    correo: Optional[str] = None
+    correo: Optional[CorreoNormalizado] = None

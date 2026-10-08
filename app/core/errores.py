@@ -21,12 +21,15 @@ class ErrorNegocio(Exception):
         detail: str,
         motivo: Optional[str] = None,
         extra: Optional[dict[str, Any]] = None,
+        headers: Optional[dict[str, str]] = None,
     ):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
         self.motivo = motivo
         self.extra = extra or {}
+        # Cabeceras HTTP de la respuesta, p. ej. WWW-Authenticate en los 401.
+        self.headers = headers
 
     def cuerpo(self) -> dict[str, Any]:
         cuerpo: dict[str, Any] = {"detail": self.detail}
@@ -37,7 +40,7 @@ class ErrorNegocio(Exception):
 
 
 def manejar_error_negocio(_request: Request, error: ErrorNegocio) -> JSONResponse:
-    return JSONResponse(status_code=error.status_code, content=error.cuerpo())
+    return JSONResponse(status_code=error.status_code, content=error.cuerpo(), headers=error.headers)
 
 
 def registrar_manejadores(app: FastAPI) -> None:

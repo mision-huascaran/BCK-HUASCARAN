@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 
 from app.cli.comun import Resumen, id_supervisor_original
 from app.core.config import settings
+from app.core.correo import normalizar_correo
 from app.core.politica_contrasena import errores_politica_contrasena
 from app.core.security import hash_password
 from app.core.tiempo import ahora_utc
@@ -104,7 +105,7 @@ def inicializar_supervisor_original(
         return resumen
 
     errores = errores_de_validacion(datos)
-    correo = datos.correo.strip().lower()
+    correo = normalizar_correo(datos.correo)
     dni = datos.dni.strip()
     if db.exec(select(Usuario).where(Usuario.correo == correo)).first() is not None:
         errores.append(f"el correo {correo} ya está en uso por otra cuenta")

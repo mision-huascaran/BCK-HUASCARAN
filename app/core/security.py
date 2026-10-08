@@ -1,11 +1,9 @@
-from datetime import timedelta
 from typing import Any
 
 from jose import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
-from app.core.tiempo import ahora_utc
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -25,11 +23,25 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 HASH_FICTICIO = hash_password("valor-usado-solo-para-igualar-el-tiempo-de-respuesta")
 
 
-def create_access_token(data: dict[str, Any]) -> str:
-    expire = ahora_utc() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {**data, "exp": expire}
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+def create_access_token(claims: dict[str, Any]) -> str:
+    """Firma los claims tal como llegan. No crea sesión ni pone vencimiento.
+
+    Un token sin su fila en `sesion` no sirve para nada: para emitir uno válido se usa
+    `app.services.sesiones.crear_sesion_y_token`, que pone `sub`, `jti`, `iat` y `exp`.
+    """
+    return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    """Verifica la firma y devuelve los claims. Lanza JWTError si la firma no es válida.
+
+    No rechaza el token por `exp`: la fuente de verdad del vencimiento es `sesion.expira`
+    en la BD. Si la librería lo rechazara antes, la sesión vencida nunca se cerraría
+    (ver app/dependencies.py).
+    """
+    return jwt.decode(
+        token,
+        settings.JWT_SECRET_KEY,
+        algorithms=[settings.JWT_ALGORITHM],
+        options={"verify_exp": False},
+    )

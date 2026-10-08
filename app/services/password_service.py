@@ -21,6 +21,7 @@ from app.core.email import (
     enviar_correo_codigo_verificacion,
     enviar_correo_confirmacion_cambio,
 )
+from app.core.correo import normalizar_correo
 from app.core.errores import ErrorNegocio
 from app.core.pin import MAX_INTENTOS_PIN, VIGENCIA_PIN, generar_pin, hmac_pin, pin_coincide
 from app.core.politica_contrasena import requisitos_incumplidos
@@ -50,10 +51,6 @@ MENSAJE_CONTRASENA_ACTUALIZADA = "Contraseña actualizada correctamente."
 
 
 # ── Correo de la cuenta ─────────────────────────────────────────────────────────────
-
-def normalizar_correo(correo: str) -> str:
-    return correo.strip().lower()
-
 
 def buscar_usuario_para_actualizar(db: Session, correo: str) -> Optional[Usuario]:
     """Usuario con ese correo, con su fila bloqueada hasta el fin de la transacción.

@@ -6,6 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.core.config import settings
+from app.core.database import opciones_de_conexion
 from sqlmodel import SQLModel
 
 # Registra en SQLModel.metadata las tablas de los 4 módulos de modelos (Grupos 1 a 6 del diseño v3).
@@ -69,6 +70,7 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=opciones_de_conexion(settings.DATABASE_URL),
     )
 
     with connectable.connect() as connection:

@@ -4,7 +4,7 @@ Los errores salen con el formato de `ErrorNegocio`: {"detail", "motivo"?, ...}.
 """
 import uuid
 from functools import partial
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlmodel import Session
@@ -57,7 +57,7 @@ def cambiar_contrasena_endpoint(
     background_tasks: BackgroundTasks,
     db: Db,
     usuario_actual: UsuarioActual,
-    id_sesion_actual: Annotated[Optional[uuid.UUID], Depends(get_id_sesion_actual)],
+    id_sesion_actual: Annotated[uuid.UUID, Depends(get_id_sesion_actual)],
 ):
     usuario = password_service.cambiar_contrasena(
         db,

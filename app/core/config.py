@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
@@ -6,7 +8,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    # OBSOLETA, sin efecto: la sesión dura 8 horas por regla de negocio (CU003, CU007) y
+    # es una constante del servidor (app/services/sesiones.py, DURACION_SESION). Se
+    # mantiene declarada solo para que un .env antiguo que aún la tenga no impida
+    # arrancar (Settings rechaza variables desconocidas del .env). Puede borrarse del .env.
+    ACCESS_TOKEN_EXPIRE_MINUTES: Optional[int] = None
 
     # Origenes permitidos por CORS, separados por coma.
     # localhost y 127.0.0.1 son origenes distintos para el navegador: van ambos.

@@ -9,16 +9,13 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field
 
-
-def _normalizar_correo(correo: str) -> str:
-    return correo.strip().lower()
+from app.core.correo import CorreoNormalizado
 
 
 def _sin_espacios(valor: str) -> str:
     return valor.strip()
 
 
-CorreoNormalizado = Annotated[str, AfterValidator(_normalizar_correo)]
 Codigo = Annotated[str, AfterValidator(_sin_espacios)]
 
 

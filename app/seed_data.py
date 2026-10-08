@@ -9,6 +9,7 @@ from typing import Optional
 from sqlmodel import Session, col, select
 
 from app.cli.catalogos import cargar_catalogos, roles_por_nombre
+from app.core.correo import normalizar_correo
 from app.core.database import engine
 from app.core.security import hash_password
 from app.core.tiempo import ahora_utc
@@ -26,15 +27,15 @@ APELLIDOS_PRUEBA = "de Prueba"
 
 DEPARTAMENTO = "Áncash"
 
-PROFESOR_CORREO = "profesor.prueba@sicedu.test"
+PROFESOR_CORREO = normalizar_correo("profesor.prueba@sicedu.test")
 PROFESOR_PASSWORD = "ProfesorTest123"
 PROFESOR_DNI = "00000002"
 
-JEFA_CORREO = "jefa.prueba@sicedu.test"
+JEFA_CORREO = normalizar_correo("jefa.prueba@sicedu.test")
 JEFA_PASSWORD = "JefaTest123"
 JEFA_DNI = "00000001"
 
-DIRECTIVO_CORREO = "directivo.prueba@sicedu.test"
+DIRECTIVO_CORREO = normalizar_correo("directivo.prueba@sicedu.test")
 DIRECTIVO_PASSWORD = "DirectivoTest123"
 DIRECTIVO_DNI = "00000003"
 

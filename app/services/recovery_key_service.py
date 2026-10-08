@@ -7,6 +7,7 @@ from fastapi import status
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from app.core.correo import normalizar_correo
 from app.core.errores import ErrorNegocio
 from app.core.recovery_key import CANTIDAD_LLAVES, normalizar_llave
 from app.core.security import HASH_FICTICIO, verify_password
@@ -21,7 +22,6 @@ from app.services.control_acceso import (
 from app.services.password_service import (
     aplicar_contrasena_nueva,
     confirmar_cambio,
-    normalizar_correo,
     validar_contrasena_nueva,
 )
 

@@ -47,7 +47,6 @@ DB_PUERTO = 5433
 ENV_POR_DEFECTO = f"""DATABASE_URL=postgresql+psycopg2://{DB_USUARIO}:{DB_PASSWORD}@localhost:{DB_PUERTO}/{DB_NOMBRE}
 JWT_SECRET_KEY=dev-secret-key-cambiar-en-produccion
 JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=480
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
 # Cuenta de Gmail dedicada al proyecto, para enviar correos (bienvenida de profesor,
 # codigo de verificacion de cambio de contrasena). Sin esto, el envio de correos falla
