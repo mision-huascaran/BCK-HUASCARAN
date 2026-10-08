@@ -48,3 +48,31 @@ def periodos_del_anio(db: Session, id_anio_escolar: int) -> list[PeriodoAcademic
 def no_terminado(periodo: PeriodoAcademico) -> bool:
     """Vigente o futuro: su último día es hoy o después."""
     return periodo.fecha_fin >= hoy_lima()
+
+
+def periodo_de_referencia(db: Session) -> Optional[PeriodoAcademico]:
+    """Periodo al que se asigna un dato que no trae periodo propio (p. ej. el subprograma
+    de un alumno): el vigente; entre periodos, el próximo; si no hay ninguno futuro, el
+    último cargado. None solo si no hay ningún periodo."""
+    return (
+        periodo_vigente(db)
+        or proximo_periodo(db)
+        or db.exec(select(PeriodoAcademico).order_by(col(PeriodoAcademico.fecha_inicio).desc())).first()
+    )
+
+
+def anio_de_referencia(db: Session) -> Optional[AnioEscolar]:
+    """Año escolar que muestran las vistas del año en curso: el vigente; entre años, el
+    último que ya empezó (el que acaba de terminar, con datos); si ninguno empezó, el
+    último cargado."""
+    vigente = anio_vigente(db)
+    if vigente is not None:
+        return vigente
+    ya_empezado = db.exec(
+        select(AnioEscolar)
+        .where(AnioEscolar.fecha_inicio <= hoy_lima())
+        .order_by(col(AnioEscolar.fecha_inicio).desc())
+    ).first()
+    return ya_empezado or db.exec(
+        select(AnioEscolar).order_by(col(AnioEscolar.fecha_inicio).desc())
+    ).first()
