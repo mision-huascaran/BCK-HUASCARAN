@@ -4,40 +4,23 @@ real de Mision Huascaran. Correr manualmente con:
 
     python -m app.seed_data
 """
-from datetime import date
+from typing import Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
+from app.cli.catalogos import cargar_catalogos, roles_por_nombre
 from app.core.database import engine
 from app.core.security import hash_password
-from app.core.tiempo import ahora_utc, hoy_lima
+from app.core.tiempo import ahora_utc
 from app.models.organizacion import (
-    AnioEscolar,
-    CicloEbr,
     Colegio,
     Docente,
     DocenteColegioGrado,
     Grado,
     PeriodoAcademico,
-    Programa,
-    Rol,
     Usuario,
 )
-
-ROLES = ["Docente", "Supervisor", "Directivo"]
-
-CICLOS = ["III", "IV", "V"]
-
-GRADOS_POR_CICLO = {
-    "1.º": "III",
-    "2.º": "III",
-    "3.º": "IV",
-    "4.º": "IV",
-    "5.º": "V",
-    "6.º": "V",
-}
-
-PROGRAMAS = ["Alfabetización", "Comprensión Lectora"]
+from app.services.asignacion_service import periodos_vigentes
 
 APELLIDOS_PRUEBA = "de Prueba"
 
@@ -56,44 +39,15 @@ DIRECTIVO_PASSWORD = "DirectivoTest123"
 DIRECTIVO_DNI = "00000003"
 
 
-def get_or_create_rol(session: Session, nombre: str) -> Rol:
-    rol = session.exec(select(Rol).where(Rol.nombre == nombre)).first()
-    if rol is None:
-        rol = Rol(nombre=nombre)
-        session.add(rol)
-        session.commit()
-        session.refresh(rol)
-    return rol
-
-
-def get_or_create_ciclo(session: Session, nombre: str) -> CicloEbr:
-    ciclo = session.exec(select(CicloEbr).where(CicloEbr.nombre == nombre)).first()
-    if ciclo is None:
-        ciclo = CicloEbr(nombre=nombre)
-        session.add(ciclo)
-        session.commit()
-        session.refresh(ciclo)
-    return ciclo
-
-
-def get_or_create_grado(session: Session, nombre: str, id_ciclo: int) -> Grado:
-    grado = session.exec(select(Grado).where(Grado.nombre == nombre)).first()
-    if grado is None:
-        grado = Grado(nombre=nombre, id_ciclo=id_ciclo)
-        session.add(grado)
-        session.commit()
-        session.refresh(grado)
-    return grado
-
-
-def get_or_create_programa(session: Session, nombre: str) -> Programa:
-    programa = session.exec(select(Programa).where(Programa.nombre == nombre)).first()
-    if programa is None:
-        programa = Programa(nombre=nombre)
-        session.add(programa)
-        session.commit()
-        session.refresh(programa)
-    return programa
+def periodo_para_asignaciones(session: Session) -> Optional[PeriodoAcademico]:
+    """Periodo del calendario real del que cuelgan las asignaciones de prueba: el vigente
+    hoy o, si no hay ninguno vigente, el último. None si no hay calendario cargado."""
+    vigentes = periodos_vigentes(session)
+    if vigentes:
+        return session.get(PeriodoAcademico, vigentes[0])
+    return session.exec(
+        select(PeriodoAcademico).order_by(col(PeriodoAcademico.fecha_inicio).desc())
+    ).first()
 
 
 def completar_dni(session: Session, usuario: Usuario, dni: str) -> None:
@@ -114,15 +68,11 @@ def completar_distrito(session: Session, colegio: Colegio, distrito: str) -> Non
 
 def seed() -> None:
     with Session(engine) as session:
-        roles = {nombre: get_or_create_rol(session, nombre) for nombre in ROLES}
-        hoy = hoy_lima()
+        # Roles, ciclos, grados, programas y niveles son los catálogos reales: los carga
+        # el mismo código que `python -m app.cli cargar-catalogos` (idempotente).
+        cargar_catalogos(session)
+        roles = roles_por_nombre(session)
         ahora = ahora_utc()
-
-        ciclos = {nombre: get_or_create_ciclo(session, nombre) for nombre in CICLOS}
-        for nombre_grado, nombre_ciclo in GRADOS_POR_CICLO.items():
-            get_or_create_grado(session, nombre_grado, ciclos[nombre_ciclo].id_ciclo)
-        for nombre_programa in PROGRAMAS:
-            get_or_create_programa(session, nombre_programa)
 
         # Primer usuario del sistema (Supervisor) — debe insertarse antes que cualquier
         # otra fila auditable, porque creado_por de todas las demás apunta a él.
@@ -251,53 +201,20 @@ def seed() -> None:
         completar_dni(session, usuario_profesor, PROFESOR_DNI)
         completar_dni(session, usuario_directivo, DIRECTIVO_DNI)
 
-        # Año escolar y periodo académico vigentes. Sin un periodo que contenga la fecha
-        # de hoy no se puede crear ninguna asignación docente↔colegio/grado, y sin
-        # asignaciones un Docente no tiene ningún alumno a la vista: el recorte por
-        # alcance lo dejaría con la lista vacía. Se siembra el año en curso completo.
-        anio = session.exec(
-            select(AnioEscolar).where(AnioEscolar.nombre == str(hoy.year))
-        ).first()
-        if anio is None:
-            anio = AnioEscolar(
-                nombre=str(hoy.year),
-                fecha_inicio=date(hoy.year, 1, 1),
-                fecha_fin=date(hoy.year, 12, 31),
-                creado_por=usuario_jefa.id_usuario,
-                creado_en=ahora,
-            )
-            session.add(anio)
-            session.commit()
-            session.refresh(anio)
-
-        periodo = session.exec(
-            select(PeriodoAcademico).where(
-                PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
-                PeriodoAcademico.numero == 1,
-            )
-        ).first()
-        if periodo is None:
-            periodo = PeriodoAcademico(
-                id_anio_escolar=anio.id_anio_escolar,
-                numero=1,
-                fecha_inicio=date(hoy.year, 1, 1),
-                fecha_fin=date(hoy.year, 12, 31),
-                creado_por=usuario_jefa.id_usuario,
-                creado_en=ahora,
-            )
-            session.add(periodo)
-            session.commit()
-            session.refresh(periodo)
-
         # Asignación de ejemplo para el docente de prueba, para que el recorte por
-        # alcance se pueda ver funcionando sin tener que crearla a mano.
-        asignacion = session.exec(
-            select(DocenteColegioGrado).where(
-                DocenteColegioGrado.id_docente == docente.id_docente,
-                DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
-            )
-        ).first()
-        if asignacion is None:
+        # alcance se pueda ver funcionando sin tener que crearla a mano. El seed ya no crea
+        # año ni periodo: cuelga del calendario real (`python -m app.cli cargar-calendario`).
+        # Sin un periodo vigente un Docente no tiene ningún alumno a la vista.
+        periodo = periodo_para_asignaciones(session)
+        asignacion = None
+        if periodo is not None:
+            asignacion = session.exec(
+                select(DocenteColegioGrado).where(
+                    DocenteColegioGrado.id_docente == docente.id_docente,
+                    DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
+                )
+            ).first()
+        if periodo is not None and asignacion is None:
             primer_grado = session.exec(select(Grado).order_by(Grado.id_grado)).first()
             session.add(
                 DocenteColegioGrado(
@@ -315,7 +232,10 @@ def seed() -> None:
         print(f"Docente     -> correo: {PROFESOR_CORREO}  password: {PROFESOR_PASSWORD}")
         print(f"Supervisor  -> correo: {JEFA_CORREO}  password: {JEFA_PASSWORD}")
         print(f"Directivo   -> correo: {DIRECTIVO_CORREO}  password: {DIRECTIVO_PASSWORD}")
-        print(f"Periodo académico vigente: id={periodo.id_periodo_academico}")
+        if periodo is None:
+            print("Sin calendario cargado: no se creó la asignación de prueba.")
+        else:
+            print(f"Asignación de prueba en el periodo académico id={periodo.id_periodo_academico}")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Text, UniqueConstr
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
-from app.models.organizacion import FK_USUARIO
+from app.models.organizacion import FK_GRADO, FK_PROGRAMA, FK_USUARIO
 
 FK_ALUMNO = "alumno.id_alumno"
 FK_DOCENTE = "docente.id_docente"
@@ -49,7 +49,7 @@ class NivelRubrica(SQLModel, table=True):
     )
 
     id_nivel_rubrica: Optional[int] = Field(default=None, primary_key=True)
-    id_programa: int = Field(foreign_key="programa.id_programa")
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
     dimension: str = Field(sa_type=Text)
     orden: int
     nombre_nivel: str = Field(sa_type=Text)
@@ -67,7 +67,7 @@ class NivelEsperadoPorGrado(SQLModel, table=True):
     __tablename__ = "nivel_esperado_por_grado"
 
     id_grado: int = Field(
-        foreign_key="grado.id_grado", primary_key=True, sa_column_kwargs={"autoincrement": False}
+        foreign_key=FK_GRADO, primary_key=True, sa_column_kwargs={"autoincrement": False}
     )
     id_nivel_rk_esperado: int = Field(foreign_key=FK_NIVEL_RAZKIDS)
 

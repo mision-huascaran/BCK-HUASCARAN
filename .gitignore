@@ -8,3 +8,6 @@ __pycache__/
 .coverage
 coverage.xml
 .pytest_cache/
+
+# Recovery Keys en texto plano (python -m app.cli generar-recovery-keys): nunca al repo.
+*recovery*key*.txt

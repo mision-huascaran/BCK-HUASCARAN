@@ -10,6 +10,7 @@ ecdsa==0.19.2
 fastapi==0.141.1
 greenlet==3.5.6
 h11==0.16.0
+holidays==0.106
 idna==3.20
 Mako==1.4.1
 MarkupSafe==3.0.3
@@ -21,6 +22,7 @@ pydantic==2.13.5
 pydantic-settings==2.15.0
 pydantic_core==2.46.5
 python-dotenv==1.2.3
+python-dateutil==2.9.0.post0
 python-jose==3.5.0
 rsa==4.9.1
 six==1.17.0

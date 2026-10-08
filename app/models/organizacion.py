@@ -7,6 +7,9 @@ from sqlmodel import Field, SQLModel
 from app.core.tiempo import UTCDateTime
 
 FK_USUARIO = "usuario.id_usuario"
+FK_COLEGIO = "colegio.id_colegio"
+FK_GRADO = "grado.id_grado"
+FK_PROGRAMA = "programa.id_programa"
 
 
 class AnioEscolar(SQLModel, table=True):
@@ -156,9 +159,9 @@ class Alumno(SQLModel, table=True):
     id_alumno: Optional[int] = Field(default=None, primary_key=True)
     nombres: str
     apellidos: str
-    id_colegio: int = Field(foreign_key="colegio.id_colegio")
-    id_grado: int = Field(foreign_key="grado.id_grado")
-    id_programa_actual: int = Field(foreign_key="programa.id_programa")
+    id_colegio: int = Field(foreign_key=FK_COLEGIO)
+    id_grado: int = Field(foreign_key=FK_GRADO)
+    id_programa_actual: int = Field(foreign_key=FK_PROGRAMA)
     fecha_registro: date
     activo: bool = Field(default=True)
 
@@ -173,8 +176,8 @@ class DocenteColegioGrado(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     id_docente: int = Field(foreign_key="docente.id_docente")
-    id_colegio: int = Field(foreign_key="colegio.id_colegio")
-    id_grado: int = Field(foreign_key="grado.id_grado")
+    id_colegio: int = Field(foreign_key=FK_COLEGIO)
+    id_grado: int = Field(foreign_key=FK_GRADO)
     id_periodo_academico: int = Field(foreign_key="periodo_academico.id_periodo_academico")
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
@@ -188,7 +191,7 @@ class AlumnoProgramaHistorial(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     id_alumno: int = Field(foreign_key="alumno.id_alumno")
-    id_programa: int = Field(foreign_key="programa.id_programa")
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
     id_periodo_academico: int = Field(foreign_key="periodo_academico.id_periodo_academico")
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
@@ -202,8 +205,8 @@ class ColegioGrado(SQLModel, table=True):
 
     __tablename__ = "colegio_grado"
 
-    id_colegio: int = Field(foreign_key="colegio.id_colegio", primary_key=True)
-    id_grado: int = Field(foreign_key="grado.id_grado", primary_key=True)
+    id_colegio: int = Field(foreign_key=FK_COLEGIO, primary_key=True)
+    id_grado: int = Field(foreign_key=FK_GRADO, primary_key=True)
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)
@@ -216,8 +219,8 @@ class ColegioPrograma(SQLModel, table=True):
 
     __tablename__ = "colegio_programa"
 
-    id_colegio: int = Field(foreign_key="colegio.id_colegio", primary_key=True)
-    id_programa: int = Field(foreign_key="programa.id_programa", primary_key=True)
+    id_colegio: int = Field(foreign_key=FK_COLEGIO, primary_key=True)
+    id_programa: int = Field(foreign_key=FK_PROGRAMA, primary_key=True)
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)

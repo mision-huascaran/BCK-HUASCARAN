@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -20,6 +21,19 @@ class Settings(BaseSettings):
 
     GMAIL_SMTP_USER: str = ""
     GMAIL_SMTP_APP_PASSWORD: str = ""
+
+    # Supervisor original (CU001): lo crea `python -m app.cli inicializar` la primera vez.
+    # Vacías en local si no se necesita; el comando avisa y lo omite.
+    SUPERVISOR_ORIGINAL_CORREO: str = ""
+    SUPERVISOR_ORIGINAL_PASSWORD: SecretStr = SecretStr("")
+    SUPERVISOR_ORIGINAL_NOMBRES: str = ""
+    SUPERVISOR_ORIGINAL_APELLIDOS: str = ""
+    SUPERVISOR_ORIGINAL_DNI: str = ""
+    # Los 10 hashes bcrypt de las Recovery Keys, separados por comas.
+    SUPERVISOR_ORIGINAL_RECOVERY_HASHES: SecretStr = SecretStr("")
+
+    # Solo para la primera carga de los colegios reales; después se apaga (ver README).
+    CARGAR_COLEGIOS_INICIALES: bool = False
 
     class Config:
         env_file = ".env"
