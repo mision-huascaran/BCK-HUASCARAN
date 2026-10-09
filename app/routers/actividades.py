@@ -43,12 +43,16 @@ Actual = Annotated[SesionActual, Depends(get_sesion_actual)]
     responses={200: {"model": ActividadRespuesta, "description": "El id ya estaba registrado para este docente"}},
 )
 def iniciar_actividad(data: ActividadIniciar, db: Db, docente: SoloDocente, actual: Actual, response: Response):
-    """Inicia una actividad en la sesión actual. Idempotente por `id_actividad`: si ese id
-    ya está registrado para el docente, responde 200 con esa actividad sin cambios."""
-    actividad, creada = servicio.iniciar_actividad(db, docente, actual.sesion, data.id_actividad, data.inicio)
+    """Inicia una actividad en la sesión actual o, con `id_sesion`, registra una ocurrida
+    en otra sesión del docente (sincronización después de un nuevo login; `inicio`
+    obligatorio). Idempotente por `id_actividad`: si ese id ya está registrado para el
+    docente, responde 200 con esa actividad sin cambios."""
+    actividad, creada = servicio.iniciar_actividad(
+        db, docente, actual.sesion, data.id_actividad, data.inicio, data.id_sesion
+    )
     if not creada:
         response.status_code = status.HTTP_200_OK
-    return ActividadRespuesta(actividad=servicio.a_item(actividad), sesion_expira=actual.sesion.expira)
+    return servicio.a_respuesta(db, actividad, actual.sesion)
 
 
 @router.post("/actividades/{id_actividad}/finalizar", response_model=ActividadRespuesta)
@@ -60,10 +64,12 @@ def finalizar_actividad(
     data: Annotated[Optional[ActividadFinalizar], Body()] = None,
 ):
     """Finaliza la actividad (no cierra la sesión). Si ya estaba finalizada, responde 200
-    con su estado actual, sin cambios. El cuerpo es opcional."""
+    con su estado actual, sin cambios, salvo que la cerrara el servidor (expiración o
+    cierre de sesión) y `fin` sea anterior: entonces se corrige a esa hora real como
+    cierre manual. El cuerpo es opcional."""
     fin = data.fin if data is not None else None
     actividad = servicio.finalizar_actividad(db, docente, id_actividad, fin)
-    return ActividadRespuesta(actividad=servicio.a_item(actividad), sesion_expira=actual.sesion.expira)
+    return servicio.a_respuesta(db, actividad, actual.sesion)
 
 
 @router.get("/actividades", response_model=Paginado[ActividadResumen])

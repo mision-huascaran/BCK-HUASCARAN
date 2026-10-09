@@ -25,8 +25,12 @@ TipoCierre = Literal[
 class ActividadIniciar(BaseModel):
     # Lo genera el cliente: reenviar el mismo id no duplica la actividad.
     id_actividad: uuid.UUID
-    # Hora real de inicio (con zona). Por defecto, el instante en que llega al servidor.
+    # Hora real de inicio (con zona). Por defecto, el instante en que llega al servidor;
+    # obligatoria si `id_sesion` es otra sesión.
     inicio: Optional[AwareDatetime] = None
+    # Sesión en que ocurrió, si no es la del token: una actividad iniciada sin conexión
+    # que se sincroniza después de un nuevo login (CU008, CU009). Por defecto, la del token.
+    id_sesion: Optional[uuid.UUID] = None
 
 
 class ActividadFinalizar(BaseModel):
@@ -36,6 +40,8 @@ class ActividadFinalizar(BaseModel):
 
 class ActividadItem(BaseModel):
     id: uuid.UUID
+    # Sesión en que ocurrió la actividad (puede no ser la de la petición).
+    id_sesion: uuid.UUID
     inicio: datetime
     fin: Optional[datetime] = None
     tipo_cierre: Optional[TipoCierre] = None
@@ -44,8 +50,11 @@ class ActividadItem(BaseModel):
 
 class ActividadRespuesta(BaseModel):
     actividad: ActividadItem
-    # Vencimiento de la sesión de la petición: ninguna actividad pasa de ese instante.
+    # Vencimiento de la sesión de la petición (el que usa el Inicio).
     sesion_expira: datetime
+    # Vencimiento de la sesión de la actividad: su fin no puede pasar de ese instante.
+    # Igual a `sesion_expira` salvo en actividades de otra sesión.
+    actividad_sesion_expira: datetime
 
 
 class ActividadActiva(BaseModel):
