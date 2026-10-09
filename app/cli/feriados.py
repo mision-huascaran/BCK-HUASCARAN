@@ -13,6 +13,9 @@ from app.core.tiempo import ahora_utc
 from app.models.organizacion import AnioEscolar, DiaNoLaborable
 
 PAIS = "PE"
+# Fijo: sin él, la librería puede devolver los nombres en el idioma de la máquina y no
+# coincidirían con los ya guardados.
+IDIOMA = "es"
 PREFIJO_MOTIVO = "Feriado nacional: "
 VIERNES = 4
 
@@ -21,7 +24,7 @@ def feriados_entre_semana(anios: set[int]) -> dict:
     """{fecha: motivo} de los feriados de Perú que caen de lunes a viernes."""
     if not anios:
         return {}
-    calendario = holidays.country_holidays(PAIS, years=sorted(anios))
+    calendario = holidays.country_holidays(PAIS, years=sorted(anios), language=IDIOMA)
     return {
         fecha: PREFIJO_MOTIVO + nombre
         for fecha, nombre in sorted(calendario.items())

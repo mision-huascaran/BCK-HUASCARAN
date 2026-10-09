@@ -1,4 +1,5 @@
-"""Inicio de sesión, cierre de sesión y perfil (CU002, CU003, CU007)."""
+"""Inicio de sesión, cierre de sesión y perfil (CU002, CU003, CU007, CU008)."""
+import uuid
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Response, status
@@ -13,14 +14,18 @@ from app.dependencies import (
     verificar_firma,
 )
 from app.schemas.auth import (
+    CerrarSesionRequest,
+    CierreSesionResponse,
     LoginRequest,
+    SesionCerrada,
     SesionLogin,
     SesionMe,
     TokenResponse,
     UsuarioLogin,
     MeResponse,
 )
-from app.services.auth_service import cerrar_sesion, iniciar_sesion
+from app.services.actividad import a_item
+from app.services.auth_service import cerrar_sesion, cerrar_sesion_anterior, iniciar_sesion
 
 router = APIRouter(tags=["auth"])
 
@@ -65,4 +70,43 @@ def me(actual: Annotated[SesionActual, Depends(get_sesion_actual)]):
             **usuario.model_dump(),
             "sesion": SesionMe(inicio=actual.sesion.inicio, expira=actual.sesion.expira),
         }
+    )
+
+
+@router.post(
+    "/me/sesiones/{id_sesion}/cerrar",
+    response_model=CierreSesionResponse,
+    responses={401: {"description": "Token ausente, inválido o de una sesión cerrada o vencida"}},
+)
+def cerrar_otra_sesion(
+    id_sesion: uuid.UUID,
+    data: CerrarSesionRequest,
+    db: Db,
+    actual: Annotated[SesionActual, Depends(get_sesion_actual)],
+):
+    """Registra un "Cerrar sesión" hecho sin conexión en una sesión anterior del usuario,
+    con la hora real `fin` (CU008). Se llama con el token de la sesión nueva, después
+    del nuevo login. Cualquier rol.
+
+    La sesión queda 'Manual' en `fin` (aunque el servidor ya la hubiera cerrado por
+    expiración) y su actividad activa o cerrada por expiración, "Forzado por cierre de
+    sesión" en `fin`. Idempotente: si ya estaba cerrada como 'Manual' o invalidada,
+    responde 200 sin cambios. Una actividad finalizada por el docente no se toca.
+
+    Errores 422: `id_sesion_invalido` (inexistente o de otro usuario), `sesion_actual`
+    (es la del token: usar POST /logout), `fin_invalido` (fuera de la sesión o en el
+    futuro), `validacion` (`fin` ausente o sin zona horaria).
+    """
+    sesion, actividad = cerrar_sesion_anterior(
+        db, actual.usuario.id_usuario, actual.sesion.id_sesion, id_sesion, data.fin
+    )
+    return CierreSesionResponse(
+        sesion=SesionCerrada(
+            id=sesion.id_sesion,
+            inicio=sesion.inicio,
+            expira=sesion.expira,
+            fin=sesion.fin,
+            tipo_cierre=sesion.tipo_cierre,
+        ),
+        actividad=a_item(actividad) if actividad is not None else None,
     )

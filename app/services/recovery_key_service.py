@@ -1,7 +1,8 @@
 """Recuperación del Supervisor original con una Recovery Key (CU001).
 
 Permite recuperar el acceso sin depender del correo. Contra la fuerza bruta usa el mismo
-bloqueo que tendrá el login: 5 fallos seguidos bloquean el correo 15 minutos.
+bloqueo que el login, sobre el mismo contador del correo: 5 fallos seguidos, sumando
+logins y llaves fallidos, bloquean el correo 15 minutos para ambos.
 """
 from fastapi import status
 from sqlalchemy import func
@@ -15,6 +16,8 @@ from app.core.tiempo import ahora_utc
 from app.models.organizacion import Usuario
 from app.models.seguridad import RecoveryKey
 from app.services.control_acceso import (
+    MENSAJE_BLOQUEO,
+    MOTIVO_BLOQUEO,
     bloquear_y_verificar,
     registrar_intento_exitoso,
     registrar_intento_fallido,
@@ -28,6 +31,7 @@ from app.services.password_service import (
 # Un solo mensaje para "no existe", "no es el Supervisor original" y "llave incorrecta":
 # la respuesta no debe ayudar a averiguar cuál de los tres es.
 MENSAJE_CREDENCIALES_INVALIDAS = "Correo o llave inválidos."
+MOTIVO_LLAVE_INVALIDA = "llave_invalida"
 
 
 def _supervisor_original(db: Session, correo: str) -> Usuario | None:
@@ -82,7 +86,8 @@ def recuperar_con_llave(
 
     1. Con bloqueo vigente: 429, sin evaluar nada más.
     2. Cuenta inexistente, que no es el Supervisor original o llave sin coincidencia:
-       suma un fallo y responde 400 genérico.
+       suma un fallo y responde 400 `llave_invalida`; si ese fallo alcanza el bloqueo,
+       responde ya el 429 del bloqueo (como el login).
     3. Contraseña nueva inválida: error, sin consumir la llave ni sumar fallo.
     4. Éxito, en una transacción: contraseña, llave usada, sesiones cerradas y contador
        de fallos en 0.
@@ -93,7 +98,11 @@ def recuperar_con_llave(
     if usuario is None or coincidente is None:
         registrar_intento_fallido(db, control)
         db.commit()
-        raise ErrorNegocio(status.HTTP_400_BAD_REQUEST, MENSAJE_CREDENCIALES_INVALIDAS)
+        if control.bloqueado_hasta is not None:
+            raise ErrorNegocio(status.HTTP_429_TOO_MANY_REQUESTS, MENSAJE_BLOQUEO, motivo=MOTIVO_BLOQUEO)
+        raise ErrorNegocio(
+            status.HTTP_400_BAD_REQUEST, MENSAJE_CREDENCIALES_INVALIDAS, motivo=MOTIVO_LLAVE_INVALIDA
+        )
 
     validar_contrasena_nueva(nueva, confirmacion, usuario.password_hash)
 

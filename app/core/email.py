@@ -7,6 +7,10 @@ from app.core.config import settings
 from app.core.pin import VIGENCIA_PIN
 
 SMTP_HOST = "smtp.gmail.com"
+SMTP_PUERTO = 465
+# Segundos máximos de espera por Gmail (conexión y cada operación): los envíos síncronos
+# (POST /usuarios, POST /me/password/codigo) no deben dejar la petición colgada.
+SMTP_TIMEOUT = 10
 MINUTOS_VIGENCIA_PIN = int(VIGENCIA_PIN.total_seconds() // 60)
 
 logger = logging.getLogger(__name__)
@@ -28,7 +32,7 @@ def _enviar(mensaje: MIMEMultipart, tipo: str) -> bool:
     llevar un PIN o una contraseña temporal) y con el destinatario enmascarado.
     """
     try:
-        with smtplib.SMTP_SSL(SMTP_HOST, 465) as servidor:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PUERTO, timeout=SMTP_TIMEOUT) as servidor:
             servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
             servidor.send_message(mensaje)
         return True

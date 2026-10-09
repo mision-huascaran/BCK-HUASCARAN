@@ -8,7 +8,7 @@ Dos controles independientes sobre la misma fila:
 
 - Límite de solicitudes de PIN: 5 por ventana fija de una hora.
 - Bloqueo por intentos fallidos: 5 fallos consecutivos bloquean el correo 15 minutos.
-  Hoy lo usa la Recovery Key; en la Tanda 2 lo usará también el login.
+  Lo usan el login y la Recovery Key, con un solo contador por correo para ambos.
 
 Ninguna función hace commit: participan en la transacción de quien las llama.
 """

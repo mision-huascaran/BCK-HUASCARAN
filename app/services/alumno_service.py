@@ -5,6 +5,9 @@
   requiere una actividad activa (CU010), que queda vinculada a la auditoría.
 - Ciclo EBR: se calcula (app/core/ciclo.py). Sección: la del colegio.
 - Borrado lógico: activar / inactivar; ningún alumno se elimina.
+- Colegio inactivo (CU013): no afecta a sus alumnos. El Supervisor puede corregir sus
+  nombres y apellidos; cambiar su ubicación (colegio, grado, subprograma) o activarlo
+  exige un colegio activo. El Docente no los ve: quedan fuera de su alcance.
 """
 import uuid
 from datetime import datetime
@@ -54,6 +57,8 @@ CAMPOS_AUDITADOS = {
     "id_grado": "id_grado",
     "id_programa": "id_programa_actual",
 }
+# Los que ubican al alumno: si alguno cambia, se vuelve a validar su estado.
+CAMPOS_DE_UBICACION = ("id_colegio", "id_grado", "id_programa")
 
 Alcance = Optional[set[tuple[int, int]]]
 
@@ -310,17 +315,20 @@ def editar_alumno(db: Session, id_alumno: int, data: AlumnoEditar, actor: Usuari
     final = {campo: getattr(alumno, atributo) for campo, atributo in CAMPOS_AUDITADOS.items()}
     final.update({campo: getattr(data, campo) for campo in enviados})
     _exigir_alcance(alcance, final["id_colegio"], final["id_grado"])
-    validar_estado(db, final["id_colegio"], final["id_grado"], final["id_programa"])
-
-    ahora = ahora_utc()
-    cambios: dict[str, tuple[Any, Any]] = {}
-    for campo, atributo in CAMPOS_AUDITADOS.items():
-        anterior = getattr(alumno, atributo)
-        if final[campo] != anterior:
-            cambios[campo] = (anterior, final[campo])
-            setattr(alumno, atributo, final[campo])
+    cambios: dict[str, tuple[Any, Any]] = {
+        campo: (getattr(alumno, atributo), final[campo])
+        for campo, atributo in CAMPOS_AUDITADOS.items()
+        if final[campo] != getattr(alumno, atributo)
+    }
     if not cambios:
         return item_de(db, id_alumno)
+    # Corregir solo nombres o apellidos no exige colegio activo (CU013, CU014).
+    if any(campo in cambios for campo in CAMPOS_DE_UBICACION):
+        validar_estado(db, final["id_colegio"], final["id_grado"], final["id_programa"])
+
+    ahora = ahora_utc()
+    for campo, (_, nuevo) in cambios.items():
+        setattr(alumno, CAMPOS_AUDITADOS[campo], nuevo)
 
     alumno.modificado_por = actor.id_usuario
     alumno.modificado_en = ahora

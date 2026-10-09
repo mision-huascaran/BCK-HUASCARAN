@@ -9,10 +9,12 @@ vez (índice único parcial en la BD), y ninguna pasa de la expiración de su se
 Sin conexión (CU008, CU009) el cliente puede iniciar y finalizar actividades que llegan
 después de un nuevo login: se registran en la sesión en que ocurrieron (`id_sesion`), ya
 cerradas si esa sesión terminó, y un `finalizar` con la hora real corrige el cierre
-automático que el servidor les haya puesto mientras tanto.
+automático que el servidor les haya puesto mientras tanto. Si lo que quedó pendiente fue
+un "Cerrar sesión", su cierre diferido (`sesiones.cerrar_sesion_diferida`) cierra o
+corrige la actividad como forzada por cierre de sesión.
 """
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import status
@@ -33,13 +35,11 @@ from app.services.sesiones import (
     CIERRE_ACTIVIDAD_MANUAL,
     CIERRE_ACTIVIDAD_POR_EXPIRACION,
     CIERRE_POR_EXPIRACION,
+    MARGEN_RELOJ,
     cerrar_sesiones_vencidas,
+    sesion_propia_bloqueada,
 )
 from app.services.usuario_service import DOCENTE, nombre_rol
-
-# Tolerancia para el reloj del cliente: una hora enviada hasta 2 minutos en el futuro
-# se acepta (relojes que se adelantan un poco); más allá es un dato inválido.
-MARGEN_RELOJ = timedelta(minutes=2)
 
 EN_CURSO = "en_curso"
 FINALIZADA = "finalizada"
@@ -228,25 +228,6 @@ def iniciar_actividad(
 
 # ── Iniciar en otra sesión (sincronización después de un nuevo login) ────────────────
 
-def _sesion_propia_bloqueada(db: Session, id_usuario: int, id_sesion: uuid.UUID) -> Sesion:
-    """La sesión `id_sesion` del usuario, bloqueada (FOR UPDATE) para que un logout o
-    una invalidación simultáneos esperen y dos registros en ella no se crucen. Abierta,
-    cerrada o vencida. Inexistente o ajena: el mismo 422, para no revelar sesiones ajenas."""
-    otra = db.exec(
-        select(Sesion)
-        .where(Sesion.id_sesion == id_sesion, Sesion.id_usuario == id_usuario)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    ).first()
-    if otra is None:
-        raise ErrorNegocio(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "La sesión indicada no existe.",
-            motivo="id_sesion_invalido",
-        )
-    return otra
-
-
 def _cierre_heredado(otra: Sesion, ahora: datetime) -> tuple[Optional[datetime], Optional[str]]:
     """(fin, tipo_cierre) con que nace una actividad de esa sesión: (None, None) si la
     sesión sigue abierta y vigente; si no, el cierre que habría recibido estando en curso
@@ -312,7 +293,7 @@ def _registrar_en_otra_sesion(
     - El docente debía tener una asignación en el periodo del día (Lima) de `inicio`.
     - No puede cruzarse con otra actividad suya de esa sesión.
     """
-    otra = _sesion_propia_bloqueada(db, usuario.id_usuario, id_sesion)
+    otra = sesion_propia_bloqueada(db, usuario.id_usuario, id_sesion)
     ahora = ahora_utc()
     inicio = _validar_inicio_en(otra, inicio, ahora)
     fin, tipo_cierre = _cierre_heredado(otra, ahora)

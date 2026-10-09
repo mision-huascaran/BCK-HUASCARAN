@@ -1,14 +1,22 @@
-"""Requests y responses de autenticación (CU002, CU003, CU007).
+"""Requests y responses de autenticación (CU002, CU003, CU007, CU008).
 
-Los instantes (`inicio`, `expira`) viajan en UTC con sufijo Z.
+Los instantes (`inicio`, `expira`, `fin`) viajan en UTC con sufijo Z.
 """
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from app.core.correo import CorreoNormalizado
+from app.schemas.actividad import ActividadItem
+
+TipoCierreSesion = Literal[
+    "Manual",
+    "Automático por expiración",
+    "Invalidada por restablecimiento de contraseña",
+    "Invalidada por desactivación",
+]
 
 
 class LoginRequest(BaseModel):
@@ -57,3 +65,25 @@ class MeResponse(BaseModel):
     activo: bool
     es_supervisor_original: bool
     sesion: SesionMe
+
+
+# ── Cierre diferido de una sesión anterior (CU008) ──────────────────────────────────
+
+class CerrarSesionRequest(BaseModel):
+    # Hora real (con zona) en que el usuario pulsó "Cerrar sesión" sin conexión.
+    fin: AwareDatetime
+
+
+class SesionCerrada(BaseModel):
+    id: uuid.UUID
+    inicio: datetime
+    expira: datetime
+    fin: datetime
+    tipo_cierre: TipoCierreSesion
+
+
+class CierreSesionResponse(BaseModel):
+    sesion: SesionCerrada
+    # La actividad que terminó con el cierre de la sesión ("Forzado por cierre de
+    # sesión"); null si no había ninguna o si el usuario no es Docente.
+    actividad: Optional[ActividadItem] = None

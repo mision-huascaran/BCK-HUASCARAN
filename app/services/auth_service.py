@@ -7,6 +7,8 @@ incorrecta y contraseña correcta de una cuenta desactivada.
 """
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
 
 from fastapi import status
 from sqlmodel import Session, select
@@ -16,6 +18,7 @@ from app.core.errores import ErrorNegocio
 from app.core.security import HASH_FICTICIO, verify_password
 from app.models.organizacion import Rol, Usuario
 from app.models.seguridad import ControlAccesoCorreo, Sesion
+from app.models.trazabilidad import Actividad
 from app.services.control_acceso import (
     MENSAJE_BLOQUEO,
     MOTIVO_BLOQUEO,
@@ -24,6 +27,7 @@ from app.services.control_acceso import (
     registrar_intento_fallido,
 )
 from app.services.sesiones import (
+    cerrar_sesion_diferida,
     cerrar_sesion_por_logout,
     cerrar_sesiones_vencidas,
     crear_sesion_y_token,
@@ -97,3 +101,12 @@ def iniciar_sesion(db: Session, correo: str, password: str) -> InicioDeSesion:
 def cerrar_sesion(db: Session, id_usuario: int, id_sesion: uuid.UUID) -> None:
     cerrar_sesion_por_logout(db, id_usuario, id_sesion)
     db.commit()
+
+
+def cerrar_sesion_anterior(
+    db: Session, id_usuario: int, id_sesion_actual: uuid.UUID, id_sesion: uuid.UUID, fin: datetime
+) -> tuple[Sesion, Optional[Actividad]]:
+    """Cierre diferido de una sesión anterior (CU008), en una sola transacción."""
+    sesion, actividad = cerrar_sesion_diferida(db, id_usuario, id_sesion_actual, id_sesion, fin)
+    db.commit()
+    return sesion, actividad

@@ -24,9 +24,10 @@ from app.core.email import (
 from app.core.correo import normalizar_correo
 from app.core.errores import ErrorNegocio
 from app.core.pin import MAX_INTENTOS_PIN, VIGENCIA_PIN, generar_pin, hmac_pin, pin_coincide
-from app.core.politica_contrasena import requisitos_incumplidos
+from app.core.politica_contrasena import DESCRIPCIONES, requisitos_incumplidos
 from app.core.security import hash_password, verify_password
 from app.core.tiempo import ahora_utc
+from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
 from app.models.organizacion import Usuario
 from app.services.control_acceso import registrar_solicitud_pin
 from app.services.sesiones import CIERRE_POR_RESTABLECIMIENTO, cerrar_sesiones_usuario
@@ -48,6 +49,11 @@ MENSAJES_PIN = {
 MENSAJE_PIN_ENVIADO = "Si el correo está registrado y activo, recibirá un PIN."
 MENSAJE_PIN_ENVIADO_CON_SESION = "Se envió un PIN a su correo."
 MENSAJE_CONTRASENA_ACTUALIZADA = "Contraseña actualizada correctamente."
+MENSAJE_NO_COINCIDEN = "Las contraseñas no coinciden."
+
+# Campos de las peticiones de contraseña nueva (los mismos en los tres flujos).
+CAMPO_NUEVA = "contraseña_nueva"
+CAMPO_CONFIRMACION = "confirmar_contraseña_nueva"
 
 
 # ── Correo de la cuenta ─────────────────────────────────────────────────────────────
@@ -243,17 +249,31 @@ def verificar_pin_con_sesion(db: Session, usuario_actual: Usuario, codigo: str) 
 
 # ── Contraseña nueva ────────────────────────────────────────────────────────────────
 
+def _error_validacion(errores: list[tuple[str, str]], detail: str = MENSAJE_GENERAL, **extra) -> ErrorNegocio:
+    """422 con el formato único de validación (app/core/validacion.py)."""
+    return ErrorNegocio(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail,
+        motivo=MOTIVO_VALIDACION,
+        extra={"errores": [{"campo": campo, "mensaje": mensaje} for campo, mensaje in errores], **extra},
+    )
+
+
 def validar_contrasena_nueva(nueva: str, confirmacion: str, password_hash_actual: str) -> None:
-    """Coincidencia, política de CU006 y distinta de la actual, en ese orden."""
+    """Coincidencia, política de CU006 y distinta de la actual, en ese orden.
+
+    Los dos primeros salen como 422 `validacion`, con un error por campo: la política,
+    uno por requisito incumplido, y además `requisitos_incumplidos` con sus códigos.
+    """
     if nueva != confirmacion:
-        raise ErrorNegocio(status.HTTP_422_UNPROCESSABLE_CONTENT, "Las contraseñas no coinciden.")
+        raise _error_validacion([(CAMPO_CONFIRMACION, MENSAJE_NO_COINCIDEN)], detail=MENSAJE_NO_COINCIDEN)
 
     incumplidos = requisitos_incumplidos(nueva)
     if incumplidos:
-        raise ErrorNegocio(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "La contraseña no cumple la política de seguridad.",
-            extra={"requisitos_incumplidos": incumplidos},
+        raise _error_validacion(
+            [(CAMPO_NUEVA, DESCRIPCIONES[codigo].capitalize() + ".") for codigo in incumplidos],
+            detail="La contraseña no cumple la política de seguridad.",
+            requisitos_incumplidos=incumplidos,
         )
 
     if verify_password(nueva, password_hash_actual):
