@@ -6,9 +6,11 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.core.config import settings
+from app.core.database import opciones_de_conexion
 from sqlmodel import SQLModel
 
-from app.models import organizacion  # noqa: F401  (registra las tablas del Grupo 1 en SQLModel.metadata)
+# Registra en SQLModel.metadata las tablas de los 4 módulos de modelos (Grupos 1 a 6 del diseño v3).
+from app.models import evaluacion, organizacion, seguridad, trazabilidad  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -68,6 +70,7 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=opciones_de_conexion(settings.DATABASE_URL),
     )
 
     with connectable.connect() as connection:

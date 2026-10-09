@@ -1,56 +1,77 @@
-from pydantic import BaseModel, field_validator, model_validator
+"""Requests y responses del cambio y la recuperación de contraseña (CU001, CU005, CU006).
 
+Los schemas solo validan la forma de la petición y normalizan el correo. La coincidencia,
+la política de CU006 y "distinta de la actual" se validan en el servicio
+(`password_service.validar_contrasena_nueva`), porque deben evaluarse después del PIN o
+de la Recovery Key y responder con el formato de `ErrorNegocio`.
+"""
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, Field
+
+from app.core.correo import CorreoNormalizado
+
+
+def _sin_espacios(valor: str) -> str:
+    return valor.strip()
+
+
+Codigo = Annotated[str, AfterValidator(_sin_espacios)]
+
+
+# ── Con sesión iniciada (/me/password/*) ────────────────────────────────────────────
 
 class VerificarCodigoRequest(BaseModel):
-    codigo: str
+    codigo: Codigo
 
 
-class CambiarContraseñaRequest(BaseModel):
-    codigo: str
+class CambiarContrasenaRequest(BaseModel):
+    codigo: Codigo
     contraseña_nueva: str
     confirmar_contraseña_nueva: str
 
-    @model_validator(mode="after")
-    def validar_coinciden(self):
-        if self.contraseña_nueva != self.confirmar_contraseña_nueva:
-            raise ValueError("La contraseña nueva y su confirmación no coinciden")
-        return self
 
-    @field_validator("contraseña_nueva")
-    @classmethod
-    def validar_formato(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("La contraseña debe tener al menos 8 caracteres")
-        if not v.isalnum():
-            raise ValueError("La contraseña solo puede contener letras y números")
-        return v
+# ── Flujo público (/password/*) ─────────────────────────────────────────────────────
+
+class RecuperarContrasenaRequest(BaseModel):
+    """Inicio del flujo público: solo el correo, sin sesión iniciada."""
+
+    correo: CorreoNormalizado
 
 
-class RecuperarContraseñaRequest(BaseModel):
-    """Inicio del flujo publico: solo el correo, sin sesion iniciada."""
+class VerificarCodigoPublicoRequest(BaseModel):
+    correo: CorreoNormalizado
+    codigo: Codigo
 
-    correo: str
 
+class RestablecerContrasenaRequest(BaseModel):
+    """Cierre del flujo público: el correo identifica al usuario, el código lo autoriza."""
 
-class RestablecerContraseñaRequest(BaseModel):
-    """Cierre del flujo publico: el correo identifica al usuario, el codigo lo autoriza."""
-
-    correo: str
-    codigo: str
+    correo: CorreoNormalizado
+    codigo: Codigo
     contraseña_nueva: str
     confirmar_contraseña_nueva: str
 
-    @model_validator(mode="after")
-    def validar_coinciden(self):
-        if self.contraseña_nueva != self.confirmar_contraseña_nueva:
-            raise ValueError("La contraseña nueva y su confirmación no coinciden")
-        return self
 
-    @field_validator("contraseña_nueva")
-    @classmethod
-    def validar_formato(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("La contraseña debe tener al menos 8 caracteres")
-        if not v.isalnum():
-            raise ValueError("La contraseña solo puede contener letras y números")
-        return v
+class RecuperarConLlaveRequest(BaseModel):
+    """Recuperación del Supervisor original con una Recovery Key (CU001)."""
+
+    correo: CorreoNormalizado
+    # Una llave tiene 34 caracteres con guiones; el tope solo evita cuerpos absurdos.
+    llave: str = Field(max_length=100)
+    contraseña_nueva: str
+    confirmar_contraseña_nueva: str
+
+
+# ── Responses ───────────────────────────────────────────────────────────────────────
+
+class MensajeResponse(BaseModel):
+    mensaje: str
+
+
+class CodigoValidoResponse(BaseModel):
+    valido: bool
+
+
+class RecuperarConLlaveResponse(MensajeResponse):
+    llaves_restantes: int

@@ -1,159 +1,107 @@
-from typing import Optional
+"""Alumnos (CU014) y su vista de detalle (CU015).
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+Supervisor: todos los alumnos. Docente: los de su alcance; sus escrituras requieren una
+actividad activa. Directivo: sin acceso (403).
+"""
+from typing import Annotated, Literal, Optional
+
+from fastapi import APIRouter, Depends, Query, status
 from sqlmodel import Session
 
 from app.core.database import get_db
-from app.dependencies import get_current_user, require_role
+from app.core.paginacion import Pagina, Paginado
+from app.dependencies import require_role
 from app.models.organizacion import Usuario
-from app.schemas.alumno import AlumnoCreate, AlumnoPagina, AlumnoResponse, AlumnoUpdate
-from app.services.alumno_service import (
-    AlumnoNoExiste,
-    ColegioNoExiste,
-    FueraDeTuAlcance,
-    GradoNoExiste,
-    ProgramaNoExiste,
-    actualizar_alumno,
-    crear_alumno,
-    listar_alumnos,
+from app.schemas.alumno import (
+    AlumnoCrear,
+    AlumnoDetalle,
+    AlumnoEditar,
+    AlumnoItem,
+    EventoHistorial,
+    LecturaSemanal,
+    RegistroVuelo,
+    Resumen,
+    Rubrica,
 )
-from app.services.asignacion_service import alcance_del_docente
-from app.services.usuario_service import nombre_rol
+from app.services import alumno_detalle_service as detalle
+from app.services import alumno_service
+from app.services.usuario_service import DOCENTE, SUPERVISOR
 
 router = APIRouter(tags=["alumnos"])
 
-ERROR_FUERA_DE_ALCANCE = HTTPException(
-    status_code=status.HTTP_403_FORBIDDEN,
-    detail="Ese alumno no pertenece a un colegio y grado que tengas asignado",
-)
+Db = Annotated[Session, Depends(get_db)]
+ConAcceso = Annotated[Usuario, Depends(require_role(SUPERVISOR, DOCENTE))]
 
 
-def _alcance_si_es_docente(db: Session, usuario_actual: Usuario) -> Optional[list]:
-    """Pares (colegio, grado) del docente, o None si quien pregunta no es docente.
-
-    `None` significa "sin recorte"; una lista vacia significa "no tiene nada a cargo",
-    que no es lo mismo y no debe confundirse.
-    """
-    if usuario_actual.id_docente is None:
-        return None
-    return alcance_del_docente(db, usuario_actual.id_docente)
-
-
-@router.post("/alumnos", response_model=AlumnoResponse, status_code=status.HTTP_201_CREATED)
-def crear_alumno_endpoint(
-    data: AlumnoCreate,
-    db: Session = Depends(get_db),
-    usuario_actual: Usuario = Depends(require_role("Docente")),
+@router.get("/alumnos", response_model=Paginado[AlumnoItem])
+def listar_alumnos(
+    db: Db,
+    usuario: ConAcceso,
+    id_colegio: Optional[int] = None,
+    id_programa: Optional[int] = None,
+    ciclo: Optional[Literal["III", "IV", "V"]] = None,
+    id_grado: Optional[int] = None,
+    activo: bool = True,
+    q: Annotated[Optional[str], Query(description="Busca en nombres y apellidos")] = None,
+    page: Pagina = 1,
 ):
-    """Alta de alumno. La hace el Docente, sobre sus colegios y grados asignados."""
-    try:
-        return crear_alumno(
-            db, data, usuario_actual, alcance=_alcance_si_es_docente(db, usuario_actual)
-        )
-    except FueraDeTuAlcance:
-        raise ERROR_FUERA_DE_ALCANCE
-    except ColegioNoExiste:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No existe un colegio con id_colegio={data.id_colegio}",
-        )
-    except GradoNoExiste:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No existe un grado con id_grado={data.id_grado}",
-        )
-    except ProgramaNoExiste:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No existe un programa con id_programa_actual={data.id_programa_actual}",
-        )
+    """Ordenado por apellidos y nombres. El Docente solo recibe los de su alcance."""
+    return alumno_service.listar_alumnos(db, usuario, id_colegio, id_programa, ciclo, id_grado, activo, q, page)
 
 
-@router.get("/alumnos", response_model=AlumnoPagina)
-def listar_alumnos_endpoint(
-    colegio: Optional[int] = Query(default=None, description="Filtra por id_colegio"),
-    grado: Optional[int] = Query(default=None, description="Filtra por id_grado"),
-    programa: Optional[int] = Query(default=None, description="Filtra por id_programa_actual"),
-    q: Optional[str] = Query(default=None, description="Busca en nombres y apellidos"),
-    activo: Optional[bool] = Query(default=None, description="Filtra por estado"),
-    limit: int = Query(default=50, ge=1, le=500, description="Alumnos por página"),
-    offset: int = Query(default=0, ge=0, description="Alumnos a saltar"),
-    db: Session = Depends(get_db),
-    usuario_actual: Usuario = Depends(get_current_user),
-):
-    """Listado de alumnos, recortado segun quien pregunta.
-
-    - Docente: solo los de sus colegios y grados asignados vigentes.
-    - Directivo: todos, pero sin nombres ni apellidos (vista ejecutiva).
-    - Supervisor: todos, completos, en solo lectura.
-    """
-    es_directivo = nombre_rol(db, usuario_actual.id_rol) == "Directivo"
-
-    # Buscar por nombre estando anonimizado permitiria deducir quien es cada id
-    # probando nombres y mirando que filas vuelven, asi que el filtro se rechaza
-    # en vez de ignorarse en silencio.
-    if es_directivo and q:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="La vista de Directivo no permite buscar por nombre",
-        )
-
-    total, items = listar_alumnos(
-        db,
-        colegio=colegio,
-        grado=grado,
-        programa=programa,
-        q=q,
-        activo=activo,
-        alcance=_alcance_si_es_docente(db, usuario_actual),
-        limit=limit,
-        offset=offset,
-    )
-
-    respuesta = [AlumnoResponse.model_validate(a) for a in items]
-    if es_directivo:
-        for alumno in respuesta:
-            alumno.nombres = None
-            alumno.apellidos = None
-
-    return AlumnoPagina(total=total, limit=limit, offset=offset, items=respuesta)
+@router.post("/alumnos", response_model=AlumnoItem, status_code=status.HTTP_201_CREATED)
+def crear_alumno(data: AlumnoCrear, db: Db, usuario: ConAcceso):
+    return alumno_service.crear_alumno(db, data, usuario)
 
 
-@router.patch("/alumnos/{id_alumno}", response_model=AlumnoResponse)
-def actualizar_alumno_endpoint(
-    id_alumno: int,
-    data: AlumnoUpdate,
-    db: Session = Depends(get_db),
-    usuario_actual: Usuario = Depends(require_role("Docente")),
-):
-    """Edicion de alumno, incluida la baja logica con `{"activo": false}`.
+@router.get("/alumnos/{id_alumno}", response_model=AlumnoDetalle)
+def obtener_alumno(id_alumno: int, db: Db, usuario: ConAcceso):
+    """Cabecera de la vista de detalle."""
+    return alumno_service.obtener_alumno(db, usuario, id_alumno)
 
-    No hay DELETE a proposito: el borrado definitivo de alumnos esta descartado.
-    """
-    try:
-        return actualizar_alumno(
-            db, id_alumno, data, usuario_actual,
-            alcance=_alcance_si_es_docente(db, usuario_actual),
-        )
-    except AlumnoNoExiste:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No existe un alumno con id_alumno={id_alumno}",
-        )
-    except FueraDeTuAlcance:
-        raise ERROR_FUERA_DE_ALCANCE
-    except ColegioNoExiste:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No existe un colegio con id_colegio={data.id_colegio}",
-        )
-    except GradoNoExiste:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No existe un grado con id_grado={data.id_grado}",
-        )
-    except ProgramaNoExiste:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No existe un programa con id_programa_actual={data.id_programa_actual}",
-        )
+
+@router.patch("/alumnos/{id_alumno}", response_model=AlumnoItem)
+def editar_alumno(id_alumno: int, data: AlumnoEditar, db: Db, usuario: ConAcceso):
+    return alumno_service.editar_alumno(db, id_alumno, data, usuario)
+
+
+@router.patch("/alumnos/{id_alumno}/activar", response_model=AlumnoItem)
+def activar_alumno(id_alumno: int, db: Db, usuario: ConAcceso):
+    return alumno_service.cambiar_estado(db, id_alumno, True, usuario)
+
+
+@router.patch("/alumnos/{id_alumno}/desactivar", response_model=AlumnoItem)
+def desactivar_alumno(id_alumno: int, db: Db, usuario: ConAcceso):
+    return alumno_service.cambiar_estado(db, id_alumno, False, usuario)
+
+
+# ── Pestañas de la vista de detalle (año escolar en curso) ──────────────────────────
+
+@router.get("/alumnos/{id_alumno}/resumen", response_model=Resumen)
+def resumen(id_alumno: int, db: Db, usuario: ConAcceso):
+    alumno_service.alumno_visible(db, usuario, id_alumno)
+    return detalle.resumen(db, id_alumno)
+
+
+@router.get("/alumnos/{id_alumno}/registro-vuelo", response_model=list[RegistroVuelo])
+def registro_vuelo(id_alumno: int, db: Db, usuario: ConAcceso):
+    alumno_service.alumno_visible(db, usuario, id_alumno)
+    return detalle.registro_vuelo(db, id_alumno)
+
+
+@router.get("/alumnos/{id_alumno}/rubrica", response_model=Rubrica)
+def rubrica(id_alumno: int, db: Db, usuario: ConAcceso):
+    alumno_service.alumno_visible(db, usuario, id_alumno)
+    return detalle.rubrica(db, id_alumno)
+
+
+@router.get("/alumnos/{id_alumno}/lectura", response_model=list[LecturaSemanal])
+def lectura(id_alumno: int, db: Db, usuario: ConAcceso):
+    alumno_service.alumno_visible(db, usuario, id_alumno)
+    return detalle.lectura(db, id_alumno)
+
+
+@router.get("/alumnos/{id_alumno}/historial", response_model=Paginado[EventoHistorial])
+def historial(id_alumno: int, db: Db, usuario: ConAcceso, page: Pagina = 1):
+    alumno_service.alumno_visible(db, usuario, id_alumno)
+    return detalle.historial(db, id_alumno, page)
