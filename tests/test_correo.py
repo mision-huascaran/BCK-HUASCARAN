@@ -57,6 +57,7 @@ def test_se_conecta_al_smtp_de_gmail_con_las_credenciales_configuradas(correos):
     enviar_correo_confirmacion_cambio("rosa@sicedu.test", "Rosa")
 
     assert correos.servidor == ("smtp.gmail.com", 465)
+    assert correos.timeout == 10
     assert correos.credenciales == (settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
 
 
