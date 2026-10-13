@@ -111,10 +111,14 @@ def test_dos_corridas_no_duplican_nada(db, base):
                                           ColegioPrograma)}
     segunda = sembrar_e2e(db, VARIABLES)
 
-    assert not primera.errores and not primera.advertencias
-    assert primera.creados["usuario E2E"] == 4 and primera.creados["colegio E2E"] == 1
+    assert not primera.errores
+    assert not primera.advertencias
+    assert primera.creados["usuario E2E"] == 4
+    assert primera.creados["colegio E2E"] == 1
     assert primera.creados["asignación E2E"] == 12
-    assert not segunda.errores and not segunda.creados and not segunda.actualizados
+    assert not segunda.errores
+    assert not segunda.creados
+    assert not segunda.actualizados
     assert {m: contar(db, m) for m in totales} == totales
     assert totales[Usuario] == 5  # las 4 cuentas E2E más el Supervisor original
 
@@ -143,7 +147,8 @@ def test_colegio_y_cuentas_con_los_datos_pedidos(db, base):
         assert (roles[cuenta.id_rol], cuenta.nombres, cuenta.apellidos, cuenta.dni, cuenta.activo) == (
             rol, nombres, "Playwright", dni, activo
         )
-        assert cuenta.password_hash.startswith("$2") and verify_password(CONTRASENAS[variable], cuenta.password_hash)
+        assert cuenta.password_hash.startswith("$2")
+        assert verify_password(CONTRASENAS[variable], cuenta.password_hash)
         assert not cuenta.es_supervisor_original
 
 
@@ -169,7 +174,8 @@ def test_el_seed_reactiva_las_cuentas_activas_y_la_ficha_del_docente(db, base):
     resumen = sembrar_e2e(db, VARIABLES)
 
     docente = usuario(db, "E2E_DOCENTE_PASS")
-    assert docente.activo and db.get(Docente, docente.id_docente).activo
+    assert docente.activo
+    assert db.get(Docente, docente.id_docente).activo
     assert resumen.actualizados["usuario E2E"] == 1
 
 
@@ -236,8 +242,10 @@ def test_desactivado_si_seed_e2e_no_es_true(db, base, valor):
 
     resumen = sembrar_e2e(db, variables)
 
-    assert resumen.omitidos and not resumen.errores
-    assert contar(db, Colegio) == 0 and contar(db, Usuario) == 1
+    assert resumen.omitidos
+    assert not resumen.errores
+    assert contar(db, Colegio) == 0
+    assert contar(db, Usuario) == 1
 
 
 @pytest.mark.parametrize("entorno", ["uat", "UAT", "main", "prod", "produccion", "piloto", "", "  ", None])
@@ -249,15 +257,18 @@ def test_nunca_corre_fuera_de_qa_o_dev_aunque_seed_e2e_sea_true(db, base, entorn
 
     resumen = sembrar_e2e(db, variables)
 
-    assert resumen.errores and "no está permitido" in resumen.errores[0]
-    assert contar(db, Colegio) == 0 and contar(db, Usuario) == 1
+    assert resumen.errores
+    assert "no está permitido" in resumen.errores[0]
+    assert contar(db, Colegio) == 0
+    assert contar(db, Usuario) == 1
 
 
 @pytest.mark.parametrize("entorno", ["qa", "dev", " QA "])
 def test_corre_en_qa_y_dev(db, base, entorno):
     resumen = sembrar_e2e(db, {**VARIABLES, "ENTORNO": entorno})
 
-    assert not resumen.errores and resumen.creados["usuario E2E"] == 4
+    assert not resumen.errores
+    assert resumen.creados["usuario E2E"] == 4
 
 
 def test_lee_las_variables_del_entorno_del_proceso(db, base, monkeypatch):
@@ -272,7 +283,8 @@ def test_sin_supervisor_original_no_siembra(db):
 
     resumen = sembrar_e2e(db, VARIABLES)
 
-    assert resumen.advertencias and contar(db, Colegio) == 0
+    assert resumen.advertencias
+    assert contar(db, Colegio) == 0
 
 
 def test_contrasena_faltante_omite_solo_esa_cuenta(db, base):
@@ -281,10 +293,14 @@ def test_contrasena_faltante_omite_solo_esa_cuenta(db, base):
 
     resumen = sembrar_e2e(db, variables)
 
-    assert usuario(db, "E2E_SUPERVISOR_PASS") is None and usuario(db, "E2E_DIRECTIVO_PASS") is None
-    assert usuario(db, "E2E_DOCENTE_PASS") is not None and usuario(db, "E2E_INACTIVO_PASS") is not None
-    assert len(resumen.advertencias) == 2 and not resumen.errores
-    assert all("E2E_" in a and "Directivo-E2e-1" not in a for a in resumen.advertencias)
+    assert usuario(db, "E2E_SUPERVISOR_PASS") is None
+    assert usuario(db, "E2E_DIRECTIVO_PASS") is None
+    assert usuario(db, "E2E_DOCENTE_PASS") is not None
+    assert usuario(db, "E2E_INACTIVO_PASS") is not None
+    assert len(resumen.advertencias) == 2
+    assert not resumen.errores
+    assert all("E2E_" in a for a in resumen.advertencias)
+    assert all("Directivo-E2e-1" not in a for a in resumen.advertencias)
 
 
 def test_contrasena_que_no_cumple_cu006_no_crea_la_cuenta(db, base):
@@ -357,7 +373,8 @@ def test_no_toca_al_supervisor_original(db, base):
     sembrar_e2e(db, VARIABLES)
     sembrar_e2e(db, VARIABLES)
 
-    assert antes["es_supervisor_original"] and fila_actual(db, base) == antes
+    assert antes["es_supervisor_original"]
+    assert fila_actual(db, base) == antes
 
 
 def test_dni_en_uso_por_otra_cuenta_no_la_pisa(db, base):
@@ -372,7 +389,8 @@ def test_dni_en_uso_por_otra_cuenta_no_la_pisa(db, base):
 
     assert usuario(db, "E2E_SUPERVISOR_PASS") is None
     assert any("90000002" in e for e in resumen.errores)
-    assert antes["dni"] == "90000002" and fila_actual(db, ajena.id_usuario) == antes
+    assert antes["dni"] == "90000002"
+    assert fila_actual(db, ajena.id_usuario) == antes
     assert resumen.creados["usuario E2E"] == 3
 
 
