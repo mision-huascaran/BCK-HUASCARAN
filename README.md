@@ -4,7 +4,7 @@ Backend de SICEDU (Sistema de Centralización de Datos Educativos) para Misión 
 FastAPI + SQLModel + PostgreSQL + Alembic. La API está documentada en [API.md](API.md) y el
 diseño de base de datos en el documento de diseño v3.
 
-## Levantar en local
+## Levantar bakend en local
 
 ```bash
 python run.py
