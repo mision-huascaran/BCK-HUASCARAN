@@ -1,9 +1,10 @@
 """inicializar: orquestador de la carga de datos maestros al arrancar el contenedor.
 
 Orden: cargar-catalogos -> inicializar-supervisor-original -> cargar-calendario ->
-cargar-feriados -> cargar-colegios-iniciales (este último solo actúa si
-CARGAR_COLEGIOS_INICIALES=true). Cada paso usa su propia sesión: si uno falla por un dato,
-se registra y se sigue con el siguiente. Solo un fallo de infraestructura corta la carga.
+cargar-feriados -> cargar-colegios-iniciales (solo si CARGAR_COLEGIOS_INICIALES=true) ->
+sembrar-e2e (solo con SEED_E2E=true en qa o dev). Cada paso usa su propia sesión: si uno
+falla por un dato, se registra y se sigue con el siguiente. Solo un fallo de
+infraestructura corta la carga.
 """
 from typing import Callable
 
@@ -15,6 +16,7 @@ from app.cli.catalogos import cargar_catalogos
 from app.cli.colegios import cargar_colegios_iniciales
 from app.cli.comun import Resumen, log
 from app.cli.feriados import cargar_feriados
+from app.cli.seed_e2e import sembrar_e2e
 from app.cli.supervisor import inicializar_supervisor_original
 from app.core.database import engine
 
@@ -51,6 +53,7 @@ def inicializar() -> Resumen:
         ("cargar-calendario", cargar_calendario),
         ("cargar-feriados", cargar_feriados),
         ("cargar-colegios-iniciales", cargar_colegios_iniciales),
+        ("sembrar-e2e", sembrar_e2e),
     ]
     total = Resumen()
     for nombre, paso in pasos:

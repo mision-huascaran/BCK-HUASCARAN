@@ -16,6 +16,7 @@ from app.cli.comun import log
 from app.cli.feriados import cargar_feriados
 from app.cli.inicializar import ErrorInfraestructura, ejecutar_paso, inicializar
 from app.cli.recovery_keys import SalidaNoPermitida, generar_recovery_keys
+from app.cli.seed_e2e import sembrar_e2e
 from app.cli.supervisor import inicializar_supervisor_original
 
 
@@ -31,6 +32,7 @@ def crear_parser() -> argparse.ArgumentParser:
     sub.add_parser("cargar-feriados", help="feriados nacionales de lunes a viernes")
     colegios = sub.add_parser("cargar-colegios-iniciales", help="solo con CARGAR_COLEGIOS_INICIALES=true")
     colegios.add_argument("--archivo", type=Path, default=ARCHIVO_COLEGIOS)
+    sub.add_parser("sembrar-e2e", help="solo con SEED_E2E=true y ENTORNO qa o dev")
     sub.add_parser("inicializar", help="todo lo anterior en orden (arranque del contenedor)")
     return parser
 
@@ -42,6 +44,7 @@ def _paso_unico(args: argparse.Namespace):
         "cargar-calendario": lambda db: cargar_calendario(db, args.archivo),
         "cargar-feriados": cargar_feriados,
         "cargar-colegios-iniciales": lambda db: cargar_colegios_iniciales(db, args.archivo),
+        "sembrar-e2e": sembrar_e2e,
     }
     return pasos[args.comando]
 
