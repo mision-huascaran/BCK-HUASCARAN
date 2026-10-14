@@ -66,16 +66,3 @@ class Sesion(SQLModel, table=True):
     fin: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
     tipo_cierre: Optional[str] = Field(default=None, sa_type=Text)
 
-
-class RecoveryKey(SQLModel, table=True):
-    """Llaves de recuperación de un solo uso del Supervisor original (CU001)."""
-
-    __tablename__ = "recovery_key"
-
-    id_recovery_key: Optional[int] = Field(default=None, primary_key=True)
-    id_usuario: int = Field(foreign_key="usuario.id_usuario")
-    # Hash bcrypt; la llave en texto plano solo existe en el .txt entregado.
-    llave_hash: str = Field(sa_type=Text)
-    creada_en: datetime = Field(sa_type=UTCDateTime)
-    # No null = llave usada (invalidada).
-    usada_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)

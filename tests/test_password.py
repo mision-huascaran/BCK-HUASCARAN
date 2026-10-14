@@ -1,4 +1,4 @@
-"""Recuperación y cambio de contraseña con PIN (CU004 a CU006) y Recovery Keys (CU001)."""
+"""Recuperación y cambio de contraseña con PIN (CU001, CU004 a CU006)."""
 from datetime import timedelta
 
 import pytest
@@ -7,9 +7,9 @@ from sqlmodel import Session, select
 
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Usuario
-from app.models.seguridad import RecoveryKey, Sesion
+from app.models.seguridad import Sesion
 from app.services.password_service import enviar_pin, solicitar_pin_publico
-from tests.conftest import CORREOS, LLAVES, PASSWORD, cabecera_de, motivo, releer
+from tests.conftest import CORREOS, PASSWORD, cabecera_de, motivo, releer
 
 NUEVA = "Nueva-Clave-9"
 DOCENTE = CORREOS["Docente"]
@@ -34,6 +34,18 @@ def restablecer(client, codigo, nueva=NUEVA, confirmacion=None, correo=DOCENTE):
 
 def otro_pin(pin: str) -> str:
     return f"{(int(pin) + 1) % 1_000_000:06d}"
+
+
+def verificar(client, codigo, correo=DOCENTE):
+    return client.post("/password/verificar-codigo", json={"correo": correo, "codigo": codigo})
+
+
+def fallar(client, correcto, veces, correo=DOCENTE) -> list:
+    return [motivo(verificar(client, otro_pin(correcto), correo)) for _ in range(veces)]
+
+
+def intentos(db, usuario) -> int:
+    return releer(db, Usuario, usuario.id_usuario).codigo_verificacion_intentos
 
 
 # ── CU005: pedir el PIN ─────────────────────────────────────────────────────────────
@@ -135,17 +147,60 @@ def test_cu006_pin_vencido_a_los_15_minutos(client, entorno, correos, reloj):
     assert motivo(respuesta) == "expirado"
 
 
-def test_cu006_el_quinto_fallo_agota_el_pin(client, entorno, correos):
+def test_cu006_el_quinto_fallo_agota_el_pin(client, db, entorno, correos):
     pedir_pin(client)
     correcto = correos.pin(DOCENTE)
-    motivos = [
-        motivo(client.post("/password/verificar-codigo", json={"correo": DOCENTE, "codigo": otro_pin(correcto)}))
-        for _ in range(5)
-    ]
 
-    assert motivos == ["incorrecto"] * 4 + ["intentos_agotados"]
-    despues = client.post("/password/verificar-codigo", json={"correo": DOCENTE, "codigo": correcto})
-    assert motivo(despues) == "incorrecto"
+    assert fallar(client, correcto, 5) == ["incorrecto"] * 4 + ["intentos_agotados"]
+    usuario = releer(db, Usuario, entorno.docente.id_usuario)
+    assert (usuario.codigo_verificacion, usuario.codigo_verificacion_intentos) == (None, 5)
+
+
+def test_cu006_agotado_se_mantiene_hasta_pedir_otro_pin(client, entorno, correos):
+    """Aunque recargue la página y pruebe el PIN correcto, sigue viendo "agotado"."""
+    pedir_pin(client)
+    correcto = correos.pin(DOCENTE)
+    fallar(client, correcto, 5)
+
+    for respuesta in (verificar(client, correcto), verificar(client, "000000"), restablecer(client, correcto)):
+        assert respuesta.status_code == 400
+        assert respuesta.json() == {
+            "detail": "Ha agotado los intentos permitidos. Solicite un nuevo PIN para continuar.",
+            "motivo": "intentos_agotados",
+        }
+
+
+def test_cu006_pedir_un_pin_nuevo_reinicia_el_contador(client, db, entorno, correos):
+    pedir_pin(client)
+    fallar(client, correos.pin(DOCENTE), 5)
+
+    pedir_pin(client)
+
+    assert intentos(db, entorno.docente) == 0
+    assert fallar(client, correos.pin(DOCENTE), 1) == ["incorrecto"]
+    assert verificar(client, correos.pin(DOCENTE)).status_code == 200
+
+
+def test_cu006_usarlo_con_exito_reinicia_el_contador(client, db, entorno, correos):
+    pedir_pin(client)
+    fallar(client, correos.pin(DOCENTE), 3)
+
+    assert restablecer(client, correos.pin(DOCENTE)).status_code == 200
+
+    assert intentos(db, entorno.docente) == 0
+    assert motivo(verificar(client, "123456")) == "incorrecto"
+
+
+def test_cu006_que_venza_reinicia_el_contador(client, db, entorno, correos, reloj):
+    reloj.fijar(ahora_utc())
+    pedir_pin(client)
+    fallar(client, correos.pin(DOCENTE), 3)
+    reloj.avanzar(minutes=15, seconds=1)
+
+    assert motivo(verificar(client, correos.pin(DOCENTE))) == "expirado"
+
+    assert intentos(db, entorno.docente) == 0
+    assert motivo(verificar(client, correos.pin(DOCENTE))) == "incorrecto"
 
 
 def test_cu006_con_el_maximo_de_intentos_ya_guardado_se_agota(client, db, entorno, correos):
@@ -332,64 +387,48 @@ def test_me_password_codigo_incorrecto(client, entorno, cabeceras, correos):
     assert motivo(respuesta) == "incorrecto"
 
 
-# ── CU001: Recovery Keys del Supervisor original ────────────────────────────────────
+def test_me_password_agotado_se_mantiene_hasta_pedir_otro_pin(client, db, entorno, cabeceras, correos):
+    cabecera = cabeceras["Docente"]
+    client.post("/me/password/codigo", headers=cabecera)
+    correcto = correos.pin(DOCENTE)
 
-def recuperar(client, llave, correo=ORIGINAL, nueva=NUEVA, confirmacion=None):
-    return client.post(
+    def verificar_con_sesion(codigo):
+        return motivo(client.post("/me/password/verificar-codigo", json={"codigo": codigo}, headers=cabecera))
+
+    assert [verificar_con_sesion(otro_pin(correcto)) for _ in range(5)] == ["incorrecto"] * 4 + ["intentos_agotados"]
+    assert verificar_con_sesion(correcto) == "intentos_agotados"
+    cambio = client.post(
+        "/me/password",
+        json={"codigo": correcto, "contraseña_nueva": NUEVA, "confirmar_contraseña_nueva": NUEVA},
+        headers=cabecera,
+    )
+    assert motivo(cambio) == "intentos_agotados"
+
+    client.post("/me/password/codigo", headers=cabecera)
+    assert intentos(db, entorno.docente) == 0
+    assert client.post(
+        "/me/password/verificar-codigo", json={"codigo": correos.pin(DOCENTE)}, headers=cabecera
+    ).status_code == 200
+
+
+# ── CU001: el Supervisor original recupera su cuenta solo con PIN ───────────────────
+
+def test_cu001_ya_no_existe_la_recuperacion_con_llave(client, entorno):
+    respuesta = client.post(
         "/password/recuperar-con-llave",
-        json={
-            "correo": correo,
-            "llave": llave,
-            "contraseña_nueva": nueva,
-            "confirmar_contraseña_nueva": confirmacion if confirmacion is not None else nueva,
-        },
+        json={"correo": ORIGINAL, "llave": "ABCD", "contraseña_nueva": NUEVA, "confirmar_contraseña_nueva": NUEVA},
     )
 
+    assert respuesta.status_code == 404
 
-def test_cu001_llave_valida_recupera_la_cuenta_y_se_consume(client, db, entorno):
-    respuesta = recuperar(client, LLAVES[0].lower().replace("-", " "))
+
+def test_cu001_el_supervisor_original_recupera_con_pin(client, db, entorno, correos):
+    cabecera = cabecera_de(db, entorno.usuarios["Original"])
+    pedir_pin(client, ORIGINAL)
+
+    respuesta = restablecer(client, correos.pin(ORIGINAL), correo=ORIGINAL)
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {"mensaje": "Contraseña actualizada correctamente.", "llaves_restantes": 9}
     assert client.post("/login", json={"correo": ORIGINAL, "password": NUEVA}).status_code == 200
-    usada = recuperar(client, LLAVES[0], nueva="Otra-Clave-77")
-    assert usada.status_code == 400
-    assert motivo(usada) == "llave_invalida"
-    db.expire_all()
-    assert len(db.exec(select(RecoveryKey).where(RecoveryKey.usada_en.is_not(None))).all()) == 1
-
-
-@pytest.mark.parametrize("correo", [ORIGINAL, CORREOS["Supervisor"], "nadie@sicedu.test"])
-def test_cu001_llave_invalida_da_400_generico(client, entorno, correo):
-    respuesta = recuperar(client, LLAVES[1] if correo != ORIGINAL else "AAAA-BBBB", correo=correo)
-
-    assert respuesta.status_code == 400
-    assert respuesta.json() == {"detail": "Correo o llave inválidos.", "motivo": "llave_invalida"}
-
-
-def test_cu001_el_quinto_fallo_bloquea_y_comparte_contador_con_el_login(client, entorno):
-    for _ in range(4):
-        client.post("/login", json={"correo": ORIGINAL, "password": "Incorrecta-1"})
-
-    respuesta = recuperar(client, "llave-equivocada")
-
-    assert respuesta.status_code == 429
-    assert motivo(respuesta) == "bloqueo_temporal"
-    assert motivo(recuperar(client, LLAVES[2])) == "bloqueo_temporal"
-
-
-def test_cu001_contrasena_invalida_no_consume_la_llave(client, db, entorno):
-    respuesta = recuperar(client, LLAVES[3], nueva="corta")
-
-    assert respuesta.status_code == 422
-    db.expire_all()
-    assert db.exec(select(RecoveryKey).where(RecoveryKey.usada_en.is_not(None))).all() == []
-
-
-def test_cu001_recuperar_invalida_las_sesiones(client, db, entorno):
-    cabecera = cabecera_de(db, entorno.usuarios["Original"])
-
-    recuperar(client, LLAVES[4])
-
     assert motivo(client.get("/me", headers=cabecera)) == "sesion_invalida"
     assert ahora_utc() - timedelta(minutes=1) < releer(db, Usuario, entorno.usuarios["Original"].id_usuario).modificado_en

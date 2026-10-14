@@ -28,7 +28,6 @@ CAMPOS_SENSIBLES = frozenset(
         "codigo_verificacion",
         "codigo_verificacion_expira",
         "codigo_verificacion_intentos",
-        "llave_hash",
     }
 )
 

@@ -9,5 +9,5 @@ __pycache__/
 coverage.xml
 .pytest_cache/
 
-# Recovery Keys en texto plano (python -m app.cli generar-recovery-keys): nunca al repo.
+# Recovery Keys (eliminadas de CU001) en texto plano que queden de antes: nunca al repo.
 *recovery*key*.txt

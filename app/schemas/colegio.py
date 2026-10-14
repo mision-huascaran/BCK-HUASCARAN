@@ -14,8 +14,8 @@ SECCION_POR_DEFECTO = "Única"
 class ColegioCrear(BaseModel):
     nombre: Texto
     departamento: Texto
-    distrito: Texto
-    provincia: Optional[Texto] = None
+    provincia: Texto
+    distrito: Optional[Texto] = None
     nivel_educativo: Texto = NIVEL_EDUCATIVO_POR_DEFECTO
     seccion: Texto = SECCION_POR_DEFECTO
     # Ids de catálogo; al menos uno. Los repetidos se ignoran.
@@ -25,14 +25,14 @@ class ColegioCrear(BaseModel):
 
 class ColegioEditar(ParcheSinNulos):
     """Campos opcionales. `grados` y `programas` son la lista completa (reemplazan a la
-    actual). `provincia` se puede vaciar con null; el resto, no."""
+    actual). `distrito` se puede vaciar con null; el resto, no."""
 
-    CAMPOS_NULABLES = frozenset({"provincia"})
+    CAMPOS_NULABLES = frozenset({"distrito"})
 
     nombre: Optional[Texto] = None
     departamento: Optional[Texto] = None
-    distrito: Optional[Texto] = None
     provincia: Optional[Texto] = None
+    distrito: Optional[Texto] = None
     nivel_educativo: Optional[Texto] = None
     seccion: Optional[Texto] = None
     grados: Optional[list[int]] = Field(default=None, min_length=1)
@@ -46,8 +46,8 @@ class ColegioItem(BaseModel):
     nombre: str
     nivel_educativo: str
     departamento: str
-    provincia: Optional[str] = None
-    # Nullable en BD por los colegios anteriores a v3; obligatorio para los nuevos.
+    provincia: str
+    # Opcional (CU013): null si no se conoce.
     distrito: Optional[str] = None
     seccion: str
     activo: bool

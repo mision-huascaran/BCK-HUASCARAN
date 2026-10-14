@@ -98,11 +98,7 @@ def _confirmar(db: Session) -> None:
         db.rollback()
         mensaje = str(error.orig)
         if "docente_colegio_grado" in mensaje:
-            raise ErrorNegocio(
-                status.HTTP_409_CONFLICT,
-                "Uno de los grados ya fue asignado a otro docente en ese periodo.",
-                motivo="grado_asignado",
-            ) from error
+            raise asignaciones.grado_asignado() from error
         if "dni" in mensaje:
             raise ErrorNegocio(status.HTTP_409_CONFLICT, "El DNI ya está registrado.", motivo="dni_duplicado") from error
         if "correo" in mensaje:

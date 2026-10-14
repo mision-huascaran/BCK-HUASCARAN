@@ -21,6 +21,10 @@ class InicioDocente(BaseModel):
     # Vencimiento de la sesión del token; viene siempre, haya o no actividad (CU010).
     sesion_expira: datetime
     puede_iniciar_actividad: bool
+    # Por qué no puede (null si puede); el front muestra el mensaje con el botón
+    # deshabilitado. Los mismos motivos que el 409 de POST /actividades, salvo
+    # `actividad_activa` (= `actividad_activa_existente`).
+    motivo_no_puede_iniciar: Optional[Literal["actividad_activa", "fuera_de_periodo", "sin_asignaciones"]] = None
     registros_offline_pendientes: Optional[int] = None
 
 

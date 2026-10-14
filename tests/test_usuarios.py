@@ -120,7 +120,10 @@ def test_cu016_un_aula_solo_tiene_un_docente(client, entorno, sup):
 
     assert respuesta.status_code == 409
     assert motivo(respuesta) == "grado_asignado"
-    assert "Rosa Quispe" in respuesta.json()["detail"]
+    assert respuesta.json()["detail"] == (
+        "Error: Uno o más grados seleccionados para este colegio ya se encuentran asignados a "
+        "otro docente en el periodo vigente."
+    )
 
 
 @pytest.mark.parametrize(

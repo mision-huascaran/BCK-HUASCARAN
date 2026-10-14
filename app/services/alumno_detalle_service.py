@@ -3,6 +3,9 @@
 Todas trabajan sobre el año escolar de referencia: el vigente o, entre años, el último que
 ya empezó (`calendario.anio_de_referencia`). Los permisos (alcance del Docente) los aplica
 el router con `alumno_service.alumno_visible`.
+
+Las pestañas son mini-grillas: Registro de Vuelo, una fila por periodo (4 como máximo);
+Rúbrica y Seguimiento de Lectura, los 5 registros más recientes.
 """
 from collections import defaultdict
 from datetime import datetime
@@ -34,7 +37,7 @@ from app.schemas.alumno import (
     EventoHistorial,
     LecturaSemanal,
     LibroLsb,
-    NivelActual,
+    NivelColocado,
     RegistroVuelo,
     Resumen,
     Rubrica,
@@ -43,38 +46,52 @@ from app.schemas.alumno import (
 )
 from app.services.calendario import anio_de_referencia
 
+# Filas de las mini-grillas del detalle (CU015).
+FILAS_REGISTRO_VUELO = 4  # una por periodo
+FILAS_RECIENTES = 5  # Rúbrica y Seguimiento de Lectura
+
 # ── Resumen ─────────────────────────────────────────────────────────────────────────
 
 def resumen(db: Session, id_alumno: int) -> Resumen:
+    """Tarjetas del detalle. Sin datos: nivel colocado null, 0 libros y 0 % (CU015)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return Resumen()
     return Resumen(
-        nivel_actual=_nivel_actual(db, id_alumno, anio.id_anio_escolar),
+        nivel_colocado=_nivel_colocado(db, id_alumno, anio.id_anio_escolar),
         libros_leidos_anio=_libros_leidos(db, id_alumno, anio.id_anio_escolar),
         asistencia_porcentaje=_asistencia(db, id_alumno, anio.id_anio_escolar),
     )
 
 
-def _nivel_actual(db: Session, id_alumno: int, id_anio: int) -> Optional[NivelActual]:
-    """Nivel del `nivel_final_mensual` más reciente del año, o None."""
+def _nivel_colocado(db: Session, id_alumno: int, id_anio: int) -> Optional[NivelColocado]:
+    """Letra Raz-Kids colocada en el Registro de Vuelo más reciente del año: el del
+    periodo más avanzado que tenga `nivel_colocado` (uno incompleto, sin él, no cuenta).
+    None si ninguno lo tiene."""
     fila = db.exec(
-        select(NivelFinalMensual.mes, NivelGeneral.nombre_nivel)
-        .join(NivelGeneral, NivelGeneral.id_nivel_general == NivelFinalMensual.id_nivel_final)
-        .where(NivelFinalMensual.id_alumno == id_alumno, NivelFinalMensual.id_anio_escolar == id_anio)
-        .order_by(col(NivelFinalMensual.mes).desc())
+        select(NivelRazkids.letra, NivelRazkids.id_nivel_rk, PeriodoAcademico.numero)
+        .select_from(EvaluacionDiagnosticaAlumno)
+        .join(
+            EvaluacionDiagnostica,
+            EvaluacionDiagnostica.id_evaluacion_diagnostica == EvaluacionDiagnosticaAlumno.id_evaluacion_diagnostica,
+        )
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == EvaluacionDiagnostica.id_periodo_academico)
+        .join(NivelRazkids, NivelRazkids.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
+        .where(EvaluacionDiagnosticaAlumno.id_alumno == id_alumno, PeriodoAcademico.id_anio_escolar == id_anio)
+        .order_by(col(PeriodoAcademico.fecha_inicio).desc())
     ).first()
-    return NivelActual(nombre=fila[1], mes=fila[0]) if fila else None
+    if fila is None:
+        return None
+    letra, id_nivel_rk, numero = fila
+    return NivelColocado(letra=letra, id_nivel_rk=id_nivel_rk, numero_periodo=numero)
 
 
-def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> Optional[int]:
-    """LSL + LSB de los reportes del año; None si no tiene ningún reporte en el año."""
-    reportes, lsl = db.exec(
-        select(func.count(ReporteSemanalAlumno.id), func.coalesce(func.sum(ReporteSemanalAlumno.cantidad_lsl), 0))
+def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
+    """LSL + LSB de los reportes del año (0 si no tiene ninguno)."""
+    lsl = db.exec(
+        select(func.coalesce(func.sum(ReporteSemanalAlumno.cantidad_lsl), 0))
         .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == id_anio)
     ).one()
-    if not reportes:
-        return None
     lsb = db.exec(
         select(func.count(LibroSubidaNivel.id))
         .join(ReporteSemanalAlumno, ReporteSemanalAlumno.id == LibroSubidaNivel.id_reporte_semanal)
@@ -83,15 +100,15 @@ def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> Optional[int]:
     return int(lsl) + lsb
 
 
-def _asistencia(db: Session, id_alumno: int, id_anio: int) -> Optional[float]:
-    """% de semanas asistidas sobre las registradas en el año, con 1 decimal; None sin filas."""
+def _asistencia(db: Session, id_alumno: int, id_anio: int) -> float:
+    """% de semanas asistidas sobre las registradas en el año, con 1 decimal; 0 sin filas."""
     filas = db.exec(
         select(AsistenciaSemanal.asistio)
         .join(SemanaReporte, SemanaReporte.id_semana == AsistenciaSemanal.id_semana)
         .where(AsistenciaSemanal.id_alumno == id_alumno, SemanaReporte.id_anio_escolar == id_anio)
     ).all()
     if not filas:
-        return None
+        return 0.0
     return round(100 * sum(1 for asistio in filas if asistio) / len(filas), 1)
 
 
@@ -122,7 +139,10 @@ def registro_vuelo(db: Session, id_alumno: int) -> list[RegistroVuelo]:
             EvaluacionDiagnosticaAlumno.id_alumno == id_alumno,
             PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
         )
-        .order_by(PeriodoAcademico.numero)
+        # Una fila por periodo (UNIQUE de la evaluación por periodo y del alumno por
+        # evaluación); si el año tuviera más periodos que filas, se quedan los últimos.
+        .order_by(col(PeriodoAcademico.numero).desc())
+        .limit(FILAS_REGISTRO_VUELO)
     ).all()
     return [
         RegistroVuelo(
@@ -130,7 +150,7 @@ def registro_vuelo(db: Session, id_alumno: int) -> list[RegistroVuelo]:
             aciertos=registro.aciertos_prueba, total=registro.total_prueba,
             nivel_colocado=nivel_colocado, nivel_general=nivel_general, observacion=registro.observacion,
         )
-        for corte, fecha, ciclo, nivel_entrada, registro, nivel_colocado, nivel_general in filas
+        for corte, fecha, ciclo, nivel_entrada, registro, nivel_colocado, nivel_general in reversed(filas)
     ]
 
 
@@ -148,12 +168,14 @@ def rubrica(db: Session, id_alumno: int) -> Rubrica:
         .outerjoin(comprension, comprension.id_nivel_rubrica == RubricaRegistroSemanal.id_nivel_comprension)
         .where(RubricaRegistroSemanal.id_alumno == id_alumno, RubricaRegistroSemanal.id_anio_escolar == anio.id_anio_escolar)
         .order_by(col(SemanaReporte.fecha_inicio).desc())
+        .limit(FILAS_RECIENTES)
     ).all()
     mensuales = db.exec(
         select(NivelFinalMensual, NivelGeneral.nombre_nivel)
         .join(NivelGeneral, NivelGeneral.id_nivel_general == NivelFinalMensual.id_nivel_final)
         .where(NivelFinalMensual.id_alumno == id_alumno, NivelFinalMensual.id_anio_escolar == anio.id_anio_escolar)
         .order_by(col(NivelFinalMensual.mes).desc())
+        .limit(FILAS_RECIENTES)
     ).all()
     return Rubrica(
         semanales=[
@@ -182,6 +204,7 @@ def lectura(db: Session, id_alumno: int) -> list[LecturaSemanal]:
         .join(SemanaReporte, SemanaReporte.id_semana == ReporteSemanalAlumno.id_semana)
         .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == anio.id_anio_escolar)
         .order_by(col(SemanaReporte.fecha_inicio).desc())
+        .limit(FILAS_RECIENTES)
     ).all()
     libros: dict[int, list[LibroLsb]] = defaultdict(list)
     if reportes:

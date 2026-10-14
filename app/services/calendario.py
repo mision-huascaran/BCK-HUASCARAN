@@ -84,6 +84,40 @@ def anio_de_referencia(db: Session) -> Optional[AnioEscolar]:
     ).first()
 
 
+def periodo_de_referencia_del_anio(db: Session) -> Optional[PeriodoAcademico]:
+    """Periodo que usan los indicadores del año en curso (p. ej. Colegios Operando, CU012),
+    para que no caigan a 0 en los recesos:
+
+    - el vigente;
+    - entre periodos, el próximo que empiece dentro del año de referencia
+      (`anio_de_referencia`);
+    - si ese año ya terminó (no le quedan periodos por empezar), el último periodo
+      terminado, aunque ya esté cargado el calendario del año siguiente.
+
+    Difiere de `periodo_de_referencia` solo entre años: aquel salta al año siguiente
+    (sirve para asignar datos nuevos); este se queda con el que terminó (sirve para mostrar
+    lo que hubo). None si no hay ningún periodo cargado.
+    """
+    vigente = periodo_vigente(db)
+    if vigente is not None:
+        return vigente
+    hoy = hoy_lima()
+    anio = anio_de_referencia(db)
+    if anio is not None:
+        proximo = db.exec(
+            select(PeriodoAcademico)
+            .where(PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar, PeriodoAcademico.fecha_inicio > hoy)
+            .order_by(col(PeriodoAcademico.fecha_inicio))
+        ).first()
+        if proximo is not None:
+            return proximo
+    return db.exec(
+        select(PeriodoAcademico)
+        .where(PeriodoAcademico.fecha_fin < hoy)
+        .order_by(col(PeriodoAcademico.fecha_fin).desc())
+    ).first()
+
+
 # ── Días hábiles ────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)

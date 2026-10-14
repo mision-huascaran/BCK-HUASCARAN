@@ -5,6 +5,7 @@ actividades se cierran las sesiones vencidas, para no contar como activa una act
 de una sesión que ya expiró.
 """
 from datetime import date, timedelta
+from typing import Optional
 
 from sqlalchemy import func
 from sqlmodel import Session, col, select
@@ -15,9 +16,14 @@ from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadActiva
 from app.schemas.inicio import AlertaInactividad, InicioDirectivo, InicioDocente, InicioSupervisor
-from app.services.actividad import actividad_activa, cerrar_vencidas_y_confirmar
+from app.services.actividad import (
+    ACTIVIDAD_ACTIVA,
+    actividad_activa,
+    cerrar_vencidas_y_confirmar,
+    impedimento_para_iniciar,
+)
 from app.services.asignacion_service import a_cargo
-from app.services.calendario import cargar_dias_habiles, periodo_vigente
+from app.services.calendario import cargar_dias_habiles, periodo_de_referencia_del_anio, periodo_vigente
 from app.services.usuario_service import DOCENTE
 
 # CU011: días hábiles seguidos sin iniciar actividad a partir de los cuales se alerta.
@@ -30,24 +36,45 @@ def inicio_docente(db: Session, usuario: Usuario, sesion: Sesion) -> InicioDocen
     cerrar_vencidas_y_confirmar(db, usuario.id_usuario)
     asignaciones, totales = a_cargo(db, usuario.id_docente)
     activa = actividad_activa(db, usuario.id_docente)
+    # El mismo criterio y orden que `iniciar_actividad`: el botón se habilita justo
+    # cuando el inicio se aceptaría, y si no, el front muestra el mensaje del motivo.
+    motivo = ACTIVIDAD_ACTIVA if activa is not None else impedimento_para_iniciar(db, usuario.id_docente)
     return InicioDocente(
         asignaciones=asignaciones,
         totales=totales,
         actividad_activa=None if activa is None else ActividadActiva(id=activa.id_actividad, inicio=activa.inicio),
         sesion_expira=sesion.expira,
-        puede_iniciar_actividad=activa is None and bool(asignaciones),
+        puede_iniciar_actividad=motivo is None,
+        motivo_no_puede_iniciar=motivo,
     )
 
 
 # ── Supervisor ──────────────────────────────────────────────────────────────────────
 
-def _docentes_activos():
-    """Usuarios activos con rol Docente."""
+def _de_docentes_asignados(consulta, periodo: PeriodoAcademico):
+    """Restringe `consulta` (sobre `Usuario`) a los usuarios activos con rol Docente que
+    tienen al menos una asignación del periodo en un colegio activo (una fila por
+    asignación: agrupar o contar distintos)."""
     return (
-        select(Usuario)
-        .join(Rol, Rol.id_rol == Usuario.id_rol)
-        .where(col(Usuario.activo).is_(True), Rol.nombre == DOCENTE)
+        consulta.join(Rol, Rol.id_rol == Usuario.id_rol)
+        .join(DocenteColegioGrado, DocenteColegioGrado.id_docente == Usuario.id_docente)
+        .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
+        .where(
+            col(Usuario.activo).is_(True),
+            Rol.nombre == DOCENTE,
+            DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
+            col(Colegio.activo).is_(True),
+        )
     )
+
+
+def docentes_activos(db: Session, periodo: Optional[PeriodoAcademico]) -> int:
+    """CU011: docentes activos con asignación en el periodo (el vigente); 0 sin periodo."""
+    if periodo is None:
+        return 0
+    return db.exec(
+        _de_docentes_asignados(select(func.count(func.distinct(Usuario.id_usuario))), periodo)
+    ).one()
 
 
 def _asignaciones_en(periodo: PeriodoAcademico, columna):
@@ -76,16 +103,7 @@ def alertas_inactividad(db: Session, periodo: PeriodoAcademico, hoy: date) -> li
     importar cuántos docentes haya.
     """
     docentes = db.exec(
-        select(Usuario, func.min(DocenteColegioGrado.creado_en))
-        .join(Rol, Rol.id_rol == Usuario.id_rol)
-        .join(DocenteColegioGrado, DocenteColegioGrado.id_docente == Usuario.id_docente)
-        .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
-        .where(
-            col(Usuario.activo).is_(True),
-            Rol.nombre == DOCENTE,
-            DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
-            col(Colegio.activo).is_(True),
-        )
+        _de_docentes_asignados(select(Usuario, func.min(DocenteColegioGrado.creado_en)), periodo)
         .group_by(Usuario.id_usuario)
     ).all()
     if not docentes:
@@ -130,17 +148,16 @@ def alertas_inactividad(db: Session, periodo: PeriodoAcademico, hoy: date) -> li
 
 def inicio_supervisor(db: Session) -> InicioSupervisor:
     cerrar_vencidas_y_confirmar(db)
+    periodo = periodo_vigente(db)
     colegios = db.exec(select(func.count()).select_from(Colegio).where(col(Colegio.activo).is_(True))).one()
-    docentes = db.exec(select(func.count()).select_from(_docentes_activos().subquery())).one()
     con_actividad = db.exec(
         select(func.count(func.distinct(Actividad.id_docente)))
         .join(Sesion, Sesion.id_sesion == Actividad.id_sesion)
         .where(col(Actividad.fin).is_(None), col(Sesion.fin).is_(None), Sesion.expira > ahora_utc())
     ).one()
-    periodo = periodo_vigente(db)
     return InicioSupervisor(
         colegios_registrados=colegios,
-        docentes_activos=docentes,
+        docentes_activos=docentes_activos(db, periodo),
         docentes_con_actividad_activa=con_actividad,
         alertas=[] if periodo is None else alertas_inactividad(db, periodo, hoy_lima()),
     )
@@ -148,11 +165,25 @@ def inicio_supervisor(db: Session) -> InicioSupervisor:
 
 # ── Directivo ───────────────────────────────────────────────────────────────────────
 
+def beneficiarios_activos(db: Session) -> int:
+    """CU012: alumnos activos de colegios activos."""
+    return db.exec(
+        select(func.count())
+        .select_from(Alumno)
+        .join(Colegio, Colegio.id_colegio == Alumno.id_colegio)
+        .where(col(Alumno.activo).is_(True), col(Colegio.activo).is_(True))
+    ).one()
+
+
+def colegios_operando(db: Session) -> int:
+    """CU012: colegios activos con alguna asignación en el periodo de referencia (el
+    vigente o, en un receso, el próximo o el último del año: no cae a 0 entre periodos)."""
+    periodo = periodo_de_referencia_del_anio(db)
+    if periodo is None:
+        return 0
+    colegios = _asignaciones_en(periodo, DocenteColegioGrado.id_colegio).distinct().subquery()
+    return db.exec(select(func.count()).select_from(colegios)).one()
+
+
 def inicio_directivo(db: Session) -> InicioDirectivo:
-    beneficiarios = db.exec(select(func.count()).select_from(Alumno).where(col(Alumno.activo).is_(True))).one()
-    periodo = periodo_vigente(db)
-    operando = 0
-    if periodo is not None:
-        colegios = _asignaciones_en(periodo, DocenteColegioGrado.id_colegio).distinct().subquery()
-        operando = db.exec(select(func.count()).select_from(colegios)).one()
-    return InicioDirectivo(beneficiarios_activos=beneficiarios, colegios_operando=operando)
+    return InicioDirectivo(beneficiarios_activos=beneficiarios_activos(db), colegios_operando=colegios_operando(db))

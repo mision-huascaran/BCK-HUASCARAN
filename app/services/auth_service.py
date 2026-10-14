@@ -1,8 +1,7 @@
 """Inicio de sesión (CU002) y cierre de sesión (CU003).
 
-Bloqueo por correo: 5 fallos seguidos bloquean el correo 15 minutos, sobre la misma
-fila de `control_acceso_correo` y con el mismo mecanismo que la Recovery Key
-(app/services/control_acceso.py). Cuentan como fallo: correo inexistente, contraseña
+Bloqueo por correo: 5 fallos seguidos bloquean el correo 15 minutos, sobre la fila de
+`control_acceso_correo` del correo (app/services/control_acceso.py). Cuentan como fallo: correo inexistente, contraseña
 incorrecta y contraseña correcta de una cuenta desactivada.
 """
 import uuid

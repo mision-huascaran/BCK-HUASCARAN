@@ -2,12 +2,12 @@
 
 Los schemas solo validan la forma de la petición y normalizan el correo. La coincidencia,
 la política de CU006 y "distinta de la actual" se validan en el servicio
-(`password_service.validar_contrasena_nueva`), porque deben evaluarse después del PIN o
-de la Recovery Key y responder con el formato de `ErrorNegocio`.
+(`password_service.validar_contrasena_nueva`), porque deben evaluarse después del PIN y
+responder con el formato de `ErrorNegocio`.
 """
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel
 
 from app.core.correo import CorreoNormalizado
 
@@ -53,16 +53,6 @@ class RestablecerContrasenaRequest(BaseModel):
     confirmar_contraseña_nueva: str
 
 
-class RecuperarConLlaveRequest(BaseModel):
-    """Recuperación del Supervisor original con una Recovery Key (CU001)."""
-
-    correo: CorreoNormalizado
-    # Una llave tiene 34 caracteres con guiones; el tope solo evita cuerpos absurdos.
-    llave: str = Field(max_length=100)
-    contraseña_nueva: str
-    confirmar_contraseña_nueva: str
-
-
 # ── Responses ───────────────────────────────────────────────────────────────────────
 
 class MensajeResponse(BaseModel):
@@ -71,7 +61,3 @@ class MensajeResponse(BaseModel):
 
 class CodigoValidoResponse(BaseModel):
     valido: bool
-
-
-class RecuperarConLlaveResponse(MensajeResponse):
-    llaves_restantes: int

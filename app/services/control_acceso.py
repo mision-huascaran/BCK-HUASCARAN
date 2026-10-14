@@ -1,4 +1,4 @@
-"""Control de abuso por correo (tabla `control_acceso_correo`, CU002, CU005, CU001).
+"""Control de abuso por correo (tabla `control_acceso_correo`, CU002, CU005).
 
 Se aplica igual a correos registrados, no registrados y cuentas desactivadas: la fila se
 crea con el correo tal como llegó (normalizado), exista o no la cuenta, para que el
@@ -8,7 +8,7 @@ Dos controles independientes sobre la misma fila:
 
 - Límite de solicitudes de PIN: 5 por ventana fija de una hora.
 - Bloqueo por intentos fallidos: 5 fallos consecutivos bloquean el correo 15 minutos.
-  Lo usan el login y la Recovery Key, con un solo contador por correo para ambos.
+  Lo usa el login.
 
 Ninguna función hace commit: participan en la transacción de quien las llama.
 """

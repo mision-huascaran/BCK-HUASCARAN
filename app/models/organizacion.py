@@ -54,7 +54,8 @@ class Colegio(SQLModel, table=True):
         default="Primaria", sa_type=Text, sa_column_kwargs={"server_default": "Primaria"}
     )
     departamento: str = Field(sa_type=Text)
-    provincia: Optional[str] = Field(default=None)
+    # Obligatoria (CU013); 'Por definir' en los colegios que no la tenían.
+    provincia: str
     distrito: Optional[str] = Field(default=None, sa_type=Text)
     seccion: str = Field(default="Única", sa_type=Text, sa_column_kwargs={"server_default": "Única"})
     activo: bool = Field(default=True, sa_column_kwargs={"server_default": text("true")})

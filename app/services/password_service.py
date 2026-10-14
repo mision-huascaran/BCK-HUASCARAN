@@ -4,6 +4,11 @@ Reglas del PIN: 6 dígitos, 15 minutos de vigencia, 5 intentos fallidos como má
 solo vigente por cuenta. Deja de servir con lo primero que ocurra: vencimiento, quinto
 fallo, uso exitoso o reemplazo por uno nuevo. En la BD se guarda su HMAC (ver app/core/pin.py).
 
+Agotar los intentos deja la cuenta en estado "agotado" (sin PIN y con el contador en el
+máximo) hasta que se pida un PIN nuevo: aunque el usuario recargue la página, cada
+verificación responde `intentos_agotados` (CU006). Pedir un PIN nuevo, usarlo con éxito o
+que venza dejan el contador en 0.
+
 Los errores se lanzan como `ErrorNegocio`, con un `motivo` estable para el frontend.
 """
 import logging
@@ -41,9 +46,7 @@ PIN_INTENTOS_AGOTADOS = "intentos_agotados"
 MENSAJES_PIN = {
     PIN_INCORRECTO: "El código ingresado es incorrecto. Inténtelo nuevamente.",
     PIN_EXPIRADO: "El código ha expirado. Solicite un nuevo PIN.",
-    PIN_INTENTOS_AGOTADOS: (
-        "Se alcanzó el número máximo de intentos permitidos. Solicite un nuevo PIN para continuar."
-    ),
+    PIN_INTENTOS_AGOTADOS: "Ha agotado los intentos permitidos. Solicite un nuevo PIN para continuar.",
 }
 
 MENSAJE_PIN_ENVIADO = "Si el correo está registrado y activo, recibirá un PIN."
@@ -97,9 +100,22 @@ class EnvioPin:
 
 
 def _invalidar_pin(usuario: Usuario) -> None:
+    """Sin PIN y con el contador en 0 (vencido, usado con éxito o descartado)."""
     usuario.codigo_verificacion = None
     usuario.codigo_verificacion_expira = None
     usuario.codigo_verificacion_intentos = 0
+
+
+def _agotar_pin(usuario: Usuario) -> None:
+    """Sin PIN, pero con el contador en el máximo: así se sigue respondiendo
+    `intentos_agotados` hasta que se pida uno nuevo (`_asignar_pin_nuevo` lo vuelve a 0)."""
+    usuario.codigo_verificacion = None
+    usuario.codigo_verificacion_expira = None
+    usuario.codigo_verificacion_intentos = MAX_INTENTOS_PIN
+
+
+def _agotado(usuario: Usuario) -> bool:
+    return usuario.codigo_verificacion_intentos >= MAX_INTENTOS_PIN
 
 
 def _asignar_pin_nuevo(usuario: Usuario) -> EnvioPin:
@@ -116,10 +132,12 @@ def _error_pin(motivo: str) -> ErrorNegocio:
     return ErrorNegocio(status.HTTP_400_BAD_REQUEST, MENSAJES_PIN[motivo], motivo=motivo)
 
 
-def _rechazar_pin(db: Session, usuario: Usuario, motivo: str, invalidar: bool) -> ErrorNegocio:
-    """Guarda el intento (o la invalidación) aunque la petición termine en error."""
-    if invalidar:
-        _invalidar_pin(usuario)
+def _rechazar_pin(
+    db: Session, usuario: Usuario, motivo: str, cambio: Optional[Callable[[Usuario], None]] = None
+) -> ErrorNegocio:
+    """Guarda el intento (y el `cambio` del PIN, si hay) aunque la petición termine en error."""
+    if cambio is not None:
+        cambio(usuario)
     db.add(usuario)
     db.commit()
     return _error_pin(motivo)
@@ -129,32 +147,32 @@ def validar_pin(db: Session, usuario: Optional[Usuario], codigo: str) -> None:
     """Verifica el PIN sin consumirlo. Lanza ErrorNegocio si no sirve.
 
     `usuario` debe venir bloqueado (ver buscar_usuario_para_actualizar). Orden:
-    1. Sin cuenta, cuenta desactivada o sin PIN vigente: `incorrecto`, sin contar intento
-       (no revela si la cuenta existe).
-    2. Vencido: se invalida y responde `expirado`.
-    3. Ya tiene el máximo de intentos: se invalida y responde `intentos_agotados`.
-    4. No coincide: suma un intento; al llegar al máximo se invalida (`intentos_agotados`),
+    1. Sin cuenta o cuenta desactivada: `incorrecto`, sin contar intento (no revela si la
+       cuenta existe).
+    2. Sin PIN vigente: `intentos_agotados` si se agotaron (hasta que pida otro); si no,
+       `incorrecto`, sin contar intento.
+    3. Vencido: se invalida (contador en 0) y responde `expirado`.
+    4. Ya tiene el máximo de intentos: se agota y responde `intentos_agotados`.
+    5. No coincide: suma un intento; al llegar al máximo se agota (`intentos_agotados`),
        si no, `incorrecto`. Un PIN reemplazado por otro simplemente no coincide.
     """
-    if (
-        usuario is None
-        or not usuario.activo
-        or usuario.codigo_verificacion is None
-        or usuario.codigo_verificacion_expira is None
-    ):
+    if usuario is None or not usuario.activo:
         raise _error_pin(PIN_INCORRECTO)
 
-    if usuario.codigo_verificacion_expira <= ahora_utc():
-        raise _rechazar_pin(db, usuario, PIN_EXPIRADO, invalidar=True)
+    if usuario.codigo_verificacion is None or usuario.codigo_verificacion_expira is None:
+        raise _error_pin(PIN_INTENTOS_AGOTADOS if _agotado(usuario) else PIN_INCORRECTO)
 
-    if usuario.codigo_verificacion_intentos >= MAX_INTENTOS_PIN:
-        raise _rechazar_pin(db, usuario, PIN_INTENTOS_AGOTADOS, invalidar=True)
+    if usuario.codigo_verificacion_expira <= ahora_utc():
+        raise _rechazar_pin(db, usuario, PIN_EXPIRADO, _invalidar_pin)
+
+    if _agotado(usuario):
+        raise _rechazar_pin(db, usuario, PIN_INTENTOS_AGOTADOS, _agotar_pin)
 
     if not pin_coincide(usuario.id_usuario, codigo, usuario.codigo_verificacion):
         usuario.codigo_verificacion_intentos += 1
-        if usuario.codigo_verificacion_intentos >= MAX_INTENTOS_PIN:
-            raise _rechazar_pin(db, usuario, PIN_INTENTOS_AGOTADOS, invalidar=True)
-        raise _rechazar_pin(db, usuario, PIN_INCORRECTO, invalidar=False)
+        if _agotado(usuario):
+            raise _rechazar_pin(db, usuario, PIN_INTENTOS_AGOTADOS, _agotar_pin)
+        raise _rechazar_pin(db, usuario, PIN_INCORRECTO)
 
 
 def descartar_pin_no_enviado(db: Session, envio: EnvioPin) -> None:

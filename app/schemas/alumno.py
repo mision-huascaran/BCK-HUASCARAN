@@ -54,17 +54,22 @@ class AlumnoDetalle(AlumnoItem):
 
 # ── Pestañas del detalle (año escolar en curso) ─────────────────────────────────────
 
-class NivelActual(BaseModel):
-    nombre: str
-    mes: int
+class NivelColocado(BaseModel):
+    """Letra Raz-Kids en que el docente colocó al alumno en un Registro de Vuelo."""
+
+    letra: str
+    id_nivel_rk: int
+    # Periodo (corte) del Registro de Vuelo del que sale.
+    numero_periodo: int
 
 
 class Resumen(BaseModel):
-    nivel_actual: Optional[NivelActual] = None
-    # LSL + LSB del año; null si el alumno no tiene ningún reporte semanal en el año.
-    libros_leidos_anio: Optional[int] = None
-    # Semanas asistidas sobre semanas registradas, en %, con 1 decimal; null sin registros.
-    asistencia_porcentaje: Optional[float] = None
+    # Del Registro de Vuelo más reciente del año que lo tenga; null si ninguno.
+    nivel_colocado: Optional[NivelColocado] = None
+    # LSL + LSB del año; 0 si el alumno no tiene reportes semanales en el año.
+    libros_leidos_anio: int = 0
+    # Semanas asistidas sobre semanas registradas, en %, con 1 decimal; 0 sin registros.
+    asistencia_porcentaje: float = 0
 
 
 class RegistroVuelo(BaseModel):

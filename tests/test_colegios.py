@@ -47,6 +47,8 @@ def test_cu013_nombre_duplicado_sin_distinguir_mayusculas_tildes_ni_espacios(cli
     "cambio, esperado",
     [
         ({"departamento": None}, "validacion"),
+        ({"provincia": None}, "validacion"),
+        ({"provincia": "  "}, "validacion"),
         ({"distrito": ""}, "validacion"),
         ({"grados": []}, "validacion"),
         ({"grados": [999]}, "grado_inexistente"),
@@ -104,6 +106,40 @@ def test_cu013_docente_sin_alcance_no_ve_ningun_colegio(client, db, entorno, cab
     assert client.get("/colegios/ubicaciones", headers=cabeceras["Docente"]).json() == {"departamentos": [], "distritos": []}
 
 
+def test_cu013_provincia_obligatoria(client, entorno, sup):
+    cuerpo = datos(entorno)
+    del cuerpo["provincia"]
+
+    respuesta = client.post("/colegios", json=cuerpo, headers=sup)
+
+    assert respuesta.status_code == 422
+    assert motivo(respuesta) == "validacion"
+    assert [e["campo"] for e in respuesta.json()["errores"]] == ["provincia"]
+
+
+@pytest.mark.parametrize("sin_distrito", [{"distrito": None}, {}], ids=["null", "omitido"])
+def test_cu013_distrito_opcional(client, entorno, sup, sin_distrito):
+    cuerpo = {k: v for k, v in datos(entorno).items() if k != "distrito"} | sin_distrito
+
+    respuesta = client.post("/colegios", json=cuerpo, headers=sup)
+
+    assert respuesta.status_code == 201
+    assert (respuesta.json()["provincia"], respuesta.json()["distrito"]) == ("Yungay", None)
+
+
+def test_cu013_editar_provincia_no_acepta_null_y_distrito_si(client, db, entorno, sup):
+    id_colegio = entorno.colegios["Andino"].id_colegio
+
+    sin_provincia = client.patch(f"/colegios/{id_colegio}", json={"provincia": None}, headers=sup)
+    sin_distrito = client.patch(f"/colegios/{id_colegio}", json={"distrito": None}, headers=sup)
+
+    assert (sin_provincia.status_code, motivo(sin_provincia)) == (422, "validacion")
+    assert sin_provincia.json()["errores"][0]["campo"] == "provincia"
+    assert sin_distrito.status_code == 200
+    assert (sin_distrito.json()["provincia"], sin_distrito.json()["distrito"]) == ("Carhuaz", None)
+    assert releer(db, Colegio, id_colegio).distrito is None
+
+
 def test_cu013_el_directivo_no_tiene_acceso(client, entorno, cabeceras):
     assert client.get("/colegios", headers=cabeceras["Directivo"]).status_code == 403
 
@@ -111,7 +147,7 @@ def test_cu013_el_directivo_no_tiene_acceso(client, entorno, cabeceras):
 def test_cu013_detalle_e_inexistente(client, entorno, sup):
     detalle = client.get(f"/colegios/{entorno.colegios['Lejano'].id_colegio}", headers=sup).json()
 
-    assert detalle["provincia"] is None
+    assert detalle["provincia"] == "Lima"
     assert len(detalle["grados"]) == 6
     respuesta = client.get("/colegios/999", headers=sup)
     assert (respuesta.status_code, motivo(respuesta)) == (404, "colegio_no_encontrado")
@@ -123,7 +159,7 @@ def test_cu013_editar_campos_y_oferta(client, db, entorno, sup):
 
     respuesta = client.patch(
         f"/colegios/{id_colegio}",
-        json={"nombre": "Colegio Lejano II", "provincia": None, "seccion": "A", "grados": solo_quinto},
+        json={"nombre": "Colegio Lejano II", "distrito": None, "seccion": "A", "grados": solo_quinto},
         headers=sup,
     )
 
@@ -133,16 +169,16 @@ def test_cu013_editar_campos_y_oferta(client, db, entorno, sup):
 
     respuesta = client.patch(
         f"/colegios/{id_colegio}",
-        json={"nombre": "Colegio Lejano II", "provincia": None, "seccion": "A",
+        json={"nombre": "Colegio Lejano II", "distrito": None, "seccion": "A",
               "grados": [entorno.grados["3.º"], entorno.grados["4.º"]], "programas": [entorno.programas["Comprensión Lectora"]]},
         headers=sup,
     )
     cuerpo = respuesta.json()
-    assert (cuerpo["nombre"], cuerpo["provincia"], cuerpo["seccion"]) == ("Colegio Lejano II", None, "A")
+    assert (cuerpo["nombre"], cuerpo["distrito"], cuerpo["seccion"]) == ("Colegio Lejano II", None, "A")
     assert [g["nombre"] for g in cuerpo["grados"]] == ["3.º", "4.º"]
     assert releer(db, Colegio, id_colegio).modificado_por == entorno.supervisor.id_usuario
     campos = set(db.exec(select(Auditoria.campo).where(Auditoria.accion == "editar")).all())
-    assert campos == {"nombre", "seccion", "grados", "programas"}
+    assert campos == {"nombre", "distrito", "seccion", "grados", "programas"}
 
 
 def test_cu013_no_se_retira_un_grado_con_asignacion_ni_un_programa_con_alumnos(client, entorno, sup):
