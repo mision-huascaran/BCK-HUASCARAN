@@ -159,6 +159,13 @@ class Usuario(SQLModel, table=True):
         default=0, sa_column_kwargs={"server_default": text("0")}
     )
 
+    # Cuenta creada con contraseña temporal: debe cambiarla en su primer ingreso (CU001,
+    # CU016). La temporal sirve hasta `contrasena_temporal_expira` (null sin marca).
+    debe_cambiar_contrasena: bool = Field(
+        default=False, sa_column_kwargs={"server_default": text("false")}
+    )
+    contrasena_temporal_expira: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
 
 class Alumno(SQLModel, table=True):
     __tablename__ = "alumno"

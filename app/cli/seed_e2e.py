@@ -194,6 +194,22 @@ def _corregir_usuario(db: Session, usuario: Usuario, cuenta: CuentaE2E, id_rol: 
     return cambiado
 
 
+def _limpiar_pendientes(usuario: Usuario) -> bool:
+    """Deja la cuenta lista para entrar directo. Devuelve si quitó un cambio obligatorio.
+
+    - PIN pendiente de un cambio de contraseña: no debe sobrevivir entre corridas.
+    - Cambio obligatorio de la contraseña temporal (CU016): las cuentas E2E no lo tienen.
+    """
+    usuario.codigo_verificacion = None
+    usuario.codigo_verificacion_expira = None
+    usuario.codigo_verificacion_intentos = 0
+    if not usuario.debe_cambiar_contrasena and usuario.contrasena_temporal_expira is None:
+        return False
+    usuario.debe_cambiar_contrasena = False
+    usuario.contrasena_temporal_expira = None
+    return True
+
+
 def _asegurar_cuenta(
     db: Session, cuenta: CuentaE2E, entorno: Mapping[str, str], roles: dict, id_autor: int, resumen: Resumen
 ) -> Optional[Usuario]:
@@ -228,10 +244,7 @@ def _asegurar_cuenta(
     if cuenta.rol == DOCENTE:
         cambiado = _asegurar_ficha(db, usuario, cuenta, id_autor, ahora) or cambiado
 
-    # PIN pendiente de un cambio de contraseña: no debe sobrevivir entre corridas.
-    usuario.codigo_verificacion = None
-    usuario.codigo_verificacion_expira = None
-    usuario.codigo_verificacion_intentos = 0
+    cambiado = _limpiar_pendientes(usuario) or cambiado
     if existente is not None and cambiado:
         usuario.modificado_por, usuario.modificado_en = id_autor, ahora
     db.add(usuario)

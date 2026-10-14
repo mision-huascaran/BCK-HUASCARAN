@@ -53,6 +53,15 @@ class RestablecerContrasenaRequest(BaseModel):
     confirmar_contraseña_nueva: str
 
 
+class PrimerIngresoRequest(BaseModel):
+    """Primer ingreso: la contraseña temporal autoriza fijar la definitiva (CU001, CU016)."""
+
+    correo: CorreoNormalizado
+    contraseña_temporal: str
+    contraseña_nueva: str
+    confirmar_contraseña_nueva: str
+
+
 # ── Responses ───────────────────────────────────────────────────────────────────────
 
 class MensajeResponse(BaseModel):

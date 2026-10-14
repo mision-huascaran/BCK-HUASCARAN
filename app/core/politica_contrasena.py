@@ -7,8 +7,12 @@ Cada regla tiene un código estable (lo que viaja en `requisitos_incumplidos` ha
 frontend) y una descripción legible (para los mensajes de la CLI y del log).
 """
 import secrets
+from datetime import timedelta
 
 LONGITUD_MINIMA = 8
+# Vigencia de la contraseña temporal de una cuenta nueva (CU016); después solo queda
+# recuperar la cuenta con PIN.
+VIGENCIA_CONTRASENA_TEMPORAL = timedelta(hours=48)
 
 LONGITUD_MINIMA_REGLA = "longitud_minima"
 MAYUSCULA = "mayuscula"

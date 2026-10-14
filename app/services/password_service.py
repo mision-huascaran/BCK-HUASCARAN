@@ -308,8 +308,11 @@ def aplicar_contrasena_nueva(
     nueva: str,
     excepto_id_sesion: Optional[uuid.UUID] = None,
 ) -> None:
-    """Cambia el hash, invalida el PIN y cierra las sesiones abiertas. No hace commit."""
+    """Cambia el hash, invalida el PIN, quita el cambio obligatorio de la contraseña
+    temporal (CU016) y cierra las sesiones abiertas. No hace commit."""
     usuario.password_hash = hash_password(nueva)
+    usuario.debe_cambiar_contrasena = False
+    usuario.contrasena_temporal_expira = None
     _invalidar_pin(usuario)
     usuario.modificado_por = usuario.id_usuario
     usuario.modificado_en = ahora_utc()

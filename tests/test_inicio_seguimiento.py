@@ -135,8 +135,21 @@ def test_cu011_docentes_activos_solo_con_asignacion_vigente_en_colegio_activo(cl
     assert (cuerpo["docentes_activos"], cuerpo["colegios_registrados"]) == (1, 1)
 
 
-def test_cu011_sin_periodo_vigente_no_hay_docentes_activos(client, db, entorno, cabeceras):
-    terminar_periodo_vigente(db, entorno)
+def test_cu011_en_un_receso_cuenta_los_docentes_del_proximo_periodo(client, entorno, cabeceras, reloj):
+    """Entre el periodo pasado y el vigente: no cae a 0, usa el periodo que viene."""
+    reloj.fijar(a_las(entorno.periodos["pasado"].fecha_fin + timedelta(days=10)))
+
+    assert supervisor(client, cabeceras)["docentes_activos"] == 1
+
+
+def test_cu011_sin_asignaciones_en_el_periodo_de_referencia_no_hay_docentes_activos(client, db, entorno, cabeceras):
+    terminar_periodo_vigente(db, entorno)  # el de referencia pasa a ser el futuro, sin asignaciones
+
+    assert supervisor(client, cabeceras)["docentes_activos"] == 0
+
+
+def test_cu011_sin_calendario_no_hay_docentes_activos(client, entorno, cabeceras, monkeypatch):
+    monkeypatch.setattr(inicio_service, "periodo_de_referencia_del_anio", lambda _db: None)
 
     assert supervisor(client, cabeceras)["docentes_activos"] == 0
 

@@ -69,7 +69,8 @@ def _de_docentes_asignados(consulta, periodo: PeriodoAcademico):
 
 
 def docentes_activos(db: Session, periodo: Optional[PeriodoAcademico]) -> int:
-    """CU011: docentes activos con asignación en el periodo (el vigente); 0 sin periodo."""
+    """CU011: docentes activos con asignación en el periodo (el de referencia: vigente
+    o, en un receso, el próximo o el último del año, como Colegios Operando); 0 sin periodo."""
     if periodo is None:
         return 0
     return db.exec(
@@ -157,7 +158,7 @@ def inicio_supervisor(db: Session) -> InicioSupervisor:
     ).one()
     return InicioSupervisor(
         colegios_registrados=colegios,
-        docentes_activos=docentes_activos(db, periodo),
+        docentes_activos=docentes_activos(db, periodo_de_referencia_del_anio(db)),
         docentes_con_actividad_activa=con_actividad,
         alertas=[] if periodo is None else alertas_inactividad(db, periodo, hoy_lima()),
     )

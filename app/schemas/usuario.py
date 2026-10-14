@@ -54,6 +54,8 @@ class UsuarioItem(BaseModel):
     rol: str
     activo: bool
     es_supervisor_original: bool
+    # Aún no hizo su primer ingreso (no cambió la contraseña temporal). Solo lectura.
+    debe_cambiar_contrasena: bool
     # Docente: colegios de sus asignaciones del periodo vigente. Supervisor y
     # Directivo: ["Global"].
     colegios_asignados: list[str]

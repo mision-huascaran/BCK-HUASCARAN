@@ -58,7 +58,9 @@ def test_cu016_crear_docente_con_asignacion_desde_el_periodo_vigente(client, db,
     assert periodos == {entorno.periodos["vigente"].id_periodo_academico, entorno.periodos["futuro"].id_periodo_academico}
     temporal = correos.temporal("nuevo1@sicedu.test")
     assert cumple_politica_contrasena(temporal)
-    assert client.post("/login", json={"correo": "nuevo1@sicedu.test", "password": temporal}).status_code == 200
+    # Credenciales correctas, pero primero debe cambiar la temporal (CU016).
+    login = client.post("/login", json={"correo": "nuevo1@sicedu.test", "password": temporal})
+    assert (login.status_code, motivo(login)) == (403, "cambio_contrasena_requerido")
 
 
 def test_cu016_sin_grados_se_asignan_todos_los_del_colegio(client, db, entorno, sup):

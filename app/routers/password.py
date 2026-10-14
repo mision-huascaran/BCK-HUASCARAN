@@ -18,12 +18,14 @@ from app.schemas.password import (
     CambiarContrasenaRequest,
     CodigoValidoResponse,
     MensajeResponse,
+    PrimerIngresoRequest,
     RecuperarContrasenaRequest,
     RestablecerContrasenaRequest,
     VerificarCodigoPublicoRequest,
     VerificarCodigoRequest,
 )
-from app.services import password_service
+from app.schemas.auth import TokenResponse
+from app.services import auth_service, password_service
 
 router = APIRouter(tags=["password"])
 
@@ -110,3 +112,19 @@ def restablecer_contrasena_endpoint(
         password_service.enviar_confirmacion_cambio, usuario.correo, usuario.nombres
     )
     return MensajeResponse(mensaje=password_service.MENSAJE_CONTRASENA_ACTUALIZADA)
+
+
+@router.post("/password/primer-ingreso", response_model=TokenResponse)
+def primer_ingreso_endpoint(data: PrimerIngresoRequest, db: Db):
+    """Primer ingreso de una cuenta con contraseña temporal (CU001, CU016): fija la
+    contraseña definitiva y abre la sesión (responde igual que POST /login).
+
+    Errores: 401 `credenciales_invalidas` (cuenta inexistente, inactiva, sin cambio
+    pendiente o temporal incorrecta), 403 `contrasena_temporal_expirada`, 422
+    `validacion` (política CU006 o confirmación), 400 `password_igual`, 429
+    `bloqueo_temporal`.
+    """
+    inicio = auth_service.primer_ingreso(
+        db, data.correo, data.contraseña_temporal, data.contraseña_nueva, data.confirmar_contraseña_nueva
+    )
+    return auth_service.a_token_response(inicio)
