@@ -23,7 +23,7 @@ from app.cli.supervisor import DatosSupervisor, errores_de_validacion, inicializ
 from app.core.config import Settings
 from app.core.security import verify_password
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import AsistenciaSemanal, EvaluacionDiagnostica, SemanaReporte
+from app.models.evaluacion import EvaluacionDiagnostica, ReporteSemanalAlumno, SemanaReporte
 from app.models.organizacion import (
     AnioEscolar,
     Colegio,
@@ -87,6 +87,7 @@ def test_cargar_catalogos_es_idempotente(db):
 
     assert primera.creados["grado"] == 6
     assert primera.creados["rol"] == 3
+    assert primera.creados["escala_nivel_descriptivo"] == 24
     assert sum(segunda.creados.values()) == 0
     assert segunda.advertencias == []
 
@@ -98,11 +99,19 @@ def test_cargar_catalogos_avisa_diferencias_sin_sobrescribir(db):
     datos["niveles_razkids"][0]["letra"] = "ZZ"
     datos["niveles_esperados_por_grado"][0]["letra"] = "B"
     datos["niveles_esperados_por_grado"].append({"grado": "7.º", "letra": "A"})
+    datos["escala_nivel_descriptivo"][0]["desde"]["Logrado"] = "B"
+    datos["escala_nivel_descriptivo"][1]["desde"]["Avanzado"] = "Ñ"
+    datos["escala_nivel_descriptivo"].append({"grado": "7.º", "desde": {"Inicio": "aa"}})
 
     resumen = cargar_catalogos(db, datos)
 
-    assert len(resumen.advertencias) == 3
-    assert resumen.errores == ["nivel_esperado_por_grado: no existe el grado 7.º o el nivel A. Se omite."]
+    assert len(resumen.advertencias) == 4
+    assert resumen.advertencias[-1].startswith("escala_nivel_descriptivo 1.º Logrado: la BD tiene id_nivel_rk_desde=4")
+    assert resumen.errores == [
+        "nivel_esperado_por_grado: no existe el grado 7.º o el nivel A. Se omite.",
+        "escala_nivel_descriptivo 2.º Avanzado: no existe el nivel Ñ. Se omite.",
+        "escala_nivel_descriptivo: no existe el grado 7.º. Se omite.",
+    ]
     assert db.exec(select(Grado).where(Grado.nombre == "1.º")).one().id_ciclo == 1
 
 
@@ -122,6 +131,7 @@ def test_supervisor_original_se_crea_una_sola_vez(db):
 
     usuario = db.exec(select(Usuario)).one()
     assert (usuario.correo, usuario.nombres, usuario.creado_por) == ("original@sicedu.test", "Olga", usuario.id_usuario)
+    assert usuario.debe_cambiar_contrasena is True
     assert creado.creados == {"usuario (Supervisor original)": 1}
     assert repetido.omitidos == ["el Supervisor original ya existe"]
 
@@ -291,8 +301,9 @@ def test_cargar_calendario_no_mueve_semanas_con_registros(con_original, tmp_path
     db.add(ficha)
     db.flush()
     semana = db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).first()
-    db.add(AsistenciaSemanal(id_alumno=alumno.id_alumno, id_semana=semana.id_semana, asistio=True,
-                             id_docente=ficha.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc()))
+    db.add(ReporteSemanalAlumno(id_alumno=alumno.id_alumno, id_semana=semana.id_semana,
+                                id_anio_escolar=semana.id_anio_escolar, id_periodo_academico=semana.id_periodo_academico,
+                                id_docente=ficha.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc()))
     db.commit()
     corrido = calendario(
         [{"numero": 1, "fecha_inicio": "2030-03-11", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-12"}]

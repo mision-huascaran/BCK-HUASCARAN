@@ -7,13 +7,13 @@ from sqlmodel import select
 
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import DiaNoLaborable, DocenteColegioGrado, PeriodoAcademico
-from app.models.trazabilidad import Actividad
 from app.services import inicio_service
 from app.services.calendario import periodo_de_referencia_del_anio
 from tests.conftest import a_las, asignar, cabecera_de, crear_docente, iniciar_actividad, motivo
 
 # Miércoles. Las alertas cuentan días hábiles hasta ayer (martes 16).
 MIERCOLES = date(2026, 6, 17)
+INACTIVIDAD = "Inactividad Operativa - {}: Sin actividad registrada en los últimos 4 días hábiles."
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ def test_cu011_indicadores_del_supervisor(client, entorno, cabeceras, actividad)
     cuerpo = client.get("/inicio/supervisor", headers=cabeceras["Supervisor"]).json()
 
     assert (cuerpo["colegios_registrados"], cuerpo["docentes_activos"], cuerpo["docentes_con_actividad_activa"]) == (2, 1, 1)
-    assert (cuerpo["registros_pendientes"], cuerpo["registros_incompletos"]) == (None, None)
+    assert (cuerpo["registros_vencidos"], cuerpo["registros_incompletos"]) == (0, 0)
 
 
 def supervisor(client, cabeceras) -> dict:
@@ -135,23 +135,28 @@ def test_cu011_docentes_activos_solo_con_asignacion_vigente_en_colegio_activo(cl
     assert (cuerpo["docentes_activos"], cuerpo["colegios_registrados"]) == (1, 1)
 
 
-def test_cu011_en_un_receso_cuenta_los_docentes_del_proximo_periodo(client, entorno, cabeceras, reloj):
-    """Entre el periodo pasado y el vigente: no cae a 0, usa el periodo que viene."""
+def test_cu011_en_un_receso_no_hay_docentes_activos(client, db, entorno, cabeceras, reloj):
+    """Entre el periodo pasado y el vigente no hay periodo vigente: 0, aunque el docente
+    tenga asignaciones en ambos (el Periodo de Receso del CU no se implementa)."""
     reloj.fijar(a_las(entorno.periodos["pasado"].fecha_fin + timedelta(days=10)))
+    cabecera = cabecera_de(db, entorno.supervisor)
+
+    assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 0
+
+
+def test_cu011_solo_cuenta_asignaciones_del_periodo_vigente(client, db, entorno, cabeceras):
+    otro = crear_docente(db, entorno, "Futuro", "futuro@sicedu.test", "70000005")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["futuro"], 1)
+    db.commit()
 
     assert supervisor(client, cabeceras)["docentes_activos"] == 1
 
 
-def test_cu011_sin_asignaciones_en_el_periodo_de_referencia_no_hay_docentes_activos(client, db, entorno, cabeceras):
-    terminar_periodo_vigente(db, entorno)  # el de referencia pasa a ser el futuro, sin asignaciones
-
-    assert supervisor(client, cabeceras)["docentes_activos"] == 0
-
-
 def test_cu011_sin_calendario_no_hay_docentes_activos(client, entorno, cabeceras, monkeypatch):
-    monkeypatch.setattr(inicio_service, "periodo_de_referencia_del_anio", lambda _db: None)
+    monkeypatch.setattr(inicio_service, "periodo_vigente", lambda _db: None)
 
-    assert supervisor(client, cabeceras)["docentes_activos"] == 0
+    cuerpo = supervisor(client, cabeceras)
+    assert (cuerpo["docentes_activos"], cuerpo["alertas"]) == (0, [])
 
 
 def test_cu011_docente_recien_asignado_no_alerta(miercoles, client, entorno, cabeceras):
@@ -171,10 +176,8 @@ def test_cu011_alerta_con_4_dias_habiles_sin_actividad(miercoles, client, db, en
     if dias < 4:
         assert resultado == []
     else:
-        assert len(resultado) == 1
-        assert resultado[0]["tipo"] == "docente_inactivo"
-        assert resultado[0]["mensaje"] == f"Atención: El docente Rosa Quispe lleva {resultado[0]['dias_habiles']} días hábiles sin iniciar actividad."
-        assert resultado[0]["dias_habiles"] == dias
+        assert resultado == [{"tipo": "inactividad_operativa", "mensaje": INACTIVIDAD.format("Rosa Quispe"),
+                              "critica": False}]
 
 
 def test_cu011_los_feriados_no_cuentan(miercoles, client, db, entorno, cabeceras):
@@ -185,17 +188,31 @@ def test_cu011_los_feriados_no_cuentan(miercoles, client, db, entorno, cabeceras
     assert alertas(client, cabeceras) == []
 
 
-def test_cu011_el_ultimo_inicio_de_actividad_reinicia_la_cuenta(miercoles, client, db, entorno, cabeceras):
+def test_cu011_la_ultima_actividad_finalizada_reinicia_la_cuenta(miercoles, client, db, entorno, cabeceras):
+    """Cuenta desde el día siguiente a su fin: finalizada el viernes 12, el lunes 15 y
+    el martes 16 son 2 días hábiles."""
     asignado_desde(db, entorno, date(2026, 6, 1))
     miercoles.fijar(a_las(date(2026, 6, 12), 9))
-    iniciar_actividad(client, cabecera_de(db, entorno.docente))
+    cabecera = cabecera_de(db, entorno.docente)
+    actividad = iniciar_actividad(client, cabecera)
+    miercoles.fijar(a_las(date(2026, 6, 12), 11))
+    assert client.post(f"/actividades/{actividad['id']}/finalizar", json={}, headers=cabecera).status_code == 200
     miercoles.fijar(a_las(MIERCOLES, 9))
 
     assert alertas(client, cabeceras) == []
-    assert db.exec(select(Actividad)).one() is not None
 
 
-def test_cu011_varias_alertas_ordenadas_por_dias(miercoles, client, db, entorno, cabeceras):
+def test_cu011_iniciar_sin_finalizar_no_reinicia_la_cuenta(miercoles, client, db, entorno, cabeceras):
+    """Una actividad en curso no es una actividad finalizada: sigue contando desde la
+    asignación."""
+    asignado_desde(db, entorno, date(2026, 6, 1))
+    db.commit()
+    iniciar_actividad(client, cabeceras["Docente"])
+
+    assert [a["tipo"] for a in alertas(client, cabeceras)] == ["inactividad_operativa"]
+
+
+def test_cu011_varias_alertas_ordenadas_por_nombre(miercoles, client, db, entorno, cabeceras):
     asignado_desde(db, entorno, date(2026, 6, 1))
     otro = crear_docente(db, entorno, "Beto", "beto@sicedu.test", "70000002")
     db.add(DocenteColegioGrado(
@@ -207,8 +224,7 @@ def test_cu011_varias_alertas_ordenadas_por_dias(miercoles, client, db, entorno,
 
     resultado = alertas(client, cabeceras)
 
-    assert [a["docente"] for a in resultado] == ["Rosa Quispe", "Beto Prueba"]
-    assert resultado[0]["dias_habiles"] > resultado[1]["dias_habiles"]
+    assert [a["mensaje"] for a in resultado] == [INACTIVIDAD.format("Beto Prueba"), INACTIVIDAD.format("Rosa Quispe")]
 
 
 def test_cu011_entre_periodos_no_hay_alertas(client, db, entorno, cabeceras):

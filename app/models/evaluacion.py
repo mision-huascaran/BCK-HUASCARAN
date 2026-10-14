@@ -7,7 +7,7 @@ captura enviado por el cliente, y en `creado_en` cuándo la guardó el servidor 
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Text, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
@@ -72,6 +72,30 @@ class NivelEsperadoPorGrado(SQLModel, table=True):
     id_nivel_rk_esperado: int = Field(foreign_key=FK_NIVEL_RAZKIDS)
 
 
+# Niveles descriptivos del Registro de Vuelo (CU015), de menor a mayor.
+NIVELES_DESCRIPTIVOS = ("Inicio", "En proceso", "Logrado", "Avanzado")
+
+
+class EscalaNivelDescriptivo(SQLModel, table=True):
+    """Escala del nivel descriptivo por grado (CU015): desde qué letra Raz-Kids empieza
+    cada nivel. Una letra cae en el nivel de mayor `id_nivel_rk_desde` que no la supere;
+    el nivel más bajo empieza en la primera letra, así que toda letra tiene nivel."""
+
+    __tablename__ = "escala_nivel_descriptivo"
+    __table_args__ = (
+        UniqueConstraint("id_grado", "id_nivel_rk_desde", name="uq_escala_nivel_descriptivo_grado_desde"),
+        CheckConstraint(
+            "nivel IN ('Inicio', 'En proceso', 'Logrado', 'Avanzado')", name="ck_escala_nivel_descriptivo_nivel"
+        ),
+    )
+
+    id_grado: int = Field(
+        foreign_key=FK_GRADO, primary_key=True, sa_column_kwargs={"autoincrement": False}
+    )
+    nivel: str = Field(sa_type=Text, primary_key=True)
+    id_nivel_rk_desde: int = Field(foreign_key=FK_NIVEL_RAZKIDS)
+
+
 class EvaluacionDiagnostica(SQLModel, table=True):
     """Cortes del Registro de Vuelo, uno por periodo académico."""
 
@@ -114,19 +138,38 @@ class SemanaReporte(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
-class AsistenciaSemanal(SQLModel, table=True):
-    """Fuente única de asistencia para la rúbrica y el seguimiento de lectura."""
+# Valores de `asistencia.estado` (CU022); null = sin marcar.
+ESTADOS_ASISTENCIA = ("presente", "tardanza", "ausente")
+# Los que cuentan como asistencia en el % del alumno (CU015).
+ESTADOS_ASISTIO = ("presente", "tardanza")
 
-    __tablename__ = "asistencia_semanal"
+
+class Asistencia(SQLModel, table=True):
+    """Asistencia de un alumno a una clase (CU022): una fila por alumno, fecha y
+    subprograma. Una clase es fecha + colegio + grado + subprograma; el colegio y el
+    grado salen del alumno. Fuente única de asistencia para la rúbrica y el seguimiento
+    de lectura."""
+
+    __tablename__ = "asistencia"
     __table_args__ = (
-        UniqueConstraint("id_alumno", "id_semana", name="uq_asistencia_semanal_alumno_semana"),
+        UniqueConstraint("id_alumno", "fecha", "id_programa", name="uq_asistencia_alumno_fecha_programa"),
+        CheckConstraint(
+            "estado IS NULL OR estado IN ('presente', 'tardanza', 'ausente')", name="ck_asistencia_estado"
+        ),
+        # Clases de una fecha (vencidos e incompletos de CU011, clases dictadas de CU015).
+        Index("ix_asistencia_fecha", "fecha"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     id_alumno: int = Field(foreign_key=FK_ALUMNO)
-    id_semana: int = Field(foreign_key="semana_reporte.id_semana")
-    asistio: bool
+    # Día de la clase (no el de la captura).
+    fecha: date
+    # Subprograma del alumno al registrar.
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
+    estado: Optional[str] = Field(default=None, sa_type=Text)
+    observacion: Optional[str] = Field(default=None, sa_type=Text)
     id_docente: int = Field(foreign_key=FK_DOCENTE)
+    # Momento real de la captura: con dos dispositivos, gana el más reciente.
     fecha_registro: datetime = Field(sa_type=UTCDateTime)
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
@@ -233,7 +276,7 @@ class LibroSubidaNivel(SQLModel, table=True):
 
 
 class RubricaRegistroSemanal(SQLModel, table=True):
-    """Rúbrica semanal. Sin asistencia (vive en asistencia_semanal); niveles nullable."""
+    """Rúbrica semanal. Sin asistencia (vive en `asistencia`); niveles nullable."""
 
     __tablename__ = "rubrica_registro_semanal"
     __table_args__ = (

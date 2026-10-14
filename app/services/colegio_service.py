@@ -3,7 +3,8 @@
 - Solo el Supervisor los gestiona; el Docente lee los de su alcance (periodo vigente).
 - Borrado lógico: desactivar no toca alumnos, registros ni asignaciones; el colegio sale
   del alcance operativo de su docente (`alcance_docente` excluye los inactivos).
-- Grados y programas ofrecidos viven en `colegio_grado` y `colegio_programa`.
+- Grados y programas ofrecidos viven en `colegio_grado` y `colegio_programa`; cada grado
+  con su día de clase (1 = lunes … 5 = viernes), obligatorio en la API.
 - Cada cambio queda en `auditoria` (tabla `colegio`).
 """
 import unicodedata
@@ -27,13 +28,22 @@ from app.models.organizacion import (
     Programa,
     Usuario,
 )
-from app.schemas.colegio import ColegioCrear, ColegioDetalle, ColegioEditar, ColegioItem, Ubicaciones
+from app.schemas.colegio import (
+    ColegioCrear,
+    ColegioDetalle,
+    ColegioEditar,
+    ColegioItem,
+    GradoColegio,
+    GradoOfrecido,
+    Ubicaciones,
+)
 from app.schemas.comun import ItemCatalogo
 from app.services.alcance import alcance_docente
 from app.services.auditoria import ACTIVAR, CREAR, EDITAR, INACTIVAR, registrar_auditoria
 
 TABLA = "colegio"
 CAMPOS_SIMPLES = ("nombre", "departamento", "distrito", "provincia", "nivel_educativo", "seccion")
+DIAS = {1: "lunes", 2: "martes", 3: "miércoles", 4: "jueves", 5: "viernes"}
 
 
 def nombre_comparable(nombre: str) -> str:
@@ -86,10 +96,11 @@ def item_de(colegio: Colegio) -> ColegioItem:
     )
 
 
-def _grados_de(db: Session, id_colegio: int) -> list[Grado]:
+def _grados_de(db: Session, id_colegio: int) -> list[tuple[Grado, ColegioGrado]]:
+    """Grados del colegio con su fila de `colegio_grado` (día de clase), por id."""
     return list(
         db.exec(
-            select(Grado)
+            select(Grado, ColegioGrado)
             .join(ColegioGrado, ColegioGrado.id_grado == Grado.id_grado)
             .where(ColegioGrado.id_colegio == id_colegio)
             .order_by(Grado.id_grado)
@@ -111,7 +122,10 @@ def _programas_de(db: Session, id_colegio: int) -> list[Programa]:
 def detalle_de(db: Session, colegio: Colegio) -> ColegioDetalle:
     return ColegioDetalle(
         **item_de(colegio).model_dump(),
-        grados=[ItemCatalogo(id=g.id_grado, nombre=g.nombre) for g in _grados_de(db, colegio.id_colegio)],
+        grados=[
+            GradoColegio(id=g.id_grado, nombre=g.nombre, dia_clase=fila.dia_clase)
+            for g, fila in _grados_de(db, colegio.id_colegio)
+        ],
         programas=[
             ItemCatalogo(id=p.id_programa, nombre=p.nombre) for p in _programas_de(db, colegio.id_colegio)
         ],
@@ -213,8 +227,10 @@ def _catalogo(db: Session, modelo: type[SQLModel], ids: list[int], motivo: str, 
     return filas
 
 
-def _grados_validos(db: Session, ids: list[int]) -> list[Grado]:
-    return _catalogo(db, Grado, ids, "grado_inexistente", "grado")
+def _grados_validos(db: Session, ofrecidos: list[GradoOfrecido]) -> list[tuple[Grado, int]]:
+    """(grado, día de clase) de cada grado ofrecido, por id. 422 si falta alguno."""
+    dias = {g.id_grado: g.dia_clase for g in ofrecidos}
+    return [(g, dias[g.id_grado]) for g in _catalogo(db, Grado, list(dias), "grado_inexistente", "grado")]
 
 
 def _programas_validos(db: Session, ids: list[int]) -> list[Programa]:
@@ -266,6 +282,11 @@ def _lista_legible(filas: list[Any]) -> str:
     return ", ".join(f.nombre for f in filas)
 
 
+def _grados_legibles(grados: list[tuple[Grado, Optional[int]]]) -> str:
+    """'1.º (lunes), 2.º (sin día)': para la auditoría (campo virtual `grados`)."""
+    return ", ".join(f"{g.nombre} ({DIAS.get(dia, 'sin día')})" for g, dia in grados)
+
+
 # ── Escritura ───────────────────────────────────────────────────────────────────────
 
 def crear_colegio(db: Session, data: ColegioCrear, actor: Usuario) -> ColegioDetalle:
@@ -287,7 +308,10 @@ def crear_colegio(db: Session, data: ColegioCrear, actor: Usuario) -> ColegioDet
     )
     db.add(colegio)
     db.flush()
-    db.add_all(ColegioGrado(id_colegio=colegio.id_colegio, id_grado=g.id_grado, **auditoria) for g in grados)
+    db.add_all(
+        ColegioGrado(id_colegio=colegio.id_colegio, id_grado=g.id_grado, dia_clase=dia, **auditoria)
+        for g, dia in grados
+    )
     db.add_all(
         ColegioPrograma(id_colegio=colegio.id_colegio, id_programa=p.id_programa, **auditoria) for p in programas
     )
@@ -300,18 +324,18 @@ def crear_colegio(db: Session, data: ColegioCrear, actor: Usuario) -> ColegioDet
 
 
 def _reemplazar_grados(
-    db: Session, colegio: Colegio, nuevos: list[Grado], auditoria: dict
+    db: Session, colegio: Colegio, nuevos: list[tuple[Grado, int]], auditoria: dict
 ) -> Optional[tuple[str, str]]:
-    """Deja al colegio con esos grados. 409 si se retira uno en uso. Devuelve (antes,
-    después) legibles, o None si no cambió nada."""
+    """Deja al colegio con esos grados y días de clase. 409 si se retira uno en uso.
+    Devuelve (antes, después) legibles, o None si no cambió nada."""
     actuales = _grados_de(db, colegio.id_colegio)
-    ids_nuevos = {g.id_grado for g in nuevos}
-    retirados = [g for g in actuales if g.id_grado not in ids_nuevos]
+    dias_nuevos = {g.id_grado: dia for g, dia in nuevos}
+    retirados = [g for g, _ in actuales if g.id_grado not in dias_nuevos]
     usos = [u for u in (_uso_de_grado(db, colegio.id_colegio, g) for g in retirados) if u]
     if usos:
         raise ErrorNegocio(status.HTTP_409_CONFLICT, " ".join(usos), motivo="grado_en_uso")
-    ids_actuales = {g.id_grado for g in actuales}
-    if ids_actuales == ids_nuevos:
+    antes = [(g, fila.dia_clase) for g, fila in actuales]
+    if {g.id_grado: dia for g, dia in antes} == dias_nuevos:
         return None
     db.execute(
         delete(ColegioGrado).where(
@@ -319,11 +343,17 @@ def _reemplazar_grados(
             col(ColegioGrado.id_grado).in_([g.id_grado for g in retirados]),
         )
     )
+    for g, fila in actuales:
+        if g.id_grado in dias_nuevos and fila.dia_clase != dias_nuevos[g.id_grado]:
+            fila.dia_clase = dias_nuevos[g.id_grado]
+            fila.modificado_por, fila.modificado_en = auditoria["creado_por"], auditoria["creado_en"]
+            db.add(fila)
+    ids_actuales = {g.id_grado for g, _ in actuales}
     db.add_all(
-        ColegioGrado(id_colegio=colegio.id_colegio, id_grado=g.id_grado, **auditoria)
-        for g in nuevos if g.id_grado not in ids_actuales
+        ColegioGrado(id_colegio=colegio.id_colegio, id_grado=g.id_grado, dia_clase=dia, **auditoria)
+        for g, dia in nuevos if g.id_grado not in ids_actuales
     )
-    return _lista_legible(actuales), _lista_legible(nuevos)
+    return _grados_legibles(antes), _grados_legibles(nuevos)
 
 
 def _reemplazar_programas(
@@ -411,9 +441,10 @@ def completar_oferta(
 ) -> tuple[list[Grado], list[Programa]]:
     """Agrega al colegio los grados y programas que le falten (nunca quita). No hace commit.
 
-    Para la carga de datos (seed y colegios iniciales). Devuelve lo que agregó.
+    Para la carga de datos (seed y colegios iniciales): los grados nuevos quedan sin día
+    de clase (null). Devuelve lo que agregó.
     """
-    tiene_grados = {g.id_grado for g in _grados_de(db, colegio.id_colegio)}
+    tiene_grados = {g.id_grado for g, _ in _grados_de(db, colegio.id_colegio)}
     tiene_programas = {p.id_programa for p in _programas_de(db, colegio.id_colegio)}
     nuevos_grados = [g for g in grados if g.id_grado not in tiene_grados]
     nuevos_programas = [p for p in programas if p.id_programa not in tiene_programas]

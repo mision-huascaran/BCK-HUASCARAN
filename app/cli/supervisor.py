@@ -3,6 +3,10 @@
 Se ejecuta en cada arranque: si ya existe, no hace nada. Se crea por script y no por
 migración para no versionar credenciales (diseño v3, §3). Nunca registra la contraseña
 en el log. Si pierde el acceso, lo recupera con PIN como cualquier usuario (CU001).
+
+La contraseña del entorno es temporal (CU001): al crearlo queda con cambio obligatorio
+en su primer ingreso, con la misma vigencia que las temporales de CU016. Las cuentas que
+ya existían no se tocan.
 """
 import re
 from dataclasses import dataclass
@@ -15,7 +19,7 @@ from sqlmodel import Session, select
 from app.cli.comun import Resumen, id_supervisor_original
 from app.core.config import settings
 from app.core.correo import normalizar_correo
-from app.core.politica_contrasena import errores_politica_contrasena
+from app.core.politica_contrasena import VIGENCIA_CONTRASENA_TEMPORAL, errores_politica_contrasena
 from app.core.security import hash_password
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Rol, Usuario
@@ -100,6 +104,7 @@ def inicializar_supervisor_original(
         return resumen
 
     id_usuario = _siguiente_id_usuario(db)
+    ahora = ahora_utc()
     db.add(
         Usuario(
             id_usuario=id_usuario,
@@ -111,8 +116,10 @@ def inicializar_supervisor_original(
             apellidos=datos.apellidos.strip(),
             activo=True,
             es_supervisor_original=True,
+            debe_cambiar_contrasena=True,
+            contrasena_temporal_expira=ahora + VIGENCIA_CONTRASENA_TEMPORAL,
             creado_por=id_usuario,
-            creado_en=ahora_utc(),
+            creado_en=ahora,
         )
     )
     try:

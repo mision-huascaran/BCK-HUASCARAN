@@ -61,6 +61,9 @@ class NivelColocado(BaseModel):
     id_nivel_rk: int
     # Periodo (corte) del Registro de Vuelo del que sale.
     numero_periodo: int
+    # Inicio, En proceso, Logrado o Avanzado según el grado actual del alumno; null si
+    # su grado no tiene escala.
+    nivel_descriptivo: Optional[str] = None
 
 
 class Resumen(BaseModel):
@@ -68,7 +71,8 @@ class Resumen(BaseModel):
     nivel_colocado: Optional[NivelColocado] = None
     # LSL + LSB del año; 0 si el alumno no tiene reportes semanales en el año.
     libros_leidos_anio: int = 0
-    # Semanas asistidas sobre semanas registradas, en %, con 1 decimal; 0 sin registros.
+    # Asistencias (presente o tardanza) sobre clases dictadas a su colegio, grado y
+    # subprograma en el año, en %, con 1 decimal; 0 sin clases dictadas.
     asistencia_porcentaje: float = 0
 
 
@@ -80,6 +84,8 @@ class RegistroVuelo(BaseModel):
     aciertos: Optional[int] = None
     total: Optional[int] = None
     nivel_colocado: Optional[str] = None
+    # Nivel descriptivo de la letra colocada (grado actual del alumno); null sin letra.
+    nivel_descriptivo: Optional[str] = None
     nivel_general: Optional[str] = None
     observacion: Optional[str] = None
 

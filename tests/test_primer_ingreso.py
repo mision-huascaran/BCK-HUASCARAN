@@ -5,13 +5,17 @@ import pytest
 from sqlmodel import select
 
 from app import seed_data
+from app.cli.catalogos import cargar_catalogos
 from app.cli.seed_e2e import CUENTAS, sembrar_e2e
+from app.cli.supervisor import DatosSupervisor, inicializar_supervisor_original
+from app.core.politica_contrasena import VIGENCIA_CONTRASENA_TEMPORAL
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Usuario
 from app.models.seguridad import ControlAccesoCorreo, Sesion
 from tests.conftest import CORREOS, PASSWORD, motivo, releer
 
 NUEVO = "nuevo.docente@sicedu.test"
+ORIGINAL = CORREOS["Original"]
 NUEVA = "Definitiva-9"
 TEMPORAL_EXPIRADA = "Su contraseña temporal ha expirado. Use '¿Olvidó su contraseña?' para generar una nueva."
 
@@ -207,9 +211,37 @@ def test_restablecer_con_pin_quita_el_cambio_obligatorio(client, db, nuevo, corr
 
 # ── Cuentas que entran directo ──────────────────────────────────────────────────────
 
-def test_supervisor_original_y_cuentas_existentes_entran_directo(client, entorno):
+def test_cuentas_existentes_entran_directo(client, entorno):
+    """El Original del entorno ya hizo su primer ingreso (lo deja así `armar_entorno`)."""
     for rol in ("Original", "Supervisor", "Docente", "Directivo"):
         assert login(client, CORREOS[rol], PASSWORD).status_code == 200, rol
+
+
+def test_supervisor_original_nuevo_debe_cambiar_su_contrasena(client, db):
+    """CU001: la contraseña del entorno es temporal, con la vigencia de las de CU016."""
+    cargar_catalogos(db)
+    inicializar_supervisor_original(
+        db, DatosSupervisor(correo=ORIGINAL, password=PASSWORD, nombres="Olga", apellidos="Original", dni="40000000")
+    )
+    original = db.exec(select(Usuario).where(Usuario.correo == ORIGINAL)).one()
+
+    respuesta = login(client, ORIGINAL, PASSWORD)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (403, "cambio_contrasena_requerido")
+    assert original.debe_cambiar_contrasena is True
+    assert original.contrasena_temporal_expira == original.creado_en + VIGENCIA_CONTRASENA_TEMPORAL
+    assert primer_ingreso(client, PASSWORD, correo=ORIGINAL).status_code == 200
+    assert login(client, ORIGINAL, NUEVA).status_code == 200
+
+
+def test_supervisor_original_existente_no_se_toca(db, entorno):
+    """Si ya existe, el script no lo vuelve a marcar aunque se ejecute en cada arranque."""
+    resumen = inicializar_supervisor_original(
+        db, DatosSupervisor(correo=ORIGINAL, password=PASSWORD, nombres="Olga", apellidos="Original", dni="40000000")
+    )
+
+    assert resumen.omitidos == ["el Supervisor original ya existe"]
+    assert releer(db, Usuario, entorno.usuarios["Original"].id_usuario).debe_cambiar_contrasena is False
 
 
 def test_cuentas_del_seed_entran_directo(client, motor, monkeypatch):

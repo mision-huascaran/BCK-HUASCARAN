@@ -1,7 +1,7 @@
 """Pantalla de Inicio de cada rol (CU010, CU011, CU012).
 
-Los indicadores que dependen de las grillas y de la sincronización sin conexión llegan
-en la Tanda 8; hasta entonces se devuelven en null.
+Los indicadores que dependen de la sincronización sin conexión (registros offline
+pendientes, salud del sistema) se devuelven en null hasta que exista.
 """
 from datetime import datetime
 from typing import Literal, Optional
@@ -28,21 +28,28 @@ class InicioDocente(BaseModel):
     registros_offline_pendientes: Optional[int] = None
 
 
-class AlertaInactividad(BaseModel):
-    tipo: Literal["docente_inactivo"] = "docente_inactivo"
-    id_docente: int
-    docente: str
-    dias_habiles: int
+TipoAlerta = Literal["sincronizacion_olvidada", "inactividad_operativa", "incumplimiento_sede"]
+
+
+class AlertaOperativa(BaseModel):
+    """Alerta operativa de CU011. `critica`: el front la resalta (incumplimiento de sede)."""
+
+    tipo: TipoAlerta
     mensaje: str
+    critica: bool
 
 
 class InicioSupervisor(BaseModel):
     colegios_registrados: int
+    # Con asignación en el periodo vigente (0 sin periodo vigente).
     docentes_activos: int
     docentes_con_actividad_activa: int
-    registros_pendientes: Optional[int] = None
-    registros_incompletos: Optional[int] = None
-    alertas: list[AlertaInactividad]
+    # Clases de Asistencias del periodo vigente (un grado en una fecha): vencidas sin
+    # ningún registro e iniciadas con algún alumno activo sin marcar.
+    registros_vencidos: int
+    registros_incompletos: int
+    # Primero las de sincronización, luego las de inactividad y al final las de sede.
+    alertas: list[AlertaOperativa]
 
 
 class InicioDirectivo(BaseModel):

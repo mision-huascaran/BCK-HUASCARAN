@@ -1,55 +1,82 @@
-"""Asistencia semanal de los alumnos (CU022).
+"""Asistencia por clase de los alumnos (CU022).
 
-Una fila de `asistencia_semanal` es la asistencia de un alumno en una semana; sin fila, la
-asistencia de esa semana todavía no se tomó (`asistio: null`).
+Una clase es fecha + colegio + grado + subprograma. Una fila de `asistencia` es lo
+registrado para un alumno en una clase; sin fila (o con `estado` null), el alumno aún no
+está marcado.
 """
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
+
+from app.schemas.comun import ParcheSinNulos
+
+EstadoAsistencia = Literal["presente", "tardanza", "ausente"]
 
 
-# ── Consulta del aula ───────────────────────────────────────────────────────────────
-
-class SemanaAsistencia(BaseModel):
-    id_semana: int
-    numero: int
-    fecha_inicio: date
-    fecha_fin: date
-
+# ── Consulta de la clase ────────────────────────────────────────────────────────────
 
 class AlumnoAsistencia(BaseModel):
     id_alumno: int
     nombres: str
     apellidos: str
-    # null: la asistencia de la semana aún no se tomó.
-    asistio: Optional[bool] = None
+    # False: hoy inactivo, pero con registro en la clase consultada.
+    activo: bool
+    # null: aún sin marcar.
+    estado: Optional[EstadoAsistencia] = None
+    observacion: Optional[str] = None
 
 
-class AsistenciaAula(BaseModel):
-    semana: SemanaAsistencia
-    # Si la semana admite registro: es del periodo vigente y ya empezó.
+class AsistenciaClase(BaseModel):
+    fecha: date
+    # El usuario es Docente y la fecha es un día lectivo del periodo vigente.
     editable: bool
-    # Alumnos activos del colegio, grado y subprograma, por apellidos y nombres.
+    # Activos del colegio, grado y subprograma, más los que tienen registro en la clase;
+    # por apellidos y nombres.
     alumnos: list[AlumnoAsistencia]
 
 
 # ── Registro ────────────────────────────────────────────────────────────────────────
 
-class RegistroAsistencia(BaseModel):
+class RegistroAsistencia(ParcheSinNulos):
+    """Lo que cambia de un alumno: el clic manda `estado`; el modal, `observacion`. Un
+    campo omitido no se cambia; `observacion` vacía o null la borra. `estado` no admite
+    null (no se "desmarca")."""
+
+    CAMPOS_NULABLES = frozenset({"observacion"})
+
     id_alumno: int
-    asistio: bool
+    estado: Optional[EstadoAsistencia] = None
+    observacion: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _algo_que_cambiar(self) -> "RegistroAsistencia":
+        if not {"estado", "observacion"} & self.model_fields_set:
+            raise ValueError("Debe indicar el estado o la observación.")
+        if self.observacion is not None:
+            self.observacion = self.observacion.strip() or None
+        return self
 
 
 class AsistenciaGuardar(BaseModel):
-    """Un registro (clic individual) o varios ("Marcar todos como presentes")."""
+    """Un registro (clic o modal) o varios ("Marcar todos como presentes")."""
 
-    id_semana: int
+    fecha: date
     registros: list[RegistroAsistencia] = Field(min_length=1)
-    # Momento real de la captura (modo sin conexión); por defecto, ahora.
+    # Momento real de la captura (modo sin conexión); por defecto, ahora. Con dos
+    # dispositivos, gana el más reciente.
     fecha_registro: Optional[AwareDatetime] = None
 
 
+class RegistroGuardado(BaseModel):
+    id_alumno: int
+    # False: ya había un registro capturado después (otro dispositivo); no se aplicó y
+    # `estado` y `observacion` son los vigentes.
+    aplicado: bool
+    estado: Optional[EstadoAsistencia] = None
+    observacion: Optional[str] = None
+
+
 class AsistenciaGuardada(BaseModel):
-    id_semana: int
-    registros: list[RegistroAsistencia]
+    fecha: date
+    registros: list[RegistroGuardado]

@@ -18,7 +18,8 @@ from sqlmodel import Session, col, select
 from app.core.paginacion import Paginado, pagina, paginar
 from app.core.tiempo import limites_lima
 from app.models.evaluacion import (
-    AsistenciaSemanal,
+    ESTADOS_ASISTIO,
+    Asistencia,
     EvaluacionDiagnostica,
     EvaluacionDiagnosticaAlumno,
     LibroSubidaNivel,
@@ -30,7 +31,17 @@ from app.models.evaluacion import (
     RubricaRegistroSemanal,
     SemanaReporte,
 )
-from app.models.organizacion import AnioEscolar, CicloEbr, Colegio, Grado, PeriodoAcademico, Programa, Rol, Usuario
+from app.models.organizacion import (
+    Alumno,
+    AnioEscolar,
+    CicloEbr,
+    Colegio,
+    Grado,
+    PeriodoAcademico,
+    Programa,
+    Rol,
+    Usuario,
+)
 from app.models.trazabilidad import Auditoria
 from app.schemas.alumno import (
     CambioHistorial,
@@ -45,6 +56,7 @@ from app.schemas.alumno import (
     RubricaSemanal,
 )
 from app.services.calendario import anio_de_referencia
+from app.services.nivel_descriptivo import escala_del_grado
 
 # Filas de las mini-grillas del detalle (CU015).
 FILAS_REGISTRO_VUELO = 4  # una por periodo
@@ -52,22 +64,22 @@ FILAS_RECIENTES = 5  # Rúbrica y Seguimiento de Lectura
 
 # ── Resumen ─────────────────────────────────────────────────────────────────────────
 
-def resumen(db: Session, id_alumno: int) -> Resumen:
+def resumen(db: Session, alumno: Alumno) -> Resumen:
     """Tarjetas del detalle. Sin datos: nivel colocado null, 0 libros y 0 % (CU015)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return Resumen()
     return Resumen(
-        nivel_colocado=_nivel_colocado(db, id_alumno, anio.id_anio_escolar),
-        libros_leidos_anio=_libros_leidos(db, id_alumno, anio.id_anio_escolar),
-        asistencia_porcentaje=_asistencia(db, id_alumno, anio.id_anio_escolar),
+        nivel_colocado=_nivel_colocado(db, alumno, anio.id_anio_escolar),
+        libros_leidos_anio=_libros_leidos(db, alumno.id_alumno, anio.id_anio_escolar),
+        asistencia_porcentaje=_asistencia(db, alumno, anio),
     )
 
 
-def _nivel_colocado(db: Session, id_alumno: int, id_anio: int) -> Optional[NivelColocado]:
+def _nivel_colocado(db: Session, alumno: Alumno, id_anio: int) -> Optional[NivelColocado]:
     """Letra Raz-Kids colocada en el Registro de Vuelo más reciente del año: el del
     periodo más avanzado que tenga `nivel_colocado` (uno incompleto, sin él, no cuenta).
-    None si ninguno lo tiene."""
+    None si ninguno lo tiene. Su nivel descriptivo es el del grado actual del alumno."""
     fila = db.exec(
         select(NivelRazkids.letra, NivelRazkids.id_nivel_rk, PeriodoAcademico.numero)
         .select_from(EvaluacionDiagnosticaAlumno)
@@ -77,13 +89,16 @@ def _nivel_colocado(db: Session, id_alumno: int, id_anio: int) -> Optional[Nivel
         )
         .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == EvaluacionDiagnostica.id_periodo_academico)
         .join(NivelRazkids, NivelRazkids.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
-        .where(EvaluacionDiagnosticaAlumno.id_alumno == id_alumno, PeriodoAcademico.id_anio_escolar == id_anio)
+        .where(EvaluacionDiagnosticaAlumno.id_alumno == alumno.id_alumno, PeriodoAcademico.id_anio_escolar == id_anio)
         .order_by(col(PeriodoAcademico.fecha_inicio).desc())
     ).first()
     if fila is None:
         return None
     letra, id_nivel_rk, numero = fila
-    return NivelColocado(letra=letra, id_nivel_rk=id_nivel_rk, numero_periodo=numero)
+    return NivelColocado(
+        letra=letra, id_nivel_rk=id_nivel_rk, numero_periodo=numero,
+        nivel_descriptivo=escala_del_grado(db, alumno.id_grado).nivel(id_nivel_rk),
+    )
 
 
 def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
@@ -100,21 +115,43 @@ def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
     return int(lsl) + lsb
 
 
-def _asistencia(db: Session, id_alumno: int, id_anio: int) -> float:
-    """% de semanas asistidas sobre las registradas en el año, con 1 decimal; 0 sin filas."""
-    filas = db.exec(
-        select(AsistenciaSemanal.asistio)
-        .join(SemanaReporte, SemanaReporte.id_semana == AsistenciaSemanal.id_semana)
-        .where(AsistenciaSemanal.id_alumno == id_alumno, SemanaReporte.id_anio_escolar == id_anio)
-    ).all()
-    if not filas:
+def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> float:
+    """% de asistencia del año, con 1 decimal (CU015): asistencias del alumno (presente
+    o tardanza) sobre las clases dictadas a su colegio, grado y subprograma actuales (las
+    fechas con al menos un registro con estado). 0 si no hubo clases.
+
+    El numerador cuenta solo los registros del alumno en su subprograma actual: así cada
+    uno es de una clase del denominador y el % no pasa de 100."""
+    del_anio = (
+        Asistencia.fecha >= anio.fecha_inicio,
+        Asistencia.fecha <= anio.fecha_fin,
+        Asistencia.id_programa == alumno.id_programa_actual,
+    )
+    clases = db.exec(
+        select(func.count(func.distinct(Asistencia.fecha)))
+        .join(Alumno, Alumno.id_alumno == Asistencia.id_alumno)
+        .where(
+            *del_anio,
+            Alumno.id_colegio == alumno.id_colegio,
+            Alumno.id_grado == alumno.id_grado,
+            col(Asistencia.estado).is_not(None),
+        )
+    ).one()
+    if not clases:
         return 0.0
-    return round(100 * sum(1 for asistio in filas if asistio) / len(filas), 1)
+    asistidas = db.exec(
+        select(func.count())
+        .select_from(Asistencia)
+        .where(*del_anio, Asistencia.id_alumno == alumno.id_alumno, col(Asistencia.estado).in_(ESTADOS_ASISTIO))
+    ).one()
+    return round(100 * asistidas / clases, 1)
 
 
 # ── Registro de Vuelo, Rúbrica y Seguimiento de Lectura ─────────────────────────────
 
-def registro_vuelo(db: Session, id_alumno: int) -> list[RegistroVuelo]:
+def registro_vuelo(db: Session, alumno: Alumno) -> list[RegistroVuelo]:
+    """Una fila por periodo del año. Cada letra colocada trae su nivel descriptivo según
+    el grado actual del alumno (eje Y de la gráfica)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return []
@@ -136,7 +173,7 @@ def registro_vuelo(db: Session, id_alumno: int) -> list[RegistroVuelo]:
         .outerjoin(colocado, colocado.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
         .outerjoin(NivelGeneral, NivelGeneral.id_nivel_general == EvaluacionDiagnosticaAlumno.id_nivel_general)
         .where(
-            EvaluacionDiagnosticaAlumno.id_alumno == id_alumno,
+            EvaluacionDiagnosticaAlumno.id_alumno == alumno.id_alumno,
             PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
         )
         # Una fila por periodo (UNIQUE de la evaluación por periodo y del alumno por
@@ -144,11 +181,13 @@ def registro_vuelo(db: Session, id_alumno: int) -> list[RegistroVuelo]:
         .order_by(col(PeriodoAcademico.numero).desc())
         .limit(FILAS_REGISTRO_VUELO)
     ).all()
+    escala = escala_del_grado(db, alumno.id_grado)
     return [
         RegistroVuelo(
             corte=corte, fecha=fecha, ciclo_evaluado=ciclo, nivel_entrada=nivel_entrada,
             aciertos=registro.aciertos_prueba, total=registro.total_prueba,
-            nivel_colocado=nivel_colocado, nivel_general=nivel_general, observacion=registro.observacion,
+            nivel_colocado=nivel_colocado, nivel_descriptivo=escala.nivel(registro.nivel_colocado),
+            nivel_general=nivel_general, observacion=registro.observacion,
         )
         for corte, fecha, ciclo, nivel_entrada, registro, nivel_colocado, nivel_general in reversed(filas)
     ]

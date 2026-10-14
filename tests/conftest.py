@@ -216,8 +216,10 @@ def _usuario(db, correo, id_rol, nombres, apellidos, dni, creado_por=None, **ext
     return usuario
 
 
-def crear_colegio(db, nombre, grados, programas, id_actor, **campos) -> Colegio:
+def crear_colegio(db, nombre, grados, programas, id_actor, dias_clase=None, **campos) -> Colegio:
+    """Colegio con esos grados y programas. `dias_clase`: {id_grado: día} (sin día por defecto)."""
     ahora = tiempo.ahora_utc()
+    dias_clase = dias_clase or {}
     colegio = Colegio(
         nombre=nombre,
         departamento=campos.pop("departamento", "Áncash"),
@@ -230,7 +232,8 @@ def crear_colegio(db, nombre, grados, programas, id_actor, **campos) -> Colegio:
     db.add(colegio)
     db.flush()
     for id_grado in grados:
-        db.add(ColegioGrado(id_colegio=colegio.id_colegio, id_grado=id_grado, creado_por=id_actor, creado_en=ahora))
+        db.add(ColegioGrado(id_colegio=colegio.id_colegio, id_grado=id_grado, dia_clase=dias_clase.get(id_grado),
+                            creado_por=id_actor, creado_en=ahora))
     for id_programa in programas:
         db.add(
             ColegioPrograma(
@@ -300,6 +303,10 @@ def armar_entorno(db: Session) -> Entorno:
         ),
     )
     original = db.exec(select(Usuario).where(Usuario.correo == CORREOS["Original"])).one()
+    # Nace con la contraseña temporal por cambiar (CU001); aquí ya la cambió, para que las
+    # pruebas puedan entrar con él. El cambio obligatorio se prueba en test_cli.
+    original.debe_cambiar_contrasena = False
+    original.contrasena_temporal_expira = None
     id_actor = original.id_usuario
     supervisor = _usuario(db, CORREOS["Supervisor"], roles["Supervisor"], "Sara", "Supervisora", "40000001", id_actor)
     directivo = _usuario(db, CORREOS["Directivo"], roles["Directivo"], "Diego", "Directivo", "40000002", id_actor)

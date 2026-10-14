@@ -78,7 +78,8 @@ def test_cu009_sin_asignaciones_no_inicia(client, db, entorno):
 
     assert (respuesta.status_code, motivo(respuesta)) == (409, "sin_asignaciones")
     assert respuesta.json()["detail"] == (
-        "No puedes iniciar una actividad porque no tienes asignaciones para el periodo académico vigente."
+        "No puedes iniciar una actividad porque no tienes asignaciones activas, ya sea para el periodo "
+        "académico actual o de receso."
     )
 
 
@@ -93,7 +94,7 @@ def test_cu010_fuera_de_periodo_no_inicia(client, db, entorno, doc):
 
     assert respuesta.status_code == 409
     assert respuesta.json() == {
-        "detail": "No puedes iniciar una actividad fuera de un periodo académico vigente.",
+        "detail": "No puedes iniciar una actividad fuera del calendario operativo.",
         "motivo": "fuera_de_periodo",
     }
 

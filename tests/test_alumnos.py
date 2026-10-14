@@ -6,7 +6,7 @@ from sqlmodel import select
 
 from app.core.tiempo import ahora_utc
 from app.models.evaluacion import (
-    AsistenciaSemanal,
+    Asistencia,
     EvaluacionDiagnostica,
     EvaluacionDiagnosticaAlumno,
     LibroSubidaNivel,
@@ -318,8 +318,9 @@ def registros(db, entorno):
     db.add(ReporteSemanalAlumno(id_semana=semanas[1].id_semana, cantidad_lsl=None, **claves, **captura))
     db.flush()
     db.add(LibroSubidaNivel(id_reporte_semanal=reporte.id, titulo_libro="El zorro", aciertos=4, total_preguntas=5, **base))
-    for semana, asistio in zip(semanas, (True, False)):
-        db.add(AsistenciaSemanal(id_alumno=luis, id_semana=semana.id_semana, asistio=asistio, **captura))
+    alfabetizacion = entorno.programas["Alfabetización"]
+    for semana, estado in zip(semanas, ("presente", "ausente")):
+        db.add(Asistencia(id_alumno=luis, fecha=semana.fecha_inicio, id_programa=alfabetizacion, estado=estado, **captura))
     nivel_rubrica = db.exec(select(NivelRubrica).order_by(NivelRubrica.id_nivel_rubrica)).first()
     db.add(RubricaRegistroSemanal(id_semana=semanas[1].id_semana, id_nivel_fluidez=nivel_rubrica.id_nivel_rubrica,
                                   observacion="Lee fluido", **claves, **captura))
@@ -342,7 +343,7 @@ def test_cu015_resumen_con_registros(client, entorno, cabeceras, registros):
     cuerpo = client.get(f"/alumnos/{registros['luis']}/resumen", headers=cabeceras["Docente"]).json()
 
     assert cuerpo == {
-        "nivel_colocado": {"letra": "B", "id_nivel_rk": 3, "numero_periodo": 2},
+        "nivel_colocado": {"letra": "B", "id_nivel_rk": 3, "numero_periodo": 2, "nivel_descriptivo": "En proceso"},
         "libros_leidos_anio": 4,
         "asistencia_porcentaje": 50.0,
     }
@@ -382,7 +383,7 @@ def test_cu015_nivel_colocado_del_periodo_mas_avanzado_con_dato(client, db, ento
     url = f"/alumnos/{luis}/resumen"
 
     assert client.get(url, headers=cabeceras["Supervisor"]).json()["nivel_colocado"] == {
-        "letra": "J", "id_nivel_rk": letra_j.id_nivel_rk, "numero_periodo": 1,
+        "letra": "J", "id_nivel_rk": letra_j.id_nivel_rk, "numero_periodo": 1, "nivel_descriptivo": "Avanzado",
     }
 
     vigente = db.exec(
@@ -418,6 +419,26 @@ def test_cu015_registro_de_vuelo_como_maximo_4_filas(client, db, entorno, cabece
     vuelo = client.get(f"/alumnos/{luis}/registro-vuelo", headers=cabeceras["Supervisor"]).json()
 
     assert [fila["corte"] for fila in vuelo] == [2, 3, 4, 5]
+
+
+def test_cu015_nivel_descriptivo_segun_el_grado_actual(client, db, entorno, cabeceras):
+    """La misma letra (G) es Avanzado en 1.º y En proceso en 3.º; sin letra colocada, null."""
+    luis = entorno.alumnos["luis"]
+    letra_g = db.exec(select(NivelRazkids).where(NivelRazkids.letra == "G")).one().id_nivel_rk
+    registro_de_vuelo(db, entorno, luis.id_alumno, entorno.periodos["pasado"], letra_g)
+    registro_de_vuelo(db, entorno, luis.id_alumno, entorno.periodos["vigente"], None)
+    db.commit()
+    url, cabecera = f"/alumnos/{luis.id_alumno}", cabeceras["Supervisor"]
+
+    en_primero = client.get(f"{url}/registro-vuelo", headers=cabecera).json()
+    luis.id_grado = entorno.grados["3.º"]
+    db.add(luis)
+    db.commit()
+    en_tercero = client.get(f"{url}/registro-vuelo", headers=cabecera).json()
+
+    assert [f["nivel_descriptivo"] for f in en_primero] == ["Avanzado", None]
+    assert [f["nivel_descriptivo"] for f in en_tercero] == ["En proceso", None]
+    assert client.get(f"{url}/resumen", headers=cabecera).json()["nivel_colocado"]["nivel_descriptivo"] == "En proceso"
 
 
 def test_cu015_rubrica_y_lectura_muestran_los_5_mas_recientes(client, db, entorno, cabeceras):
@@ -460,6 +481,7 @@ def test_cu015_pestanas_con_registros(client, entorno, cabeceras, registros):
     lectura = client.get(f"{url}/lectura", headers=cabecera).json()
 
     assert (vuelo[0]["nivel_entrada"], vuelo[0]["nivel_colocado"], vuelo[0]["aciertos"]) == ("A", "B", 8)
+    assert vuelo[0]["nivel_descriptivo"] == "En proceso"
     assert [s["semana"] for s in rubrica["semanales"]] == [2]
     assert rubrica["semanales"][0]["fluidez"] is not None
     assert [(m["mes"], m["ajustado"]) for m in rubrica["mensuales"]] == [(5, True), (4, False)]

@@ -4,18 +4,18 @@ Los indicadores se calculan al consultar, sin procesos programados. Antes de con
 actividades se cierran las sesiones vencidas, para no contar como activa una actividad
 de una sesión que ya expiró.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima, limites_lima
+from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
 from app.models.organizacion import Alumno, Colegio, DocenteColegioGrado, PeriodoAcademico, Rol, Usuario
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadActiva
-from app.schemas.inicio import AlertaInactividad, InicioDirectivo, InicioDocente, InicioSupervisor
+from app.schemas.inicio import AlertaOperativa, InicioDirectivo, InicioDocente, InicioSupervisor
 from app.services.actividad import (
     ACTIVIDAD_ACTIVA,
     actividad_activa,
@@ -24,10 +24,17 @@ from app.services.actividad import (
 )
 from app.services.asignacion_service import a_cargo
 from app.services.calendario import cargar_dias_habiles, periodo_de_referencia_del_anio, periodo_vigente
+from app.services.registros_vencidos import Clase, EstadoRegistros, estado_de_registros
 from app.services.usuario_service import DOCENTE
 
-# CU011: días hábiles seguidos sin iniciar actividad a partir de los cuales se alerta.
+# Alertas operativas de CU011.
+SINCRONIZACION_OLVIDADA = "sincronizacion_olvidada"
+INACTIVIDAD_OPERATIVA = "inactividad_operativa"
+INCUMPLIMIENTO_SEDE = "incumplimiento_sede"
+# Días hábiles seguidos sin actividad a partir de los cuales se alerta.
 UMBRAL_DIAS_INACTIVIDAD = 4
+# Sin iniciar sesión por más de este lapso, con clases vencidas: sincronización olvidada.
+SIN_SESION_SINCRONIZACION = timedelta(hours=72)
 
 
 # ── Docente ─────────────────────────────────────────────────────────────────────────
@@ -69,8 +76,7 @@ def _de_docentes_asignados(consulta, periodo: PeriodoAcademico):
 
 
 def docentes_activos(db: Session, periodo: Optional[PeriodoAcademico]) -> int:
-    """CU011: docentes activos con asignación en el periodo (el de referencia: vigente
-    o, en un receso, el próximo o el último del año, como Colegios Operando); 0 sin periodo."""
+    """CU011: docentes activos con asignación en el periodo vigente; 0 sin periodo."""
     if periodo is None:
         return 0
     return db.exec(
@@ -90,34 +96,33 @@ def _asignaciones_en(periodo: PeriodoAcademico, columna):
     )
 
 
-def alertas_inactividad(db: Session, periodo: PeriodoAcademico, hoy: date) -> list[AlertaInactividad]:
-    """CU011: docentes activos con asignación vigente que llevan UMBRAL_DIAS_INACTIVIDAD o
-    más días hábiles sin iniciar actividad.
+def _nombre(usuario: Usuario) -> str:
+    return f"{usuario.nombres} {usuario.apellidos}"
+
+
+def _alerta(tipo: str, mensaje: str, critica: bool = False) -> AlertaOperativa:
+    return AlertaOperativa(tipo=tipo, mensaje=mensaje, critica=critica)
+
+
+def alertas_inactividad(
+    db: Session, docentes: list[tuple[Usuario, datetime]], periodo: PeriodoAcademico, hoy: date
+) -> list[AlertaOperativa]:
+    """`inactividad_operativa`: docentes que llevan UMBRAL_DIAS_INACTIVIDAD o más días
+    hábiles sin actividad.
 
     Se cuentan los días hábiles desde el más reciente de:
-    - el día siguiente a su último inicio de actividad dentro del periodo;
+    - el día siguiente a su última actividad finalizada (`actividad.fin`);
     - el primer día del periodo;
     - el día siguiente al que quedó asignado a su colegio en el periodo (el `creado_en`
       más antiguo de sus asignaciones del periodo: las filas que no cambian se conservan,
       así que una rotación o una reactivación lo reinician y un cambio de grados no);
-    hasta ayer inclusive: hoy todavía puede iniciar. Cuatro consultas en total, sin
-    importar cuántos docentes haya.
+    hasta ayer inclusive: hoy todavía puede trabajar. Dos consultas, sin importar cuántos
+    docentes haya.
     """
-    docentes = db.exec(
-        _de_docentes_asignados(select(Usuario, func.min(DocenteColegioGrado.creado_en)), periodo)
-        .group_by(Usuario.id_usuario)
-    ).all()
-    if not docentes:
-        return []
-    desde, hasta = limites_lima(periodo.fecha_inicio, periodo.fecha_fin)
-    ultimos_inicios = dict(
+    ultimos_fines = dict(
         db.exec(
-            select(Actividad.id_docente, func.max(Actividad.inicio))
-            .where(
-                col(Actividad.id_docente).in_([u.id_docente for u, _ in docentes]),
-                Actividad.inicio >= desde,
-                Actividad.inicio < hasta,
-            )
+            select(Actividad.id_docente, func.max(Actividad.fin))
+            .where(col(Actividad.id_docente).in_([u.id_docente for u, _ in docentes]), col(Actividad.fin).is_not(None))
             .group_by(Actividad.id_docente)
         ).all()
     )
@@ -126,25 +131,86 @@ def alertas_inactividad(db: Session, periodo: PeriodoAcademico, hoy: date) -> li
 
     alertas = []
     for usuario, asignado_en in docentes:
-        ultimo = ultimos_inicios.get(usuario.id_docente)
+        ultimo_fin = ultimos_fines.get(usuario.id_docente)
         desde_dia = max(
             periodo.fecha_inicio,
             fecha_lima(asignado_en) + un_dia,
-            fecha_lima(ultimo) + un_dia if ultimo is not None else periodo.fecha_inicio,
+            fecha_lima(ultimo_fin) + un_dia if ultimo_fin is not None else periodo.fecha_inicio,
         )
-        dias = calendario.contar(desde_dia, hoy)
-        if dias >= UMBRAL_DIAS_INACTIVIDAD:
-            nombre = f"{usuario.nombres} {usuario.apellidos}"
-            alertas.append(
-                AlertaInactividad(
-                    id_docente=usuario.id_docente,
-                    docente=nombre,
-                    dias_habiles=dias,
-                    mensaje=f"Atención: El docente {nombre} lleva {dias} días hábiles sin iniciar actividad.",
-                )
-            )
-    alertas.sort(key=lambda a: (-a.dias_habiles, a.docente))
+        if calendario.contar(desde_dia, hoy) >= UMBRAL_DIAS_INACTIVIDAD:
+            alertas.append(_alerta(
+                INACTIVIDAD_OPERATIVA,
+                f"Inactividad Operativa - {_nombre(usuario)}: Sin actividad registrada en los últimos "
+                f"{UMBRAL_DIAS_INACTIVIDAD} días hábiles.",
+            ))
     return alertas
+
+
+def alertas_sincronizacion(
+    db: Session, docentes: list[tuple[Usuario, datetime]], vencidas: list[Clase], ahora: datetime
+) -> list[AlertaOperativa]:
+    """`sincronizacion_olvidada`: docentes con al menos una clase vencida en sus grados
+    cuyo último inicio de sesión fue hace más de SIN_SESION_SINCRONIZACION, o que nunca
+    iniciaron sesión."""
+    con_vencidas = {clase.id_docente for clase in vencidas}
+    candidatos = [u for u, _ in docentes if u.id_docente in con_vencidas]
+    if not candidatos:
+        return []
+    ultimas = dict(
+        db.exec(
+            select(Sesion.id_usuario, func.max(Sesion.inicio))
+            .where(col(Sesion.id_usuario).in_([u.id_usuario for u in candidatos]))
+            .group_by(Sesion.id_usuario)
+        ).all()
+    )
+    limite = ahora - SIN_SESION_SINCRONIZACION
+    return [
+        _alerta(
+            SINCRONIZACION_OLVIDADA,
+            f"Sincronización Olvidada - {_nombre(u)}: Registros vencidos, último inicio de sesión hace más "
+            "de 3 días.",
+        )
+        for u in candidatos
+        if ultimas.get(u.id_usuario) is None or ultimas[u.id_usuario] < limite
+    ]
+
+
+def alertas_sede(db: Session, estado: EstadoRegistros) -> list[AlertaOperativa]:
+    """`incumplimiento_sede` (crítica): colegios activos con al menos una clase vencida y
+    ningún registro de asistencia en el periodo vigente."""
+    sin_registros = {c.id_colegio for c in estado.vencidas} - estado.colegios_con_registros
+    if not sin_registros:
+        return []
+    nombres = db.exec(
+        select(Colegio.nombre).where(col(Colegio.id_colegio).in_(sin_registros)).order_by(Colegio.nombre)
+    ).all()
+    return [
+        _alerta(
+            INCUMPLIMIENTO_SEDE,
+            f"Incumplimiento de Sede - Colegio {nombre}: Sin registros obligatorios en el periodo académico actual.",
+            critica=True,
+        )
+        for nombre in nombres
+    ]
+
+
+def alertas_operativas(db: Session, periodo: PeriodoAcademico, estado: EstadoRegistros) -> list[AlertaOperativa]:
+    """CU011: sincronización, inactividad y sede, en ese orden; dentro de cada tipo, por
+    nombre del docente o del colegio."""
+    docentes = sorted(
+        db.exec(
+            _de_docentes_asignados(select(Usuario, func.min(DocenteColegioGrado.creado_en)), periodo)
+            .group_by(Usuario.id_usuario)
+        ).all(),
+        key=lambda fila: (fila[0].nombres, fila[0].apellidos, fila[0].id_usuario),
+    )
+    if not docentes:
+        return []
+    return [
+        *alertas_sincronizacion(db, docentes, estado.vencidas, ahora_utc()),
+        *alertas_inactividad(db, docentes, periodo, hoy_lima()),
+        *alertas_sede(db, estado),
+    ]
 
 
 def inicio_supervisor(db: Session) -> InicioSupervisor:
@@ -156,11 +222,14 @@ def inicio_supervisor(db: Session) -> InicioSupervisor:
         .join(Sesion, Sesion.id_sesion == Actividad.id_sesion)
         .where(col(Actividad.fin).is_(None), col(Sesion.fin).is_(None), Sesion.expira > ahora_utc())
     ).one()
+    estado = estado_de_registros(db)
     return InicioSupervisor(
         colegios_registrados=colegios,
-        docentes_activos=docentes_activos(db, periodo_de_referencia_del_anio(db)),
+        docentes_activos=docentes_activos(db, periodo),
         docentes_con_actividad_activa=con_actividad,
-        alertas=[] if periodo is None else alertas_inactividad(db, periodo, hoy_lima()),
+        registros_vencidos=len(estado.vencidas),
+        registros_incompletos=len(estado.incompletas),
+        alertas=[] if periodo is None else alertas_operativas(db, periodo, estado),
     )
 
 

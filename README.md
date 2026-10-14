@@ -66,8 +66,8 @@ archivo es la fuente de verdad (no hay pantalla para editarlo):
 - valida que los periodos no se solapen, estén dentro del año, empiecen en lunes, terminen
   en viernes y que cada corte caiga dentro de su periodo; si algo falla, no escribe nada;
 - si cambia una fecha, la actualiza en la BD y lo registra en el log, salvo que eso deje
-  fuera de rango semanas que ya tienen registros (asistencia, rúbrica o reporte): en ese
-  caso registra un `ERROR` y no toca nada.
+  fuera de rango semanas que ya tienen registros (rúbrica o reporte; la asistencia es por
+  fecha y no depende de las semanas): en ese caso registra un `ERROR` y no toca nada.
 
 ### Colegios iniciales: `CARGAR_COLEGIOS_INICIALES`
 

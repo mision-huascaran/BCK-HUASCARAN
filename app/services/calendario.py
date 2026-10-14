@@ -163,3 +163,14 @@ def cargar_dias_habiles(db: Session, desde: date, hasta: date) -> DiasHabiles:
 def dias_habiles(db: Session, desde: date, hasta: date) -> int:
     """Cuántos días hábiles hay en [desde, hasta)."""
     return cargar_dias_habiles(db, desde, hasta).contar(desde, hasta)
+
+
+def es_dia_lectivo(db: Session, dia: date, periodo: Optional[PeriodoAcademico] = None) -> bool:
+    """Si `dia` es un día lectivo que ya llegó: hábil (lunes a viernes, dentro de un
+    periodo y no en `dia_no_laborable`) y no posterior a hoy. Con `periodo`, además debe
+    caer dentro de ese periodo (p. ej. el vigente)."""
+    if dia > hoy_lima():
+        return False
+    if periodo is not None and not periodo.fecha_inicio <= dia <= periodo.fecha_fin:
+        return False
+    return dias_habiles(db, dia, dia + timedelta(days=1)) == 1

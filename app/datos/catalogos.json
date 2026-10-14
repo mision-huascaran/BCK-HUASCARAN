@@ -75,5 +75,14 @@
     {"grado": "4.º", "letra": "J"},
     {"grado": "5.º", "letra": "M"},
     {"grado": "6.º", "letra": "Q"}
+  ],
+  "_nota_escala_nivel_descriptivo": "CU015: letra Raz-Kids desde la que empieza cada nivel descriptivo en cada grado. Una letra cae en el nivel de mayor 'desde' que no la supere; Inicio empieza en la primera letra (aa), así que una letra por debajo del tramo de Inicio también es Inicio.",
+  "escala_nivel_descriptivo": [
+    {"grado": "1.º", "desde": {"Inicio": "aa", "En proceso": "A", "Logrado": "C", "Avanzado": "D"}},
+    {"grado": "2.º", "desde": {"Inicio": "aa", "En proceso": "D", "Logrado": "F", "Avanzado": "G"}},
+    {"grado": "3.º", "desde": {"Inicio": "aa", "En proceso": "G", "Logrado": "J", "Avanzado": "K"}},
+    {"grado": "4.º", "desde": {"Inicio": "aa", "En proceso": "K", "Logrado": "M", "Avanzado": "N"}},
+    {"grado": "5.º", "desde": {"Inicio": "aa", "En proceso": "N", "Logrado": "Q", "Avanzado": "R"}},
+    {"grado": "6.º", "desde": {"Inicio": "aa", "En proceso": "R", "Logrado": "U", "Avanzado": "V"}}
   ]
 }

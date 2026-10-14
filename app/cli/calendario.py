@@ -4,8 +4,9 @@ El archivo es la fuente de verdad del calendario (no hay pantalla para editarlo)
 - el año se busca por nombre, los periodos por (año, número) y hay una
   evaluacion_diagnostica (corte) por periodo;
 - si un año o periodo existe con otras fechas, se actualizan y se registra el cambio,
-  SALVO que eso deje fuera de rango semanas que ya tienen registros (asistencia, rúbrica
-  o reporte): en ese caso ERROR y no se toca nada de ese calendario;
+  SALVO que eso deje fuera de rango semanas que ya tienen registros (rúbrica o reporte;
+  la asistencia es por fecha y no depende de las semanas): en ese caso ERROR y no se
+  toca nada de ese calendario;
 - semana_reporte se genera de lunes a viernes solo dentro de los periodos, con
   numero_semana correlativo en el año. Las semanas sin registros que quedan fuera del
   calendario se eliminan: son datos generados por este comando, no capturados.
@@ -20,7 +21,6 @@ from sqlmodel import Session, col, select
 from app.cli.comun import DIR_DATOS, Resumen, id_supervisor_original, leer_json
 from app.core.tiempo import ahora_utc
 from app.models.evaluacion import (
-    AsistenciaSemanal,
     EvaluacionDiagnostica,
     ReporteSemanalAlumno,
     RubricaRegistroSemanal,
@@ -134,7 +134,7 @@ def _semanas_con_registros(db: Session, ids_semana: list[int]) -> set[int]:
     if not ids_semana:
         return set()
     con_registros = set()
-    for modelo in (AsistenciaSemanal, RubricaRegistroSemanal, ReporteSemanalAlumno):
+    for modelo in (RubricaRegistroSemanal, ReporteSemanalAlumno):
         con_registros.update(
             db.exec(select(modelo.id_semana).where(col(modelo.id_semana).in_(ids_semana))).all()
         )

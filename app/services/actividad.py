@@ -155,7 +155,8 @@ def _ya_hay_una_activa() -> ErrorNegocio:
 def _sin_asignaciones() -> ErrorNegocio:
     return ErrorNegocio(
         status.HTTP_409_CONFLICT,
-        "No puedes iniciar una actividad porque no tienes asignaciones para el periodo académico vigente.",
+        "No puedes iniciar una actividad porque no tienes asignaciones activas, ya sea para el periodo "
+        "académico actual o de receso.",
         motivo=SIN_ASIGNACIONES,
     )
 
@@ -163,7 +164,7 @@ def _sin_asignaciones() -> ErrorNegocio:
 def _fuera_de_periodo() -> ErrorNegocio:
     return ErrorNegocio(
         status.HTTP_409_CONFLICT,
-        "No puedes iniciar una actividad fuera de un periodo académico vigente.",
+        "No puedes iniciar una actividad fuera del calendario operativo.",
         motivo=FUERA_DE_PERIODO,
     )
 
