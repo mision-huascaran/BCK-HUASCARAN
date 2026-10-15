@@ -30,6 +30,7 @@ from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadItem, ActividadRespuesta
 from app.services.alcance import alcance_docente, tenia_asignacion
+from app.services.calendario import periodo_vigente
 from app.services.sesiones import (
     CIERRE_ACTIVIDAD_FORZADO,
     CIERRE_ACTIVIDAD_MANUAL,
@@ -43,6 +44,12 @@ from app.services.usuario_service import DOCENTE, nombre_rol
 
 EN_CURSO = "en_curso"
 FINALIZADA = "finalizada"
+
+# Por qué un docente no puede iniciar una actividad ahora (CU010). Van en el 409 de
+# `iniciar_actividad` (como `motivo`) y en el Inicio del Docente (`motivo_no_puede_iniciar`).
+ACTIVIDAD_ACTIVA = "actividad_activa"
+FUERA_DE_PERIODO = "fuera_de_periodo"
+SIN_ASIGNACIONES = "sin_asignaciones"
 
 # Cierres que puso el servidor sin saber la hora real: un `finalizar` posterior los corrige.
 CIERRES_AUTOMATICOS = (CIERRE_ACTIVIDAD_POR_EXPIRACION, CIERRE_ACTIVIDAD_FORZADO)
@@ -140,7 +147,7 @@ def _registrada(db: Session, id_actividad: uuid.UUID, id_docente: Optional[int])
 def _ya_hay_una_activa() -> ErrorNegocio:
     return ErrorNegocio(
         status.HTTP_409_CONFLICT,
-        "Debe finalizar la actividad actual antes de iniciar una nueva.",
+        "Debes finalizar la actividad actual antes de iniciar una nueva.",
         motivo="actividad_activa_existente",
     )
 
@@ -148,9 +155,29 @@ def _ya_hay_una_activa() -> ErrorNegocio:
 def _sin_asignaciones() -> ErrorNegocio:
     return ErrorNegocio(
         status.HTTP_409_CONFLICT,
-        "No puede iniciar una actividad porque no tiene asignaciones activas.",
-        motivo="sin_asignaciones",
+        "No puedes iniciar una actividad porque no tienes asignaciones activas, ya sea para el periodo "
+        "académico actual o de receso.",
+        motivo=SIN_ASIGNACIONES,
     )
+
+
+def _fuera_de_periodo() -> ErrorNegocio:
+    return ErrorNegocio(
+        status.HTTP_409_CONFLICT,
+        "No puedes iniciar una actividad fuera del calendario operativo.",
+        motivo=FUERA_DE_PERIODO,
+    )
+
+
+def impedimento_para_iniciar(db: Session, id_docente: Optional[int]) -> Optional[str]:
+    """Qué le impide al docente iniciar una actividad hoy, sin contar una ya activa:
+    `fuera_de_periodo` si no hay periodo vigente; `sin_asignaciones` si lo hay pero el
+    docente no tiene asignaciones en él (en colegios activos); None si puede."""
+    if periodo_vigente(db) is None:
+        return FUERA_DE_PERIODO
+    if id_docente is None or not alcance_docente(db, id_docente):
+        return SIN_ASIGNACIONES
+    return None
 
 
 def _inicio_invalido(detail: str) -> ErrorNegocio:
@@ -206,7 +233,10 @@ def iniciar_actividad(
     activa = _sin_otra_activa(db, usuario.id_docente, id_actividad)
     if activa is not None:
         return activa, False
-    if usuario.id_docente is None or not alcance_docente(db, usuario.id_docente):
+    impedimento = impedimento_para_iniciar(db, usuario.id_docente)
+    if impedimento == FUERA_DE_PERIODO:
+        raise _fuera_de_periodo()
+    if impedimento == SIN_ASIGNACIONES:
         raise _sin_asignaciones()
 
     ahora = ahora_utc()

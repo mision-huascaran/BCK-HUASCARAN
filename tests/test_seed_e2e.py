@@ -152,6 +152,25 @@ def test_colegio_y_cuentas_con_los_datos_pedidos(db, base):
         assert not cuenta.es_supervisor_original
 
 
+def test_dias_de_clase_del_colegio_e2e(db, base):
+    """Cada grado con su día (para cubrir los vencidos de CU011); un colegio E2E ya
+    cargado sin días (o con otros) los recibe en la siguiente corrida."""
+    sembrar_e2e(db, VARIABLES)
+    oferta = db.exec(select(Grado.nombre, ColegioGrado.dia_clase).join(ColegioGrado, ColegioGrado.id_grado == Grado.id_grado)
+                     .where(ColegioGrado.id_colegio == colegio_e2e(db).id_colegio)).all()
+    assert sorted(oferta) == [("1.º", 1), ("2.º", 2), ("3.º", 3), ("4.º", 4), ("5.º", 5), ("6.º", 1)]
+    for fila in db.exec(select(ColegioGrado).where(ColegioGrado.id_colegio == colegio_e2e(db).id_colegio)).all():
+        fila.dia_clase = None
+        db.add(fila)
+    db.commit()
+
+    resumen = sembrar_e2e(db, VARIABLES)
+
+    assert resumen.actualizados["colegio E2E"] == 1
+    dias = db.exec(select(ColegioGrado.dia_clase).where(ColegioGrado.id_colegio == colegio_e2e(db).id_colegio)).all()
+    assert None not in dias
+
+
 def test_la_cuenta_inactiva_queda_inactiva_aunque_la_activen(db, base):
     sembrar_e2e(db, VARIABLES)
     inactiva = usuario(db, "E2E_INACTIVO_PASS")

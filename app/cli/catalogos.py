@@ -4,6 +4,8 @@
   por el seed: se buscan por nombre (get-or-create), sin forzar ids.
 - nivel_razkids, nivel_general y nivel_rubrica usan ids explícitos (el id de
   nivel_razkids ES el orden del nivel); después se ajusta su secuencia.
+- nivel_esperado_por_grado y escala_nivel_descriptivo se identifican por grado (y nivel)
+  y apuntan a la letra por su nombre.
 - Nunca se sobrescribe una fila existente: si difiere del archivo, WARNING y se deja.
 """
 from typing import Optional
@@ -11,7 +13,13 @@ from typing import Optional
 from sqlmodel import Session, SQLModel, select
 
 from app.cli.comun import DIR_DATOS, Resumen, ajustar_secuencia, leer_json
-from app.models.evaluacion import NivelEsperadoPorGrado, NivelGeneral, NivelRazkids, NivelRubrica
+from app.models.evaluacion import (
+    EscalaNivelDescriptivo,
+    NivelEsperadoPorGrado,
+    NivelGeneral,
+    NivelRazkids,
+    NivelRubrica,
+)
 from app.models.organizacion import CicloEbr, Grado, Programa, Rol
 
 ARCHIVO_CATALOGOS = DIR_DATOS / "catalogos.json"
@@ -96,6 +104,32 @@ def _cargar_niveles_esperados(db: Session, datos: list[dict], resumen: Resumen) 
             )
 
 
+def _cargar_escala_descriptiva(db: Session, datos: list[dict], resumen: Resumen) -> None:
+    """Escala del nivel descriptivo (CU015): por grado, la letra desde la que empieza
+    cada nivel."""
+    tabla = EscalaNivelDescriptivo.__tablename__
+    letras = {n.letra: n.id_nivel_rk for n in db.exec(select(NivelRazkids)).all()}
+    for item in datos:
+        grado = db.exec(select(Grado).where(Grado.nombre == item["grado"])).first()
+        if grado is None:
+            resumen.error(f"{tabla}: no existe el grado {item['grado']}. Se omite.")
+            continue
+        for nivel, letra in item["desde"].items():
+            id_desde = letras.get(letra)
+            if id_desde is None:
+                resumen.error(f"{tabla} {item['grado']} {nivel}: no existe el nivel {letra}. Se omite.")
+                continue
+            existente = db.get(EscalaNivelDescriptivo, (grado.id_grado, nivel))
+            if existente is None:
+                db.add(EscalaNivelDescriptivo(id_grado=grado.id_grado, nivel=nivel, id_nivel_rk_desde=id_desde))
+                resumen.creados[tabla] += 1
+            elif existente.id_nivel_rk_desde != id_desde:
+                resumen.advertir(
+                    f"{tabla} {item['grado']} {nivel}: la BD tiene id_nivel_rk_desde="
+                    f"{existente.id_nivel_rk_desde}, el archivo {letra} (id {id_desde}). No se modifica."
+                )
+
+
 def cargar_catalogos(db: Session, datos: Optional[dict] = None) -> Resumen:
     """Carga todos los catálogos fijos. Idempotente: se ejecuta en cada arranque."""
     resumen = Resumen()
@@ -119,6 +153,7 @@ def cargar_catalogos(db: Session, datos: Optional[dict] = None) -> Resumen:
     _cargar_por_id(db, NivelGeneral, niveles_generales, resumen)
     _cargar_por_id(db, NivelRubrica, _filas_rubrica(datos["niveles_rubrica"], programas), resumen)
     _cargar_niveles_esperados(db, datos["niveles_esperados_por_grado"], resumen)
+    _cargar_escala_descriptiva(db, datos["escala_nivel_descriptivo"], resumen)
 
     db.commit()
     return resumen

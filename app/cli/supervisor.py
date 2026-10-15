@@ -2,7 +2,11 @@
 
 Se ejecuta en cada arranque: si ya existe, no hace nada. Se crea por script y no por
 migración para no versionar credenciales (diseño v3, §3). Nunca registra la contraseña
-ni los hashes en el log.
+en el log. Si pierde el acceso, lo recupera con PIN como cualquier usuario (CU001).
+
+La contraseña del entorno es temporal (CU001): al crearlo queda con cambio obligatorio
+en su primer ingreso, con la misma vigencia que las temporales de CU016. Las cuentas que
+ya existían no se tocan.
 """
 import re
 from dataclasses import dataclass
@@ -15,16 +19,12 @@ from sqlmodel import Session, select
 from app.cli.comun import Resumen, id_supervisor_original
 from app.core.config import settings
 from app.core.correo import normalizar_correo
-from app.core.politica_contrasena import errores_politica_contrasena
+from app.core.politica_contrasena import VIGENCIA_CONTRASENA_TEMPORAL, errores_politica_contrasena
 from app.core.security import hash_password
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Rol, Usuario
-from app.models.seguridad import RecoveryKey
 
-CANTIDAD_HASHES = 10
 PATRON_DNI = re.compile(r"^\d{8}$")
-# $2a$/$2b$/$2y$, costo de 2 dígitos, 22 de salt + 31 de hash en el alfabeto de bcrypt.
-PATRON_BCRYPT = re.compile(r"^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$")
 PREFIJO = "SUPERVISOR_ORIGINAL_"
 
 
@@ -35,7 +35,6 @@ class DatosSupervisor:
     nombres: str
     apellidos: str
     dni: str
-    recovery_hashes: str
 
     @classmethod
     def desde_settings(cls) -> "DatosSupervisor":
@@ -45,14 +44,10 @@ class DatosSupervisor:
             nombres=settings.SUPERVISOR_ORIGINAL_NOMBRES,
             apellidos=settings.SUPERVISOR_ORIGINAL_APELLIDOS,
             dni=settings.SUPERVISOR_ORIGINAL_DNI,
-            recovery_hashes=settings.SUPERVISOR_ORIGINAL_RECOVERY_HASHES.get_secret_value(),
         )
 
     def faltantes(self) -> list[str]:
         return [PREFIJO + campo.upper() for campo, valor in vars(self).items() if not valor.strip()]
-
-    def hashes(self) -> list[str]:
-        return [h.strip() for h in self.recovery_hashes.split(",") if h.strip()]
 
 
 def errores_de_validacion(datos: DatosSupervisor) -> list[str]:
@@ -65,17 +60,6 @@ def errores_de_validacion(datos: DatosSupervisor) -> list[str]:
         errores.append(f"{PREFIJO}DNI debe tener exactamente 8 dígitos")
     if "@" not in datos.correo:
         errores.append(f"{PREFIJO}CORREO no parece un correo")
-    hashes = datos.hashes()
-    if len(hashes) != CANTIDAD_HASHES:
-        errores.append(
-            f"{PREFIJO}RECOVERY_HASHES debe tener exactamente {CANTIDAD_HASHES} hashes "
-            f"separados por comas; tiene {len(hashes)}"
-        )
-    invalidos = sum(1 for h in hashes if not PATRON_BCRYPT.match(h))
-    if invalidos:
-        errores.append(f"{PREFIJO}RECOVERY_HASHES: {invalidos} hash(es) sin formato bcrypt")
-    if len(set(hashes)) != len(hashes):
-        errores.append(f"{PREFIJO}RECOVERY_HASHES tiene hashes repetidos")
     return errores
 
 
@@ -119,8 +103,8 @@ def inicializar_supervisor_original(
             resumen.error(f"No se crea el Supervisor original: {mensaje}")
         return resumen
 
-    ahora = ahora_utc()
     id_usuario = _siguiente_id_usuario(db)
+    ahora = ahora_utc()
     db.add(
         Usuario(
             id_usuario=id_usuario,
@@ -132,13 +116,12 @@ def inicializar_supervisor_original(
             apellidos=datos.apellidos.strip(),
             activo=True,
             es_supervisor_original=True,
+            debe_cambiar_contrasena=True,
+            contrasena_temporal_expira=ahora + VIGENCIA_CONTRASENA_TEMPORAL,
             creado_por=id_usuario,
             creado_en=ahora,
         )
     )
-    db.flush()
-    for llave_hash in datos.hashes():
-        db.add(RecoveryKey(id_usuario=id_usuario, llave_hash=llave_hash, creada_en=ahora))
     try:
         db.commit()
     except IntegrityError as e:
@@ -147,5 +130,4 @@ def inicializar_supervisor_original(
         return resumen
 
     resumen.creados["usuario (Supervisor original)"] += 1
-    resumen.creados["recovery_key"] += CANTIDAD_HASHES
     return resumen

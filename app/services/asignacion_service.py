@@ -167,17 +167,21 @@ def periodos_asignables(
 
 # ── Escritura ───────────────────────────────────────────────────────────────────────
 
+def grado_asignado() -> ErrorNegocio:
+    """409 de aula ocupada (CU016), con el texto exacto del caso de uso. También lo usa la
+    traducción del UNIQUE de `docente_colegio_grado` (dos asignaciones simultáneas)."""
+    return ErrorNegocio(
+        status.HTTP_409_CONFLICT,
+        "Error: Uno o más grados seleccionados para este colegio ya se encuentran asignados a "
+        "otro docente en el periodo vigente.",
+        motivo="grado_asignado",
+    )
+
+
 def _verificar_grados_libres(db: Session, id_docente: int, asignacion: Asignacion) -> None:
     """409 si alguno de esos grados ya lo tiene otro docente en alguno de esos periodos."""
     ocupada = db.exec(
-        select(Grado.nombre, Docente.nombres, Docente.apellidos, PeriodoAcademico.numero)
-        .select_from(DocenteColegioGrado)
-        .join(Grado, Grado.id_grado == DocenteColegioGrado.id_grado)
-        .join(Docente, Docente.id_docente == DocenteColegioGrado.id_docente)
-        .join(
-            PeriodoAcademico,
-            PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico,
-        )
+        select(DocenteColegioGrado.id_docente)
         .where(
             DocenteColegioGrado.id_colegio == asignacion.colegio.id_colegio,
             col(DocenteColegioGrado.id_grado).in_([g.id_grado for g in asignacion.grados]),
@@ -186,16 +190,10 @@ def _verificar_grados_libres(db: Session, id_docente: int, asignacion: Asignacio
             ),
             DocenteColegioGrado.id_docente != id_docente,
         )
-        .order_by(PeriodoAcademico.fecha_inicio, Grado.id_grado)
+        .limit(1)
     ).first()
     if ocupada is not None:
-        grado, nombres, apellidos, numero = ocupada
-        raise ErrorNegocio(
-            status.HTTP_409_CONFLICT,
-            f"{grado} de {asignacion.colegio.nombre} ya está asignado a {nombres} {apellidos} "
-            f"en el periodo {numero} de {asignacion.anio.nombre}.",
-            motivo="grado_asignado",
-        )
+        raise grado_asignado()
 
 
 def reemplazar_asignaciones(

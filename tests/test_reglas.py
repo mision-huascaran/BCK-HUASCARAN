@@ -1,5 +1,5 @@
-"""Reglas puras: política de contraseña, tiempo, ciclo, correo, Recovery Keys, PIN,
-cambios por módulo, auditoría, días hábiles y formato de errores."""
+"""Reglas puras: política de contraseña, tiempo, ciclo, correo, PIN,
+cambios por módulo, auditoría, días hábiles, formato de errores y nivel descriptivo."""
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
@@ -8,15 +8,24 @@ from fastapi import FastAPI
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from app.core import ciclo, correo, pin, politica_contrasena, recovery_key, tiempo
+from app.cli.catalogos import cargar_catalogos
+from app.core import ciclo, correo, pin, politica_contrasena, tiempo
 from app.core.database import insert_con_conflicto, opciones_de_conexion
 from app.core.email import enmascarar_correo
 from app.core.errores import ErrorNegocio
 from app.core.paginacion import pagina
 from app.core.validacion import documentar_formato_422, errores_legibles
-from app.models.organizacion import DiaNoLaborable, PeriodoAcademico
+from app.models.evaluacion import NivelRazkids
+from app.models.organizacion import AnioEscolar, DiaNoLaborable, Grado, PeriodoAcademico
 from app.services import auditoria, cambios, usuario_service
-from app.services.calendario import anio_de_referencia, cargar_dias_habiles, dias_habiles, periodo_de_referencia
+from app.services.calendario import (
+    anio_de_referencia,
+    cargar_dias_habiles,
+    dias_habiles,
+    periodo_de_referencia,
+    periodo_de_referencia_del_anio,
+)
+from app.services.nivel_descriptivo import EscalaDescriptiva, escala_del_grado, nivel_descriptivo
 
 # ── Política de contraseña (CU006) ──────────────────────────────────────────────────
 
@@ -82,7 +91,7 @@ def test_utc_datetime_normaliza_a_utc(valor, esperado):
     assert tipo.process_result_value(valor, None) == esperado
 
 
-# ── Ciclo, correo, Recovery Keys, PIN ───────────────────────────────────────────────
+# ── Ciclo, correo, PIN ──────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize(
     "programa, ciclo_del_grado, esperado",
@@ -111,15 +120,6 @@ def test_correo_normalizado_y_enmascarado():
     assert enmascarar_correo("sin-arroba") == "***"
 
 
-def test_recovery_key_formato_y_normalizacion():
-    llave = recovery_key.generar_llave()
-
-    assert len(llave) == 34
-    assert llave.count("-") == 6
-    assert recovery_key.normalizar_llave(llave.lower().replace("-", "—")) == llave
-    assert recovery_key.normalizar_llave(" ab-cd ") == "ABCD"
-
-
 def test_pin_hmac_depende_del_usuario():
     codigo = pin.generar_pin()
 
@@ -135,10 +135,12 @@ def test_pin_hmac_depende_del_usuario():
     "conteos, texto",
     [
         ({}, "Sin registros"),
-        ({"rubrica": 1}, "1 Rúbrica"),
+        ({"rubrica": 1}, "1 Rúbricas"),
+        ({"asistencia": 15, "rubrica": 5}, "15 Asistencias, 5 Rúbricas"),
         ({"registro_vuelo": 2, "rubrica": 15}, "15 Rúbricas, 2 Registros de Vuelo"),
-        ({"alumnos": 1, "asistencia": 3, "otros": 0}, "1 Alumno, 3 Registros de Asistencia"),
-        ({"seguimiento_lectura": 1, "otros": 2}, "1 Seguimiento de Lectura, 2 Otros registros"),
+        ({"alumnos": 1, "asistencia": 3, "otros": 0}, "3 Asistencias, 1 Alumnos"),
+        ({"seguimiento_lectura": 1, "registro_vuelo": 1, "otros": 2},
+         "1 Registros de Vuelo, 1 Seguimientos de Lectura, 2 Otros registros"),
     ],
 )
 def test_cu021_productividad_texto(conteos, texto):
@@ -153,16 +155,16 @@ def test_modulo_de_cada_tabla():
 
 
 def test_resumen_por_modulo_cuenta_registros_distintos():
-    registros = [("alumno", "1", "crear"), ("alumno", "1", "editar"), ("asistencia_semanal", "7", "crear")]
+    registros = [("alumno", "1", "crear"), ("alumno", "1", "editar"), ("asistencia", "7", "crear")]
 
     resumen = cambios.resumen_por_modulo(registros)
 
-    assert [(m.modulo, m.total, m.creados, m.editados) for m in resumen] == [("alumnos", 1, 1, 1), ("asistencia", 1, 1, 0)]
+    assert [(m.modulo, m.total, m.creados, m.editados) for m in resumen] == [("asistencia", 1, 1, 0), ("alumnos", 1, 1, 1)]
 
 
 def test_asignaciones_involucradas_de_registros_de_otras_tablas(db, entorno):
     luis = entorno.alumnos["luis"].id_alumno
-    registros = [("asistencia_semanal", "999", "crear"), ("libro_subida_nivel", "999", "crear"), ("alumno", str(luis), "editar")]
+    registros = [("asistencia", "999", "crear"), ("libro_subida_nivel", "999", "crear"), ("alumno", str(luis), "editar")]
 
     asignaciones = cambios.asignaciones_involucradas(db, registros)
 
@@ -237,8 +239,49 @@ def test_anio_de_referencia_antes_de_que_empiece(db, entorno, reloj):
     assert anio_de_referencia(db).id_anio_escolar == entorno.anio.id_anio_escolar
 
 
+def test_periodo_de_referencia_del_anio_vigente(db, entorno, reloj):
+    reloj.fijar(tiempo.ahora_utc())
+
+    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["vigente"].id_periodo_academico
+
+
+def test_periodo_de_referencia_del_anio_en_un_receso_es_el_proximo(db, entorno, reloj):
+    reloj.fijar(tiempo.ahora_utc() - timedelta(days=45))  # entre el pasado y el vigente
+
+    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["vigente"].id_periodo_academico
+
+
+def test_periodo_de_referencia_del_anio_terminado_es_el_ultimo(db, entorno, reloj):
+    """Con el año terminado no salta al siguiente, aunque ya esté cargado."""
+    hoy = entorno.hoy
+    auditoria = {"creado_por": 1, "creado_en": tiempo.ahora_utc()}
+    siguiente = AnioEscolar(
+        nombre="siguiente", fecha_inicio=hoy + timedelta(days=200), fecha_fin=hoy + timedelta(days=500), **auditoria
+    )
+    db.add(siguiente)
+    db.flush()
+    db.add(
+        PeriodoAcademico(
+            id_anio_escolar=siguiente.id_anio_escolar, numero=1, fecha_inicio=hoy + timedelta(days=210),
+            fecha_fin=hoy + timedelta(days=260), **auditoria,
+        )
+    )
+    db.commit()
+    reloj.fijar(tiempo.ahora_utc() + timedelta(days=170))  # el año terminó y el siguiente no empezó
+
+    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
+    assert periodo_de_referencia(db).id_anio_escolar == siguiente.id_anio_escolar  # el otro criterio sí salta
+
+
+def test_periodo_de_referencia_del_anio_antes_de_que_empiece_es_el_primero(db, entorno, reloj):
+    reloj.fijar(tiempo.ahora_utc() - timedelta(days=400))
+
+    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["pasado"].id_periodo_academico
+
+
 def test_sin_calendario_no_hay_referencia(db):
     assert periodo_de_referencia(db) is None
+    assert periodo_de_referencia_del_anio(db) is None
     assert db.exec(select(PeriodoAcademico)).all() == []
 
 
@@ -338,3 +381,48 @@ def test_confirmar_propaga_otras_violaciones():
     sesion = SesionQueChoca()
     with pytest.raises(IntegrityError):
         usuario_service._confirmar(sesion)
+
+
+# ── Nivel descriptivo del Registro de Vuelo (CU015) ─────────────────────────────────
+
+# Matriz del CU: (Inicio hasta, En proceso, Logrado, Avanzado desde).
+MATRIZ_DESCRIPTIVA = {
+    "1.º": ("aa", ("A", "B"), "C", "D"),
+    "2.º": ("C", ("D", "E"), "F", "G"),
+    "3.º": ("F", ("G", "H", "I"), "J", "K"),
+    "4.º": ("J", ("K", "L"), "M", "N"),
+    "5.º": ("M", ("N", "O", "P"), "Q", "R"),
+    "6.º": ("Q", ("R", "S", "T"), "U", "V"),
+}
+
+
+def _nivel_segun_el_cu(orden: dict[str, int], grado: str, letra: str) -> str:
+    inicio, proceso, logrado, avanzado = MATRIZ_DESCRIPTIVA[grado]
+    if orden[letra] <= orden[inicio]:
+        return "Inicio"
+    if letra in proceso:
+        return "En proceso"
+    if letra == logrado:
+        return "Logrado"
+    assert orden[letra] >= orden[avanzado]
+    return "Avanzado"
+
+
+@pytest.mark.parametrize("grado", list(MATRIZ_DESCRIPTIVA))
+def test_cu015_nivel_descriptivo_de_cada_letra_en_cada_grado(db, grado):
+    cargar_catalogos(db)
+    orden = {n.letra: n.id_nivel_rk for n in db.exec(select(NivelRazkids)).all()}
+    id_grado = db.exec(select(Grado.id_grado).where(Grado.nombre == grado)).one()
+    escala = escala_del_grado(db, id_grado)
+
+    assert {letra: escala.nivel(i) for letra, i in orden.items()} == {
+        letra: _nivel_segun_el_cu(orden, grado, letra) for letra in orden
+    }
+    assert nivel_descriptivo(db, id_grado, orden["aa"]) == "Inicio"
+
+
+def test_cu015_sin_letra_o_sin_escala_no_hay_nivel_descriptivo():
+    assert EscalaDescriptiva(((1, "Inicio"),)).nivel(None) is None
+    assert EscalaDescriptiva(()).nivel(5) is None
+    # Una letra por debajo del primer tramo también es del nivel más bajo.
+    assert EscalaDescriptiva(((3, "Inicio"), (5, "Logrado"))).nivel(1) == "Inicio"

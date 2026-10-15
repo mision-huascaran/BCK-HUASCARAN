@@ -58,6 +58,7 @@ def test_cu009_solo_una_actividad_activa(client, entorno, doc, actividad):
     respuesta = post(client, doc)
 
     assert (respuesta.status_code, motivo(respuesta)) == (409, "actividad_activa_existente")
+    assert respuesta.json()["detail"] == "Debes finalizar la actividad actual antes de iniciar una nueva."
 
 
 def test_cu009_id_de_otro_docente(client, db, entorno, doc, actividad):
@@ -76,7 +77,26 @@ def test_cu009_sin_asignaciones_no_inicia(client, db, entorno):
     respuesta = post(client, cabecera_de(db, otro))
 
     assert (respuesta.status_code, motivo(respuesta)) == (409, "sin_asignaciones")
-    assert respuesta.json()["detail"] == "No puede iniciar una actividad porque no tiene asignaciones activas."
+    assert respuesta.json()["detail"] == (
+        "No puedes iniciar una actividad porque no tienes asignaciones activas, ya sea para el periodo "
+        "académico actual o de receso."
+    )
+
+
+def test_cu010_fuera_de_periodo_no_inicia(client, db, entorno, doc):
+    """Entre periodos el motivo es el periodo, no las asignaciones (aunque tampoco tenga)."""
+    vigente = entorno.periodos["vigente"]
+    vigente.fecha_fin = entorno.hoy - timedelta(days=1)
+    db.add(vigente)
+    db.commit()
+
+    respuesta = post(client, doc)
+
+    assert respuesta.status_code == 409
+    assert respuesta.json() == {
+        "detail": "No puedes iniciar una actividad fuera del calendario operativo.",
+        "motivo": "fuera_de_periodo",
+    }
 
 
 @pytest.mark.parametrize("desfase", [timedelta(minutes=-1), timedelta(minutes=3)], ids=["antes_de_la_sesion", "futuro"])

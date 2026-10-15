@@ -79,14 +79,12 @@ def desactivar_alumno(id_alumno: int, db: Db, usuario: ConAcceso):
 
 @router.get("/alumnos/{id_alumno}/resumen", response_model=Resumen)
 def resumen(id_alumno: int, db: Db, usuario: ConAcceso):
-    alumno_service.alumno_visible(db, usuario, id_alumno)
-    return detalle.resumen(db, id_alumno)
+    return detalle.resumen(db, alumno_service.alumno_visible(db, usuario, id_alumno))
 
 
 @router.get("/alumnos/{id_alumno}/registro-vuelo", response_model=list[RegistroVuelo])
 def registro_vuelo(id_alumno: int, db: Db, usuario: ConAcceso):
-    alumno_service.alumno_visible(db, usuario, id_alumno)
-    return detalle.registro_vuelo(db, id_alumno)
+    return detalle.registro_vuelo(db, alumno_service.alumno_visible(db, usuario, id_alumno))
 
 
 @router.get("/alumnos/{id_alumno}/rubrica", response_model=Rubrica)

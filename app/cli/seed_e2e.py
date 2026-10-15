@@ -5,7 +5,8 @@ entorno (uat, producción, piloto) o ENTORNO vacío se rechaza con ERROR aunque
 SEED_E2E=true. Es el último paso de `inicializar`, así que corre en cada arranque: busca
 por correo (y el colegio por nombre) y crea o corrige, nunca duplica.
 
-Siembra el colegio "I.E. E2E Playwright" y cuatro cuentas (Docente, Supervisor,
+Siembra el colegio "I.E. E2E Playwright" (cada grado con su día de clase, para que las
+pruebas cubran las clases vencidas de CU011) y cuatro cuentas (Docente, Supervisor,
 Directivo y una Directivo siempre inactiva). El Docente queda en 1.º, 2.º y 3.º de ese
 colegio en todos los periodos del año escolar vigente; 4.º, 5.º y 6.º quedan sin docente
 desde el periodo vigente en adelante (las asignaciones de periodos pasados se conservan
@@ -35,6 +36,7 @@ from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     AnioEscolar,
     Colegio,
+    ColegioGrado,
     Docente,
     DocenteColegioGrado,
     Grado,
@@ -61,6 +63,8 @@ COLEGIO = {
 GRADOS = ("1.º", "2.º", "3.º", "4.º", "5.º", "6.º")
 PROGRAMAS = ("Alfabetización", "Comprensión Lectora")
 GRADOS_DEL_DOCENTE = ("1.º", "2.º", "3.º")
+# Día de clase de cada grado (1 = lunes … 5 = viernes): uno distinto por grado del Docente.
+DIAS_DE_CLASE = {"1.º": 1, "2.º": 2, "3.º": 3, "4.º": 4, "5.º": 5, "6.º": 1}
 GRADOS_LIBRES = ("4.º", "5.º", "6.º")
 
 DOCENTE = "Docente"
@@ -100,6 +104,20 @@ def motivo_de_rechazo(entorno: Mapping[str, str]) -> Optional[str]:
 
 # ── Colegio ─────────────────────────────────────────────────────────────────────────
 
+def _asegurar_dias_de_clase(db: Session, colegio: Colegio, grados: list[Grado], id_autor: int, ahora) -> bool:
+    """Deja cada grado del colegio E2E con su día de DIAS_DE_CLASE. True si cambió alguno."""
+    db.flush()
+    cambiado = False
+    for grado in grados:
+        fila = db.get(ColegioGrado, (colegio.id_colegio, grado.id_grado))
+        if fila.dia_clase != DIAS_DE_CLASE[grado.nombre]:
+            fila.dia_clase = DIAS_DE_CLASE[grado.nombre]
+            fila.modificado_por, fila.modificado_en = id_autor, ahora
+            db.add(fila)
+            cambiado = True
+    return cambiado
+
+
 def _asegurar_colegio(
     db: Session, grados: list[Grado], programas: list[Programa], id_autor: int, resumen: Resumen
 ) -> Colegio:
@@ -114,6 +132,7 @@ def _asegurar_colegio(
         db.add(colegio)
         db.flush()
         completar_oferta(db, colegio, grados, programas, auditoria)
+        _asegurar_dias_de_clase(db, colegio, grados, id_autor, ahora)
         db.commit()
         db.refresh(colegio)
         resumen.creados["colegio E2E"] += 1
@@ -124,7 +143,8 @@ def _asegurar_colegio(
     for campo, valor in deseado.items():
         setattr(colegio, campo, valor)
     nuevos_grados, nuevos_programas = completar_oferta(db, colegio, grados, programas, auditoria)
-    if cambiado or nuevos_grados or nuevos_programas:
+    dias_cambiados = _asegurar_dias_de_clase(db, colegio, grados, id_autor, ahora)
+    if cambiado or nuevos_grados or nuevos_programas or dias_cambiados:
         colegio.modificado_por, colegio.modificado_en = id_autor, ahora
         resumen.actualizados["colegio E2E"] += 1
     db.add(colegio)
@@ -194,6 +214,22 @@ def _corregir_usuario(db: Session, usuario: Usuario, cuenta: CuentaE2E, id_rol: 
     return cambiado
 
 
+def _limpiar_pendientes(usuario: Usuario) -> bool:
+    """Deja la cuenta lista para entrar directo. Devuelve si quitó un cambio obligatorio.
+
+    - PIN pendiente de un cambio de contraseña: no debe sobrevivir entre corridas.
+    - Cambio obligatorio de la contraseña temporal (CU016): las cuentas E2E no lo tienen.
+    """
+    usuario.codigo_verificacion = None
+    usuario.codigo_verificacion_expira = None
+    usuario.codigo_verificacion_intentos = 0
+    if not usuario.debe_cambiar_contrasena and usuario.contrasena_temporal_expira is None:
+        return False
+    usuario.debe_cambiar_contrasena = False
+    usuario.contrasena_temporal_expira = None
+    return True
+
+
 def _asegurar_cuenta(
     db: Session, cuenta: CuentaE2E, entorno: Mapping[str, str], roles: dict, id_autor: int, resumen: Resumen
 ) -> Optional[Usuario]:
@@ -228,10 +264,7 @@ def _asegurar_cuenta(
     if cuenta.rol == DOCENTE:
         cambiado = _asegurar_ficha(db, usuario, cuenta, id_autor, ahora) or cambiado
 
-    # PIN pendiente de un cambio de contraseña: no debe sobrevivir entre corridas.
-    usuario.codigo_verificacion = None
-    usuario.codigo_verificacion_expira = None
-    usuario.codigo_verificacion_intentos = 0
+    cambiado = _limpiar_pendientes(usuario) or cambiado
     if existente is not None and cambiado:
         usuario.modificado_por, usuario.modificado_en = id_autor, ahora
     db.add(usuario)

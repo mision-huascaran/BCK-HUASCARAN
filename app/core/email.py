@@ -5,6 +5,7 @@ from email.mime.text import MIMEText
 
 from app.core.config import settings
 from app.core.pin import VIGENCIA_PIN
+from app.core.politica_contrasena import VIGENCIA_CONTRASENA_TEMPORAL
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PUERTO = 465
@@ -12,6 +13,12 @@ SMTP_PUERTO = 465
 # (POST /usuarios, POST /me/password/codigo) no deben dejar la petición colgada.
 SMTP_TIMEOUT = 10
 MINUTOS_VIGENCIA_PIN = int(VIGENCIA_PIN.total_seconds() // 60)
+HORAS_VIGENCIA_TEMPORAL = int(VIGENCIA_CONTRASENA_TEMPORAL.total_seconds() // 3600)
+AVISO_TEMPORAL = (
+    f"Esta contraseña temporal vence en {HORAS_VIGENCIA_TEMPORAL} horas. Deberás cambiarla "
+    "en tu primer ingreso; si vence antes, usa la opción \"¿Olvidó su contraseña?\" "
+    "para recuperar el acceso."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +62,7 @@ Tu cuenta en SICEDU (Sistema de Centralización de Datos Educativos) fue creada.
 Correo: {correo_destino}
 Contraseña temporal: {contrasena_temporal}
 
-Por seguridad, cambia esta contraseña la primera vez que inicies sesión.
+{AVISO_TEMPORAL}
 
 Equipo SICEDU - Misión Huascarán
 """
@@ -74,7 +81,7 @@ Equipo SICEDU - Misión Huascarán
   </div>
 
   <p style="font-size: 13px; color: #6b7280;">
-    Por seguridad, cambia esta contraseña la primera vez que inicies sesión.
+    {AVISO_TEMPORAL}
   </p>
 
   <p style="margin-top: 32px; font-size: 13px; color: #6b7280;">

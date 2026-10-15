@@ -16,7 +16,7 @@ from sqlmodel import Session, col, select
 
 from app.core.ciclo import ciclo_sql
 from app.models.evaluacion import (
-    AsistenciaSemanal,
+    Asistencia,
     EvaluacionDiagnosticaAlumno,
     LibroSubidaNivel,
     NivelFinalMensual,
@@ -48,18 +48,20 @@ MODULOS = {
     "evaluacion_diagnostica_alumno": VUELO,
     "alumno": ALUMNOS,
     "alumno_programa_historial": ALUMNOS,
-    "asistencia_semanal": ASISTENCIA,
+    "asistencia": ASISTENCIA,
 }
-ORDEN_MODULOS = (RUBRICA, LECTURA, VUELO, ALUMNOS, ASISTENCIA, OTROS)
+# Orden de CU021 (productividad), que siguen también CU017 y CU019.
+ORDEN_MODULOS = (ASISTENCIA, RUBRICA, VUELO, LECTURA, ALUMNOS, OTROS)
 
-# Nombre de la cantidad para la productividad de CU021: (singular, plural).
+# Nombre de la cantidad en la productividad de CU021: siempre en plural, también con 1
+# ("1 Asistencias"), como lo pide el CU.
 NOMBRES = {
-    RUBRICA: ("Rúbrica", "Rúbricas"),
-    LECTURA: ("Seguimiento de Lectura", "Seguimientos de Lectura"),
-    VUELO: ("Registro de Vuelo", "Registros de Vuelo"),
-    ALUMNOS: ("Alumno", "Alumnos"),
-    ASISTENCIA: ("Registro de Asistencia", "Registros de Asistencia"),
-    OTROS: ("Otro registro", "Otros registros"),
+    ASISTENCIA: "Asistencias",
+    RUBRICA: "Rúbricas",
+    VUELO: "Registros de Vuelo",
+    LECTURA: "Seguimientos de Lectura",
+    ALUMNOS: "Alumnos",
+    OTROS: "Otros registros",
 }
 SIN_REGISTROS = "Sin registros"
 
@@ -68,7 +70,7 @@ CAMPO_POR_ACCION = {CREAR: "creados", EDITAR: "editados", ACTIVAR: "activados", 
 # Cómo llegar del registro auditado a su alumno, para las asignaciones involucradas.
 CON_ID_ALUMNO = {
     "alumno_programa_historial": AlumnoProgramaHistorial,
-    "asistencia_semanal": AsistenciaSemanal,
+    "asistencia": Asistencia,
     "evaluacion_diagnostica_alumno": EvaluacionDiagnosticaAlumno,
     "reporte_semanal_alumno": ReporteSemanalAlumno,
     "rubrica_registro_semanal": RubricaRegistroSemanal,
@@ -116,8 +118,8 @@ def productividad(conteos: dict[str, int]) -> list[ProductividadModulo]:
 
 
 def productividad_texto(conteos: dict[str, int]) -> str:
-    """'15 Rúbricas, 1 Registro de Vuelo' o 'Sin registros'."""
-    partes = [f"{n} {NOMBRES[m][0] if n == 1 else NOMBRES[m][1]}" for m, n in _ordenados(conteos)]
+    """'15 Asistencias, 5 Rúbricas' o 'Sin registros'."""
+    partes = [f"{n} {NOMBRES[m]}" for m, n in _ordenados(conteos)]
     return ", ".join(partes) if partes else SIN_REGISTROS
 
 

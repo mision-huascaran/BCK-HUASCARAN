@@ -18,7 +18,7 @@ from sqlmodel import Session, col, or_, select
 from app.core.email import enmascarar_correo, enviar_correo_bienvenida_profesor
 from app.core.errores import ErrorNegocio
 from app.core.paginacion import Paginado, pagina, paginar
-from app.core.politica_contrasena import generar_contrasena_temporal
+from app.core.politica_contrasena import VIGENCIA_CONTRASENA_TEMPORAL, generar_contrasena_temporal
 from app.core.security import hash_password
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Docente, Rol, Usuario
@@ -98,11 +98,7 @@ def _confirmar(db: Session) -> None:
         db.rollback()
         mensaje = str(error.orig)
         if "docente_colegio_grado" in mensaje:
-            raise ErrorNegocio(
-                status.HTTP_409_CONFLICT,
-                "Uno de los grados ya fue asignado a otro docente en ese periodo.",
-                motivo="grado_asignado",
-            ) from error
+            raise asignaciones.grado_asignado() from error
         if "dni" in mensaje:
             raise ErrorNegocio(status.HTTP_409_CONFLICT, "El DNI ya está registrado.", motivo="dni_duplicado") from error
         if "correo" in mensaje:
@@ -128,6 +124,7 @@ def _item(usuario: Usuario, rol: str, colegios: dict[int, list[ItemCatalogo]]) -
         rol=rol,
         activo=usuario.activo,
         es_supervisor_original=usuario.es_supervisor_original,
+        debe_cambiar_contrasena=usuario.debe_cambiar_contrasena,
         colegios_asignados=asignados,
     )
 
@@ -244,6 +241,9 @@ def crear_usuario(db: Session, data: UsuarioCrear, actor: Usuario) -> UsuarioCre
         nombres=data.nombres,
         apellidos=data.apellidos,
         activo=True,
+        # Debe cambiar la temporal en su primer ingreso, antes de que venza (CU016).
+        debe_cambiar_contrasena=True,
+        contrasena_temporal_expira=ahora + VIGENCIA_CONTRASENA_TEMPORAL,
         **auditoria,
     )
     db.add(usuario)

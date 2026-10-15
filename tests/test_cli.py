@@ -1,11 +1,14 @@
 """Comandos de carga de datos maestros (`python -m app.cli`) y datos de prueba (seed)."""
 import json
 import logging
+import os
+import subprocess
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Session, select
 
 from app import seed_data
@@ -16,10 +19,11 @@ from app.cli.catalogos import cargar_catalogos
 from app.cli.colegios import cargar_colegios_iniciales
 from app.cli.comun import Resumen, ajustar_secuencia, leer_json
 from app.cli.feriados import cargar_feriados, feriados_entre_semana
-from app.cli.recovery_keys import SalidaNoPermitida, contenido_archivo, generar_recovery_keys, validar_salida
 from app.cli.supervisor import DatosSupervisor, errores_de_validacion, inicializar_supervisor_original
+from app.core.config import Settings
+from app.core.security import verify_password
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import AsistenciaSemanal, EvaluacionDiagnostica, SemanaReporte
+from app.models.evaluacion import EvaluacionDiagnostica, ReporteSemanalAlumno, SemanaReporte
 from app.models.organizacion import (
     AnioEscolar,
     Colegio,
@@ -31,15 +35,22 @@ from app.models.organizacion import (
     PeriodoAcademico,
     Usuario,
 )
-from tests.conftest import HASHES_LLAVES, PASSWORD, crear_alumno, crear_colegio, crear_docente
+from tests.conftest import PASSWORD, crear_alumno, crear_colegio, crear_docente
 
 LUNES = date(2030, 3, 4)
+
+# Un .env como el de Jenkins, que aún trae los hashes de las Recovery Keys eliminadas.
+ENV_CON_VARIABLE_OBSOLETA = "\n".join([
+    "DATABASE_URL=sqlite://",
+    "JWT_SECRET_KEY=x",
+    "SUPERVISOR_ORIGINAL_RECOVERY_HASHES='$2b$12$abc,$2b$12$def'",
+])
 
 
 def datos_supervisor(**cambios) -> DatosSupervisor:
     base = {
         "correo": "Original@Sicedu.Test ", "password": PASSWORD, "nombres": " Olga ", "apellidos": "Original",
-        "dni": "40000000", "recovery_hashes": ",".join(HASHES_LLAVES),
+        "dni": "40000000",
     }
     return DatosSupervisor(**{**base, **cambios})
 
@@ -76,6 +87,7 @@ def test_cargar_catalogos_es_idempotente(db):
 
     assert primera.creados["grado"] == 6
     assert primera.creados["rol"] == 3
+    assert primera.creados["escala_nivel_descriptivo"] == 24
     assert sum(segunda.creados.values()) == 0
     assert segunda.advertencias == []
 
@@ -87,11 +99,19 @@ def test_cargar_catalogos_avisa_diferencias_sin_sobrescribir(db):
     datos["niveles_razkids"][0]["letra"] = "ZZ"
     datos["niveles_esperados_por_grado"][0]["letra"] = "B"
     datos["niveles_esperados_por_grado"].append({"grado": "7.º", "letra": "A"})
+    datos["escala_nivel_descriptivo"][0]["desde"]["Logrado"] = "B"
+    datos["escala_nivel_descriptivo"][1]["desde"]["Avanzado"] = "Ñ"
+    datos["escala_nivel_descriptivo"].append({"grado": "7.º", "desde": {"Inicio": "aa"}})
 
     resumen = cargar_catalogos(db, datos)
 
-    assert len(resumen.advertencias) == 3
-    assert resumen.errores == ["nivel_esperado_por_grado: no existe el grado 7.º o el nivel A. Se omite."]
+    assert len(resumen.advertencias) == 4
+    assert resumen.advertencias[-1].startswith("escala_nivel_descriptivo 1.º Logrado: la BD tiene id_nivel_rk_desde=4")
+    assert resumen.errores == [
+        "nivel_esperado_por_grado: no existe el grado 7.º o el nivel A. Se omite.",
+        "escala_nivel_descriptivo 2.º Avanzado: no existe el nivel Ñ. Se omite.",
+        "escala_nivel_descriptivo: no existe el grado 7.º. Se omite.",
+    ]
     assert db.exec(select(Grado).where(Grado.nombre == "1.º")).one().id_ciclo == 1
 
 
@@ -111,8 +131,62 @@ def test_supervisor_original_se_crea_una_sola_vez(db):
 
     usuario = db.exec(select(Usuario)).one()
     assert (usuario.correo, usuario.nombres, usuario.creado_por) == ("original@sicedu.test", "Olga", usuario.id_usuario)
-    assert creado.creados["recovery_key"] == 10
+    assert usuario.debe_cambiar_contrasena is True
+    assert creado.creados == {"usuario (Supervisor original)": 1}
     assert repetido.omitidos == ["el Supervisor original ya existe"]
+
+
+def test_supervisor_original_se_crea_sin_hashes(db, monkeypatch):
+    """CU001 ya no usa Recovery Keys: bastan correo, contraseña, nombres, apellidos y DNI,
+    leídos del entorno, y la variable obsoleta se ignora aunque traiga basura."""
+    cargar_catalogos(db)
+    for campo, valor in {
+        "CORREO": "original@sicedu.test", "PASSWORD": PASSWORD, "NOMBRES": "Olga",
+        "APELLIDOS": "Original", "DNI": "40000000", "RECOVERY_HASHES": "no-es-un-hash",
+    }.items():
+        monkeypatch.setenv(f"SUPERVISOR_ORIGINAL_{campo}", valor)
+    monkeypatch.setattr("app.cli.supervisor.settings", Settings())
+
+    resumen = inicializar_supervisor_original(db)
+
+    assert resumen.errores == []
+    assert resumen.creados == {"usuario (Supervisor original)": 1}
+    usuario = db.exec(select(Usuario)).one()
+    assert usuario.es_supervisor_original
+    assert verify_password(PASSWORD, usuario.password_hash)
+
+
+def test_settings_acepta_la_variable_obsoleta_en_el_env(tmp_path):
+    """Settings rechaza las claves desconocidas del .env: la de las Recovery Keys sigue
+    declarada para que un .env (o un secreto de Jenkins) que aún la tenga no tumbe la app."""
+    env = escribir(
+        tmp_path,
+        ENV_CON_VARIABLE_OBSOLETA,
+        ".env",
+    )
+
+    assert Settings(_env_file=env).SUPERVISOR_ORIGINAL_RECOVERY_HASHES is not None
+
+
+def test_la_app_arranca_con_la_variable_obsoleta_en_el_env(tmp_path):
+    """Como en Jenkins: un proceso nuevo importa la app con un .env que aún la trae."""
+    escribir(
+        tmp_path,
+        ENV_CON_VARIABLE_OBSOLETA,
+        ".env",
+    )
+    entorno = {
+        clave: valor for clave, valor in os.environ.items()
+        if clave not in ("DATABASE_URL", "JWT_SECRET_KEY") and not clave.startswith("SUPERVISOR_ORIGINAL_")
+    }
+    entorno["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+
+    resultado = subprocess.run(
+        [sys.executable, "-c", "from app.main import app; print(len(app.routes))"],
+        cwd=tmp_path, env=entorno, capture_output=True, text=True, timeout=60,
+    )
+
+    assert resultado.returncode == 0, resultado.stderr
 
 
 @pytest.mark.parametrize(
@@ -121,15 +195,27 @@ def test_supervisor_original_se_crea_una_sola_vez(db):
         ({"password": "corta"}, "PASSWORD no cumple"),
         ({"dni": "123"}, "DNI debe tener"),
         ({"correo": "sin-arroba"}, "CORREO no parece"),
-        ({"recovery_hashes": HASHES_LLAVES[0]}, "exactamente 10 hashes"),
-        ({"recovery_hashes": ",".join(["x"] * 10)}, "sin formato bcrypt"),
-        ({"recovery_hashes": ",".join([HASHES_LLAVES[0]] * 10)}, "repetidos"),
     ],
 )
 def test_supervisor_original_valida_sus_datos(cambios, texto):
     errores = errores_de_validacion(datos_supervisor(**cambios))
 
     assert any(texto in e for e in errores)
+
+
+def test_supervisor_original_rechazado_por_la_bd_no_queda_a_medias(db, monkeypatch):
+    cargar_catalogos(db)
+
+    def commit_que_choca(_sesion):
+        raise IntegrityError("INSERT INTO usuario", {}, Exception("unique"))
+
+    monkeypatch.setattr(Session, "commit", commit_que_choca)
+    resumen = inicializar_supervisor_original(db, datos_supervisor())
+    monkeypatch.undo()
+
+    assert resumen.errores == ["No se crea el Supervisor original: la BD rechazó la fila (Exception)"]
+    assert resumen.creados == {}
+    assert db.exec(select(Usuario)).all() == []
 
 
 def test_supervisor_original_con_variables_faltantes(db):
@@ -215,8 +301,9 @@ def test_cargar_calendario_no_mueve_semanas_con_registros(con_original, tmp_path
     db.add(ficha)
     db.flush()
     semana = db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).first()
-    db.add(AsistenciaSemanal(id_alumno=alumno.id_alumno, id_semana=semana.id_semana, asistio=True,
-                             id_docente=ficha.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc()))
+    db.add(ReporteSemanalAlumno(id_alumno=alumno.id_alumno, id_semana=semana.id_semana,
+                                id_anio_escolar=semana.id_anio_escolar, id_periodo_academico=semana.id_periodo_academico,
+                                id_docente=ficha.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc()))
     db.commit()
     corrido = calendario(
         [{"numero": 1, "fecha_inicio": "2030-03-11", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-12"}]
@@ -335,33 +422,6 @@ def test_colegios_iniciales_sin_supervisor(db):
     assert cargar_colegios_iniciales(db, habilitado=True).advertencias
 
 
-# ── generar-recovery-keys ───────────────────────────────────────────────────────────
-
-def test_generar_recovery_keys(tmp_path):
-    salida = tmp_path / "llaves.txt"
-
-    linea = generar_recovery_keys(salida)
-
-    assert linea.startswith("SUPERVISOR_ORIGINAL_RECOVERY_HASHES='$2")
-    assert len(linea.split(",")) == 10
-    contenido = salida.read_text(encoding="utf-8")
-    assert contenido.count("\n 1. ") == 1
-    assert "10. " in contenido
-
-
-def test_recovery_keys_no_sobrescribe_ni_escribe_en_el_repo(tmp_path):
-    existente = tmp_path / "ya.txt"
-    existente.write_text("x", encoding="utf-8")
-
-    with pytest.raises(SalidaNoPermitida, match="ya existe"):
-        validar_salida(existente)
-    with pytest.raises(SalidaNoPermitida, match="dentro del repositorio"):
-        validar_salida(Path("llaves.txt"))
-    with pytest.raises(SalidaNoPermitida, match="no existe"):
-        validar_salida(tmp_path / "falta" / "llaves.txt")
-    assert "1. ABCD" in contenido_archivo(["ABCD"])
-
-
 # ── Piezas comunes, orquestador y punto de entrada ──────────────────────────────────
 
 def test_resumen_y_leer_json(tmp_path, caplog):
@@ -421,12 +481,6 @@ def test_ejecutar_paso_sin_bd_es_error_de_infraestructura(motor_de_la_app):
 )
 def test_main_ejecuta_cada_comando(motor_de_la_app, comando):
     assert cli.main([comando]) == 0
-
-
-def test_main_genera_recovery_keys(tmp_path, capsys):
-    assert cli.main(["generar-recovery-keys", "--salida", str(tmp_path / "k.txt")]) == 0
-    assert capsys.readouterr().out.startswith("SUPERVISOR_ORIGINAL_RECOVERY_HASHES=")
-    assert cli.main(["generar-recovery-keys", "--salida", str(tmp_path / "k.txt")]) == 1
 
 
 def test_main_sin_bd_sale_con_1(monkeypatch):

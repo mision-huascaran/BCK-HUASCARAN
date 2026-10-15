@@ -1,4 +1,5 @@
 """Inicio por rol (CU010, CU011, CU012) y seguimiento de docentes (CU020, CU021)."""
+import uuid
 from datetime import date, timedelta
 
 import pytest
@@ -6,11 +7,13 @@ from sqlmodel import select
 
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import DiaNoLaborable, DocenteColegioGrado, PeriodoAcademico
-from app.models.trazabilidad import Actividad
-from tests.conftest import a_las, cabecera_de, crear_docente, iniciar_actividad, motivo
+from app.services import inicio_service
+from app.services.calendario import periodo_de_referencia_del_anio
+from tests.conftest import a_las, asignar, cabecera_de, crear_docente, iniciar_actividad, motivo
 
 # Miércoles. Las alertas cuentan días hábiles hasta ayer (martes 16).
 MIERCOLES = date(2026, 6, 17)
+INACTIVIDAD = "Inactividad Operativa - {}: Sin actividad registrada en los últimos 4 días hábiles."
 
 
 @pytest.fixture
@@ -44,7 +47,7 @@ def terminar_periodo_vigente(db, entorno) -> None:
 def test_cu010_inicio_del_docente(client, entorno, cabeceras):
     cuerpo = client.get("/inicio/docente", headers=cabeceras["Docente"]).json()
 
-    assert cuerpo["puede_iniciar_actividad"] is True
+    assert (cuerpo["puede_iniciar_actividad"], cuerpo["motivo_no_puede_iniciar"]) == (True, None)
     assert cuerpo["actividad_activa"] is None
     assert cuerpo["totales"] == {"ciclos": ["III"], "subprogramas": ["Alfabetización", "Comprensión Lectora"], "cantidad_alumnos": 2}
     assert [a["colegio"] for a in cuerpo["asignaciones"]] == ["Colegio Andino"]
@@ -55,7 +58,7 @@ def test_cu010_con_actividad_en_curso(client, entorno, cabeceras, actividad):
     cuerpo = client.get("/inicio/docente", headers=cabeceras["Docente"]).json()
 
     assert cuerpo["actividad_activa"]["id"] == actividad["id"]
-    assert cuerpo["puede_iniciar_actividad"] is False
+    assert (cuerpo["puede_iniciar_actividad"], cuerpo["motivo_no_puede_iniciar"]) == (False, "actividad_activa")
 
 
 def test_cu010_entre_periodos_no_puede_iniciar(client, db, entorno, cabeceras):
@@ -64,7 +67,31 @@ def test_cu010_entre_periodos_no_puede_iniciar(client, db, entorno, cabeceras):
     cuerpo = client.get("/inicio/docente", headers=cabeceras["Docente"]).json()
 
     assert (cuerpo["asignaciones"], cuerpo["puede_iniciar_actividad"]) == ([], False)
+    assert cuerpo["motivo_no_puede_iniciar"] == "fuera_de_periodo"
     assert client.get("/me/asignaciones", headers=cabeceras["Docente"]).json() == []
+
+
+def test_cu010_sin_asignaciones_en_el_periodo_vigente(client, db, entorno):
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
+    db.commit()
+
+    cuerpo = client.get("/inicio/docente", headers=cabecera_de(db, otro)).json()
+
+    assert (cuerpo["puede_iniciar_actividad"], cuerpo["motivo_no_puede_iniciar"]) == (False, "sin_asignaciones")
+
+
+def test_cu010_solo_con_colegio_inactivo_es_sin_asignaciones(client, db, entorno, cabeceras):
+    colegio = entorno.colegios["Andino"]
+    colegio.activo = False
+    db.add(colegio)
+    db.commit()
+
+    cuerpo = client.get("/inicio/docente", headers=cabeceras["Docente"]).json()
+
+    assert cuerpo["motivo_no_puede_iniciar"] == "sin_asignaciones"
+    assert motivo(client.post("/actividades", json={"id_actividad": str(uuid.uuid4())}, headers=cabeceras["Docente"])) == (
+        "sin_asignaciones"
+    )
 
 
 @pytest.mark.parametrize("ruta, rol", [("/inicio/docente", "Supervisor"), ("/inicio/supervisor", "Directivo"), ("/inicio/directivo", "Docente")])
@@ -78,7 +105,58 @@ def test_cu011_indicadores_del_supervisor(client, entorno, cabeceras, actividad)
     cuerpo = client.get("/inicio/supervisor", headers=cabeceras["Supervisor"]).json()
 
     assert (cuerpo["colegios_registrados"], cuerpo["docentes_activos"], cuerpo["docentes_con_actividad_activa"]) == (2, 1, 1)
-    assert (cuerpo["registros_pendientes"], cuerpo["registros_incompletos"]) == (None, None)
+    assert (cuerpo["registros_vencidos"], cuerpo["registros_incompletos"]) == (0, 0)
+
+
+def supervisor(client, cabeceras) -> dict:
+    return client.get("/inicio/supervisor", headers=cabeceras["Supervisor"]).json()
+
+
+def test_cu011_docentes_activos_solo_con_asignacion_vigente_en_colegio_activo(client, db, entorno, cabeceras):
+    """No cuentan: sin asignación, asignado solo en un periodo pasado, asignado solo en un
+    colegio inactivo ni una cuenta desactivada. Un docente con dos grados cuenta una vez."""
+    lejano = entorno.colegios["Lejano"]
+    crear_docente(db, entorno, "Sin", "sin@sicedu.test", "70000001")
+    pasado = crear_docente(db, entorno, "Pasado", "pasado@sicedu.test", "70000002")
+    asignar(db, pasado.id_docente, lejano, [entorno.grados["3.º"]], entorno.periodos["pasado"], 1)
+    inactivo = crear_docente(db, entorno, "Inactivo", "inactivo@sicedu.test", "70000003")
+    asignar(db, inactivo.id_docente, lejano, [entorno.grados["4.º"]], entorno.periodos["vigente"], 1)
+    inactivo.activo = False
+    db.commit()
+    assert supervisor(client, cabeceras)["docentes_activos"] == 1
+
+    lejano.activo = False
+    db.add(lejano)
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000004")
+    asignar(db, otro.id_docente, lejano, [entorno.grados["5.º"]], entorno.periodos["vigente"], 1)
+    db.commit()
+
+    cuerpo = supervisor(client, cabeceras)
+    assert (cuerpo["docentes_activos"], cuerpo["colegios_registrados"]) == (1, 1)
+
+
+def test_cu011_en_un_receso_no_hay_docentes_activos(client, db, entorno, cabeceras, reloj):
+    """Entre el periodo pasado y el vigente no hay periodo vigente: 0, aunque el docente
+    tenga asignaciones en ambos (el Periodo de Receso del CU no se implementa)."""
+    reloj.fijar(a_las(entorno.periodos["pasado"].fecha_fin + timedelta(days=10)))
+    cabecera = cabecera_de(db, entorno.supervisor)
+
+    assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 0
+
+
+def test_cu011_solo_cuenta_asignaciones_del_periodo_vigente(client, db, entorno, cabeceras):
+    otro = crear_docente(db, entorno, "Futuro", "futuro@sicedu.test", "70000005")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["futuro"], 1)
+    db.commit()
+
+    assert supervisor(client, cabeceras)["docentes_activos"] == 1
+
+
+def test_cu011_sin_calendario_no_hay_docentes_activos(client, entorno, cabeceras, monkeypatch):
+    monkeypatch.setattr(inicio_service, "periodo_vigente", lambda _db: None)
+
+    cuerpo = supervisor(client, cabeceras)
+    assert (cuerpo["docentes_activos"], cuerpo["alertas"]) == (0, [])
 
 
 def test_cu011_docente_recien_asignado_no_alerta(miercoles, client, entorno, cabeceras):
@@ -98,10 +176,8 @@ def test_cu011_alerta_con_4_dias_habiles_sin_actividad(miercoles, client, db, en
     if dias < 4:
         assert resultado == []
     else:
-        assert len(resultado) == 1
-        assert resultado[0]["tipo"] == "docente_inactivo"
-        assert resultado[0]["mensaje"] == f"Atención: El docente Rosa Quispe lleva {resultado[0]['dias_habiles']} días hábiles sin iniciar actividad."
-        assert resultado[0]["dias_habiles"] == dias
+        assert resultado == [{"tipo": "inactividad_operativa", "mensaje": INACTIVIDAD.format("Rosa Quispe"),
+                              "critica": False}]
 
 
 def test_cu011_los_feriados_no_cuentan(miercoles, client, db, entorno, cabeceras):
@@ -112,17 +188,31 @@ def test_cu011_los_feriados_no_cuentan(miercoles, client, db, entorno, cabeceras
     assert alertas(client, cabeceras) == []
 
 
-def test_cu011_el_ultimo_inicio_de_actividad_reinicia_la_cuenta(miercoles, client, db, entorno, cabeceras):
+def test_cu011_la_ultima_actividad_finalizada_reinicia_la_cuenta(miercoles, client, db, entorno, cabeceras):
+    """Cuenta desde el día siguiente a su fin: finalizada el viernes 12, el lunes 15 y
+    el martes 16 son 2 días hábiles."""
     asignado_desde(db, entorno, date(2026, 6, 1))
     miercoles.fijar(a_las(date(2026, 6, 12), 9))
-    iniciar_actividad(client, cabecera_de(db, entorno.docente))
+    cabecera = cabecera_de(db, entorno.docente)
+    actividad = iniciar_actividad(client, cabecera)
+    miercoles.fijar(a_las(date(2026, 6, 12), 11))
+    assert client.post(f"/actividades/{actividad['id']}/finalizar", json={}, headers=cabecera).status_code == 200
     miercoles.fijar(a_las(MIERCOLES, 9))
 
     assert alertas(client, cabeceras) == []
-    assert db.exec(select(Actividad)).one() is not None
 
 
-def test_cu011_varias_alertas_ordenadas_por_dias(miercoles, client, db, entorno, cabeceras):
+def test_cu011_iniciar_sin_finalizar_no_reinicia_la_cuenta(miercoles, client, db, entorno, cabeceras):
+    """Una actividad en curso no es una actividad finalizada: sigue contando desde la
+    asignación."""
+    asignado_desde(db, entorno, date(2026, 6, 1))
+    db.commit()
+    iniciar_actividad(client, cabeceras["Docente"])
+
+    assert [a["tipo"] for a in alertas(client, cabeceras)] == ["inactividad_operativa"]
+
+
+def test_cu011_varias_alertas_ordenadas_por_nombre(miercoles, client, db, entorno, cabeceras):
     asignado_desde(db, entorno, date(2026, 6, 1))
     otro = crear_docente(db, entorno, "Beto", "beto@sicedu.test", "70000002")
     db.add(DocenteColegioGrado(
@@ -134,8 +224,7 @@ def test_cu011_varias_alertas_ordenadas_por_dias(miercoles, client, db, entorno,
 
     resultado = alertas(client, cabeceras)
 
-    assert [a["docente"] for a in resultado] == ["Rosa Quispe", "Beto Prueba"]
-    assert resultado[0]["dias_habiles"] > resultado[1]["dias_habiles"]
+    assert [a["mensaje"] for a in resultado] == [INACTIVIDAD.format("Beto Prueba"), INACTIVIDAD.format("Rosa Quispe")]
 
 
 def test_cu011_entre_periodos_no_hay_alertas(client, db, entorno, cabeceras):
@@ -152,10 +241,58 @@ def test_cu012_indicadores_del_directivo(client, entorno, cabeceras):
     assert cuerpo == {"beneficiarios_activos": 3, "colegios_operando": 1, "salud_sistema": None}
 
 
-def test_cu012_sin_periodo_vigente_no_opera_ningun_colegio(client, db, entorno, cabeceras):
+def directivo(client, cabeceras) -> dict:
+    return client.get("/inicio/directivo", headers=cabeceras["Directivo"]).json()
+
+
+def test_cu012_beneficiarios_solo_de_colegios_activos(client, db, entorno, cabeceras):
+    lejano = entorno.colegios["Lejano"]
+    lejano.activo = False
+    db.add(lejano)
+    db.commit()
+
+    assert directivo(client, cabeceras)["beneficiarios_activos"] == 2
+
+
+def test_cu012_en_un_receso_entre_periodos_usa_el_proximo(client, entorno, cabeceras, reloj):
+    """Entre el periodo pasado y el vigente: cuenta los colegios del que viene."""
+    reloj.fijar(a_las(entorno.periodos["pasado"].fecha_fin + timedelta(days=10)))
+
+    assert directivo(client, cabeceras)["colegios_operando"] == 1
+
+
+def test_cu012_con_el_anio_terminado_usa_el_ultimo_periodo(client, db, entorno, reloj):
+    lejano = entorno.colegios["Lejano"]
+    asignar(db, entorno.id_docente, lejano, [entorno.grados["3.º"]], entorno.periodos["futuro"], 1)
+    db.commit()
+    reloj.fijar(a_las(entorno.anio.fecha_fin + timedelta(days=10)))
+    # La sesión se abre después de mover el reloj: una de antes ya habría vencido.
+    cabecera = cabecera_de(db, entorno.usuarios["Directivo"])
+
+    assert client.get("/inicio/directivo", headers=cabecera).json()["colegios_operando"] == 1
+    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
+
+
+def test_cu012_entre_periodos_sin_asignaciones_en_el_proximo_no_opera_ninguno(client, db, entorno, cabeceras):
     terminar_periodo_vigente(db, entorno)
 
-    assert client.get("/inicio/directivo", headers=cabeceras["Directivo"]).json()["colegios_operando"] == 0
+    assert directivo(client, cabeceras)["colegios_operando"] == 0
+
+
+def test_cu012_sin_calendario_no_opera_ningun_colegio(client, entorno, cabeceras, monkeypatch):
+    monkeypatch.setattr(inicio_service, "periodo_de_referencia_del_anio", lambda _db: None)
+
+    assert directivo(client, cabeceras)["colegios_operando"] == 0
+
+
+def test_cu011_sin_docentes_asignados_no_hay_alertas(client, db, entorno, cabeceras):
+    for colegio in entorno.colegios.values():
+        colegio.activo = False
+        db.add(colegio)
+    db.commit()
+
+    cuerpo = supervisor(client, cabeceras)
+    assert (cuerpo["docentes_activos"], cuerpo["alertas"]) == (0, [])
 
 
 # ── CU020 y CU021: seguimiento ──────────────────────────────────────────────────────

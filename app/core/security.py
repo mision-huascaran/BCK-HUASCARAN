@@ -7,8 +7,6 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-CODIGO_ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # sin O/0, I/1/L — se confunden al leer/tipear
-
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)

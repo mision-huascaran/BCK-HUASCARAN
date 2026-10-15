@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, Index, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Index, SmallInteger, Text, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
@@ -54,7 +54,8 @@ class Colegio(SQLModel, table=True):
         default="Primaria", sa_type=Text, sa_column_kwargs={"server_default": "Primaria"}
     )
     departamento: str = Field(sa_type=Text)
-    provincia: Optional[str] = Field(default=None)
+    # Obligatoria (CU013); 'Por definir' en los colegios que no la tenían.
+    provincia: str
     distrito: Optional[str] = Field(default=None, sa_type=Text)
     seccion: str = Field(default="Única", sa_type=Text, sa_column_kwargs={"server_default": "Única"})
     activo: bool = Field(default=True, sa_column_kwargs={"server_default": text("true")})
@@ -158,9 +159,20 @@ class Usuario(SQLModel, table=True):
         default=0, sa_column_kwargs={"server_default": text("0")}
     )
 
+    # Cuenta creada con contraseña temporal: debe cambiarla en su primer ingreso (CU001,
+    # CU016). La temporal sirve hasta `contrasena_temporal_expira` (null sin marca).
+    debe_cambiar_contrasena: bool = Field(
+        default=False, sa_column_kwargs={"server_default": text("false")}
+    )
+    contrasena_temporal_expira: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
 
 class Alumno(SQLModel, table=True):
     __tablename__ = "alumno"
+    __table_args__ = (
+        # Alumnos de un aula (asistencia, vencidos e incompletos de CU011).
+        Index("ix_alumno_colegio_grado", "id_colegio", "id_grado"),
+    )
 
     id_alumno: Optional[int] = Field(default=None, primary_key=True)
     nombres: str
@@ -221,12 +233,17 @@ class AlumnoProgramaHistorial(SQLModel, table=True):
 
 
 class ColegioGrado(SQLModel, table=True):
-    """Grados que ofrece cada colegio (CU013)."""
+    """Grados que ofrece cada colegio (CU013), con su día de clase semanal."""
 
     __tablename__ = "colegio_grado"
+    __table_args__ = (
+        CheckConstraint("dia_clase BETWEEN 1 AND 5", name="ck_colegio_grado_dia_clase"),
+    )
 
     id_colegio: int = Field(foreign_key=FK_COLEGIO, primary_key=True)
     id_grado: int = Field(foreign_key=FK_GRADO, primary_key=True)
+    # 1 = lunes … 5 = viernes. Null en los colegios cargados antes de pedirse (no vencen).
+    dia_clase: Optional[int] = Field(default=None, sa_type=SmallInteger)
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)

@@ -35,8 +35,11 @@ class Settings(BaseSettings):
     SUPERVISOR_ORIGINAL_NOMBRES: str = ""
     SUPERVISOR_ORIGINAL_APELLIDOS: str = ""
     SUPERVISOR_ORIGINAL_DNI: str = ""
-    # Los 10 hashes bcrypt de las Recovery Keys, separados por comas.
-    SUPERVISOR_ORIGINAL_RECOVERY_HASHES: SecretStr = SecretStr("")
+    # OBSOLETA: se ignora; borrar cuando se retire de los secretos de Jenkins. Eran los
+    # hashes de las Recovery Keys, eliminadas de CU001 (el Supervisor original recupera
+    # su cuenta solo con PIN). Sigue declarada para que un .env que aún la tenga no
+    # impida arrancar (Settings rechaza variables desconocidas del .env).
+    SUPERVISOR_ORIGINAL_RECOVERY_HASHES: Optional[SecretStr] = None
 
     # Solo para la primera carga de los colegios reales; después se apaga (ver README).
     CARGAR_COLEGIOS_INICIALES: bool = False

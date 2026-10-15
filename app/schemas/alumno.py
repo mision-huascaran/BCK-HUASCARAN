@@ -54,17 +54,26 @@ class AlumnoDetalle(AlumnoItem):
 
 # ── Pestañas del detalle (año escolar en curso) ─────────────────────────────────────
 
-class NivelActual(BaseModel):
-    nombre: str
-    mes: int
+class NivelColocado(BaseModel):
+    """Letra Raz-Kids en que el docente colocó al alumno en un Registro de Vuelo."""
+
+    letra: str
+    id_nivel_rk: int
+    # Periodo (corte) del Registro de Vuelo del que sale.
+    numero_periodo: int
+    # Inicio, En proceso, Logrado o Avanzado según el grado actual del alumno; null si
+    # su grado no tiene escala.
+    nivel_descriptivo: Optional[str] = None
 
 
 class Resumen(BaseModel):
-    nivel_actual: Optional[NivelActual] = None
-    # LSL + LSB del año; null si el alumno no tiene ningún reporte semanal en el año.
-    libros_leidos_anio: Optional[int] = None
-    # Semanas asistidas sobre semanas registradas, en %, con 1 decimal; null sin registros.
-    asistencia_porcentaje: Optional[float] = None
+    # Del Registro de Vuelo más reciente del año que lo tenga; null si ninguno.
+    nivel_colocado: Optional[NivelColocado] = None
+    # LSL + LSB del año; 0 si el alumno no tiene reportes semanales en el año.
+    libros_leidos_anio: int = 0
+    # Asistencias (presente o tardanza) sobre clases dictadas a su colegio, grado y
+    # subprograma en el año, en %, con 1 decimal; 0 sin clases dictadas.
+    asistencia_porcentaje: float = 0
 
 
 class RegistroVuelo(BaseModel):
@@ -75,6 +84,8 @@ class RegistroVuelo(BaseModel):
     aciertos: Optional[int] = None
     total: Optional[int] = None
     nivel_colocado: Optional[str] = None
+    # Nivel descriptivo de la letra colocada (grado actual del alumno); null sin letra.
+    nivel_descriptivo: Optional[str] = None
     nivel_general: Optional[str] = None
     observacion: Optional[str] = None
 

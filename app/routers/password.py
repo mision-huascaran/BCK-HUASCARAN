@@ -1,5 +1,7 @@
 """Cambio y recuperación de contraseña (CU001, CU005, CU006).
 
+El Supervisor original recupera su cuenta con el mismo flujo de PIN que el resto (CU001).
+
 Los errores salen con el formato de `ErrorNegocio`: {"detail", "motivo"?, ...}.
 """
 import uuid
@@ -16,14 +18,14 @@ from app.schemas.password import (
     CambiarContrasenaRequest,
     CodigoValidoResponse,
     MensajeResponse,
-    RecuperarConLlaveRequest,
-    RecuperarConLlaveResponse,
+    PrimerIngresoRequest,
     RecuperarContrasenaRequest,
     RestablecerContrasenaRequest,
     VerificarCodigoPublicoRequest,
     VerificarCodigoRequest,
 )
-from app.services import password_service, recovery_key_service
+from app.schemas.auth import TokenResponse
+from app.services import auth_service, password_service
 
 router = APIRouter(tags=["password"])
 
@@ -112,17 +114,17 @@ def restablecer_contrasena_endpoint(
     return MensajeResponse(mensaje=password_service.MENSAJE_CONTRASENA_ACTUALIZADA)
 
 
-@router.post("/password/recuperar-con-llave", response_model=RecuperarConLlaveResponse)
-def recuperar_con_llave_endpoint(
-    data: RecuperarConLlaveRequest, background_tasks: BackgroundTasks, db: Db
-):
-    """Recuperación del Supervisor original con una Recovery Key de un solo uso (CU001)."""
-    usuario, restantes = recovery_key_service.recuperar_con_llave(
-        db, data.correo, data.llave, data.contraseña_nueva, data.confirmar_contraseña_nueva
+@router.post("/password/primer-ingreso", response_model=TokenResponse)
+def primer_ingreso_endpoint(data: PrimerIngresoRequest, db: Db):
+    """Primer ingreso de una cuenta con contraseña temporal (CU001, CU016): fija la
+    contraseña definitiva y abre la sesión (responde igual que POST /login).
+
+    Errores: 401 `credenciales_invalidas` (cuenta inexistente, inactiva, sin cambio
+    pendiente o temporal incorrecta), 403 `contrasena_temporal_expirada`, 422
+    `validacion` (política CU006 o confirmación), 400 `password_igual`, 429
+    `bloqueo_temporal`.
+    """
+    inicio = auth_service.primer_ingreso(
+        db, data.correo, data.contraseña_temporal, data.contraseña_nueva, data.confirmar_contraseña_nueva
     )
-    background_tasks.add_task(
-        password_service.enviar_confirmacion_cambio, usuario.correo, usuario.nombres
-    )
-    return RecuperarConLlaveResponse(
-        mensaje=password_service.MENSAJE_CONTRASENA_ACTUALIZADA, llaves_restantes=restantes
-    )
+    return auth_service.a_token_response(inicio)
