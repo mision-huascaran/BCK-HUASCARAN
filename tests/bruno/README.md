@@ -71,4 +71,7 @@ no lleve contraseñas ni tokens. Además, cada flujo cierra su sesión al termin
   pueden chocar. Al empezar, cada flujo finaliza una actividad que haya quedado abierta.
 - **Bloqueo por intentos.** Los casos de credenciales inválidas usan un correo inexistente
   para no bloquear las cuentas E2E (5 fallos = 15 min).
+- **Sin `.env` en la raíz del repo al correr Bruno.** Bruno lo carga solo, pisa las
+  variables exportadas y corta los valores en `#` (las contraseñas E2E lo tienen). Por
+  eso los stages de Jenkins lo borran antes de correr.
 - **Comparar por `motivo`**, no por el texto de `detail`.

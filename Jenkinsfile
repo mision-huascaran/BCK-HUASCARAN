@@ -172,6 +172,9 @@ pipeline {
                     withCredentials([file(credentialsId: 'HUASCARAN_BACKEND_QA', variable: 'ENV_FILE')]) {
                         sh '''
                             set +x
+                            # Bruno carga el .env de la raíz (el que dejó Deploy) y pisa las variables
+                            # exportadas; además corta los valores en '#'. El despliegue ya terminó.
+                            rm -f .env
                             . tests/bruno/credenciales-e2e.sh
                             export HOME="${WORKSPACE}/.bruno-home"
                             export npm_config_cache="${WORKSPACE}/.npm"
@@ -206,6 +209,9 @@ pipeline {
                 withCredentials([file(credentialsId: 'HUASCARAN_BACKEND_QA', variable: 'ENV_FILE')]) {
                     sh '''
                         set +x
+                        # Bruno carga el .env de la raíz (el que dejó Deploy) y pisa las variables
+                        # exportadas; además corta los valores en '#'. El despliegue ya terminó.
+                        rm -f .env
                         . tests/bruno/credenciales-e2e.sh
                         export HOME="${WORKSPACE}/.bruno-home"
                         export npm_config_cache="${WORKSPACE}/.npm"
