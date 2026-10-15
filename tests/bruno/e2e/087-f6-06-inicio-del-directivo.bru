@@ -1,0 +1,29 @@
+meta {
+  name: F6-06 Inicio del Directivo
+  type: http
+  seq: 87
+}
+
+get {
+  url: {{baseUrl}}/inicio/directivo
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+tests {
+  test("indicadores institucionales sin datos personales de alumnos", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.beneficiarios_activos).to.be.a('number');
+    expect(res.body.colegios_operando).to.be.a('number');
+    const texto = JSON.stringify(res.body);
+    expect(texto).to.not.match(/"(nombres|apellidos|nombre_completo|alumnos)"/);
+  });
+}
+
+docs {
+  CU012: el Directivo nunca recibe nombres de alumnos; el backend no los envía.
+}

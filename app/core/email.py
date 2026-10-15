@@ -1,12 +1,57 @@
+import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from app.core.config import settings
+from app.core.pin import VIGENCIA_PIN
+from app.core.politica_contrasena import VIGENCIA_CONTRASENA_TEMPORAL
+
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PUERTO = 465
+# Segundos máximos de espera por Gmail (conexión y cada operación): los envíos síncronos
+# (POST /usuarios, POST /me/password/codigo) no deben dejar la petición colgada.
+SMTP_TIMEOUT = 10
+MINUTOS_VIGENCIA_PIN = int(VIGENCIA_PIN.total_seconds() // 60)
+HORAS_VIGENCIA_TEMPORAL = int(VIGENCIA_CONTRASENA_TEMPORAL.total_seconds() // 3600)
+AVISO_TEMPORAL = (
+    f"Esta contraseña temporal vence en {HORAS_VIGENCIA_TEMPORAL} horas. Deberás cambiarla "
+    "en tu primer ingreso; si vence antes, usa la opción \"¿Olvidó su contraseña?\" "
+    "para recuperar el acceso."
+)
+
+logger = logging.getLogger(__name__)
+
+
+def enmascarar_correo(correo: str) -> str:
+    """`rosa.c@mh.org` -> `ro***@mh.org`. Para los logs: identifica el caso sin exponer
+    la dirección completa."""
+    usuario, arroba, dominio = correo.partition("@")
+    if not arroba:
+        return "***"
+    return f"{usuario[:2]}***@{dominio}"
+
+
+def _enviar(mensaje: MIMEMultipart, tipo: str) -> bool:
+    """Envía el mensaje por el SMTP de Gmail. Devuelve False (sin lanzar) si algo falla.
+
+    El error queda en el log con su traza, pero sin el cuerpo del mensaje (que puede
+    llevar un PIN o una contraseña temporal) y con el destinatario enmascarado.
+    """
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PUERTO, timeout=SMTP_TIMEOUT) as servidor:
+            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
+            servidor.send_message(mensaje)
+        return True
+    except Exception:
+        logger.exception(
+            "No se pudo enviar el correo de %s a %s", tipo, enmascarar_correo(mensaje["To"] or "")
+        )
+        return False
 
 
 def enviar_correo_bienvenida_profesor(
-    correo_destino: str, contraseña_temporal: str, nombres: str
+    correo_destino: str, contrasena_temporal: str, nombres: str
 ) -> bool:
     """Intenta enviar el correo de bienvenida con la contraseña temporal.
     Devuelve False (sin lanzar excepción) si algo falla — el llamador decide el fallback."""
@@ -15,9 +60,9 @@ def enviar_correo_bienvenida_profesor(
 Tu cuenta en SICEDU (Sistema de Centralización de Datos Educativos) fue creada.
 
 Correo: {correo_destino}
-Contraseña temporal: {contraseña_temporal}
+Contraseña temporal: {contrasena_temporal}
 
-Por seguridad, cambia esta contraseña la primera vez que inicies sesión.
+{AVISO_TEMPORAL}
 
 Equipo SICEDU - Misión Huascarán
 """
@@ -32,11 +77,11 @@ Equipo SICEDU - Misión Huascarán
 
   <div style="background-color: #f3f4f6; border-radius: 6px; padding: 16px; margin: 16px 0;">
     <p style="margin: 4px 0;"><strong>Correo:</strong> {correo_destino}</p>
-    <p style="margin: 4px 0;"><strong>Contraseña temporal:</strong> {contraseña_temporal}</p>
+    <p style="margin: 4px 0;"><strong>Contraseña temporal:</strong> {contrasena_temporal}</p>
   </div>
 
   <p style="font-size: 13px; color: #6b7280;">
-    Por seguridad, cambia esta contraseña la primera vez que inicies sesión.
+    {AVISO_TEMPORAL}
   </p>
 
   <p style="margin-top: 32px; font-size: 13px; color: #6b7280;">
@@ -52,13 +97,7 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(texto_plano, "plain"))
     mensaje.attach(MIMEText(html, "html"))
 
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
-            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
-            servidor.send_message(mensaje)
-        return True
-    except Exception:
-        return False
+    return _enviar(mensaje, "bienvenida")
 
 
 def enviar_correo_codigo_verificacion(correo_destino: str, codigo: str, nombres: str) -> bool:
@@ -70,7 +109,7 @@ Recibimos una solicitud para cambiar la contraseña de tu cuenta en SICEDU.
 
 Tu código de verificación es: {codigo}
 
-Este código expira en 10 minutos.
+Este código expira en {MINUTOS_VIGENCIA_PIN} minutos.
 
 Si no solicitaste este cambio, ignora este correo.
 
@@ -91,7 +130,7 @@ Equipo SICEDU - Misión Huascarán
   </div>
 
   <p style="font-size: 13px; color: #6b7280;">
-    Este código expira en 10 minutos. Si no solicitaste este cambio, ignora este correo.
+    Este código expira en {MINUTOS_VIGENCIA_PIN} minutos. Si no solicitaste este cambio, ignora este correo.
   </p>
 
   <p style="margin-top: 32px; font-size: 13px; color: #6b7280;">
@@ -107,13 +146,7 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(texto_plano, "plain"))
     mensaje.attach(MIMEText(html, "html"))
 
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
-            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
-            servidor.send_message(mensaje)
-        return True
-    except Exception:
-        return False
+    return _enviar(mensaje, "código de verificación")
 
 
 def enviar_correo_confirmacion_cambio(correo_destino: str, nombres: str) -> bool:
@@ -154,10 +187,4 @@ Equipo SICEDU - Misión Huascarán
     mensaje.attach(MIMEText(texto_plano, "plain"))
     mensaje.attach(MIMEText(html, "html"))
 
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
-            servidor.login(settings.GMAIL_SMTP_USER, settings.GMAIL_SMTP_APP_PASSWORD)
-            servidor.send_message(mensaje)
-        return True
-    except Exception:
-        return False
+    return _enviar(mensaje, "confirmación de cambio de contraseña")

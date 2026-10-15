@@ -9,8 +9,9 @@ Pasos (cada uno se salta si ya esta hecho):
   3. Crea el entorno virtual `venv` e instala dependencias si cambio requirements.txt.
   4. Crea el `.env` con valores de desarrollo si no existe.
   5. Aplica las migraciones de Alembic.
-  6. Carga los datos de prueba (idempotente).
-  7. Inicia uvicorn con recarga automatica en http://127.0.0.1:8000
+  6. Carga los datos maestros reales: `python -m app.cli inicializar` (idempotente).
+  7. Carga los datos de prueba (idempotente).
+  8. Inicia uvicorn con recarga automatica en http://127.0.0.1:8000
 
 Opciones:
   --sin-seed   no carga los datos de prueba
@@ -46,7 +47,6 @@ DB_PUERTO = 5433
 ENV_POR_DEFECTO = f"""DATABASE_URL=postgresql+psycopg2://{DB_USUARIO}:{DB_PASSWORD}@localhost:{DB_PUERTO}/{DB_NOMBRE}
 JWT_SECRET_KEY=dev-secret-key-cambiar-en-produccion
 JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=480
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
 # Cuenta de Gmail dedicada al proyecto, para enviar correos (bienvenida de profesor,
 # codigo de verificacion de cambio de contrasena). Sin esto, el envio de correos falla
@@ -59,7 +59,7 @@ DOCKER_DESKTOP = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
 
 
 def paso(n: int, texto: str) -> None:
-    print(f"\n[{n}/7] {texto}", flush=True)
+    print(f"\n[{n}/8] {texto}", flush=True)
 
 
 def ok(texto: str) -> None:
@@ -187,7 +187,7 @@ def asegurar_env() -> None:
     ok(".env creado con valores de desarrollo")
 
 
-# --- 5 y 6. Migraciones y seed -------------------------------------------------
+# --- 5, 6 y 7. Migraciones, datos maestros y seed -----------------------------
 
 def base_desactualizada() -> bool:
     chk_tabla = silencioso([
@@ -250,8 +250,17 @@ def migrar() -> None:
     ok("Base de datos en la ultima version")
 
 
+def inicializar_datos_maestros() -> None:
+    # Mismo orden que el contenedor (docker-compose.yml): migraciones -> inicializar -> seed.
+    paso(6, "Datos maestros (python -m app.cli inicializar)")
+    r = ejecutar([str(VENV_PYTHON), "-m", "app.cli", "inicializar"])
+    if r.returncode != 0:
+        fallar("Fallo la carga de datos maestros por un problema de infraestructura (mira el log de arriba).")
+    ok("Datos maestros al dia (revisa arriba los WARNING/ERROR del resumen, si los hay)")
+
+
 def sembrar(saltar: bool) -> None:
-    paso(6, "Datos de prueba")
+    paso(7, "Datos de prueba")
     if saltar:
         ok("Omitido (--sin-seed)")
         return
@@ -261,7 +270,7 @@ def sembrar(saltar: bool) -> None:
     ok("Usuarios de prueba listos")
 
 
-# --- 7. Servidor ---------------------------------------------------------------
+# --- 8. Servidor ---------------------------------------------------------------
 
 def puerto_ocupado(puerto: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -270,7 +279,7 @@ def puerto_ocupado(puerto: int) -> bool:
 
 
 def iniciar_servidor(puerto: int) -> None:
-    paso(7, "Servidor de la API")
+    paso(8, "Servidor de la API")
     if puerto_ocupado(puerto):
         fallar(
             f"El puerto {puerto} ya esta en uso: probablemente el backend ya esta corriendo en otra terminal.\n"
@@ -315,6 +324,7 @@ def main() -> None:
     asegurar_dependencias()
     asegurar_env()
     migrar()
+    inicializar_datos_maestros()
     sembrar(args.sin_seed)
     iniciar_servidor(args.puerto)
 

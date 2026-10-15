@@ -1,0 +1,21 @@
+{
+  "_nota": "Primera carga de los colegios reales del programa. Solo se usa con CARGAR_COLEGIOS_INICIALES=true; después la Supervisora los administra desde la app (CU013). 'Por definir' marca los datos que aún faltan confirmar.",
+  "comunes": {
+    "departamento": "Áncash",
+    "distrito": "Por definir",
+    "nivel_educativo": "Primaria",
+    "seccion": "Única",
+    "activo": true
+  },
+  "colegios": [
+    {"nombre": "Pariahuanca", "provincia": "Carhuaz"},
+    {"nombre": "Huaypan", "provincia": "Por definir"},
+    {"nombre": "Canchapampa", "provincia": "Por definir"},
+    {"nombre": "Pariacaca", "provincia": "Carhuaz"},
+    {"nombre": "Huashcao", "provincia": "Yungay"},
+    {"nombre": "Amashca", "provincia": "Carhuaz"},
+    {"nombre": "Punyan", "provincia": "Por definir"},
+    {"nombre": "Congar", "provincia": "Por definir"},
+    {"nombre": "Shilla", "provincia": "Carhuaz"}
+  ]
+}

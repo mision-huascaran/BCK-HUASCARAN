@@ -1,0 +1,32 @@
+meta {
+  name: F4-06 Crear alumno sin actividad
+  type: http
+  seq: 50
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "No debe crearse",
+    "apellidos": "Bruno F4",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoDoc}},
+    "id_programa": {{idProgramaDoc}}
+  }
+}
+
+tests {
+  test("409 actividad_requerida", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('actividad_requerida');
+  });
+}

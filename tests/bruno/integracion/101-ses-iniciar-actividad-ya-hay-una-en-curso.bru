@@ -1,0 +1,36 @@
+meta {
+  name: SES iniciar actividad · ya hay una en curso
+  type: http
+  seq: 101
+}
+
+post {
+  url: {{baseUrl}}/actividades
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_actividad": "{{idOtra}}"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('idOtra', uuid());
+}
+
+tests {
+  test("409 actividad_activa_existente", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('actividad_activa_existente');
+  });
+}

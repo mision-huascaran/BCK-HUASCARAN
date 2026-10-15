@@ -1,0 +1,33 @@
+meta {
+  name: AUTH login · credenciales inválidas
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoInexistente}}",
+    "password": "Incorrecta#2026"
+  }
+}
+
+script:pre-request {
+  bru.setVar('correoInexistente', 'no.existe.' + Date.now() + '@sicedu.test');
+}
+
+tests {
+  test("401 credenciales_invalidas", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('credenciales_invalidas');
+  });
+}
+
+docs {
+  CU002: el mensaje no revela si la cuenta existe. Se usa un correo inexistente para no bloquear (5 fallos = 15 min) las cuentas que usan los demás flujos.
+}

@@ -1,0 +1,51 @@
+meta {
+  name: F3-01 Supervisor inicia sesión
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{baseUrl}}/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoSupervisor}}",
+    "password": "{{passSupervisor}}"
+  }
+}
+
+script:pre-request {
+  // Las credenciales llegan por variables de entorno (Jenkins Credentials o la terminal);
+  // nunca se guardan en el repo.
+  const faltan = ['correoSupervisor', 'passSupervisor'].filter((k) => {
+    const valor = bru.interpolate(bru.getEnvVar(k) || '');
+    return !valor || valor.includes('{{');
+  });
+  if (faltan.length) {
+    throw new Error('Faltan E2E_SUPERVISOR_USER / E2E_SUPERVISOR_PASS en el entorno (ver tests/bruno/README.md)');
+  }
+}
+
+script:post-response {
+  bru.setVar('tokenSupervisor', res.body.access_token);
+}
+
+tests {
+  test("200 con token de 8 h", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.access_token).to.be.a('string');
+    expect(res.body.usuario.rol).to.equal('Supervisor');
+    const horas = (Date.parse(res.body.sesion.expira) - Date.parse(res.body.sesion.inicio)) / 3600e3;
+    expect(horas).to.equal(8);
+  });
+}
+
+docs {
+  # F3. El Supervisor audita la jornada del Docente (CU020, CU021, CU022)
+
+  Después de F2: el Supervisor ve la actividad del Docente con su productividad y la
+  asistencia de esa clase, pero no puede modificarla.
+}

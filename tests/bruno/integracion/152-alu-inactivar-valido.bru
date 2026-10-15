@@ -1,0 +1,19 @@
+meta {
+  name: ALU inactivar · válido
+  type: http
+  seq: 152
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("inactivo", function () { expect(res.body.activo).to.equal(false); });
+}

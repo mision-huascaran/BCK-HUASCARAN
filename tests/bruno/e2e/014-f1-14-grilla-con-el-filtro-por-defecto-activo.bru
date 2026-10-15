@@ -1,0 +1,26 @@
+meta {
+  name: F1-14 Grilla con el filtro por defecto (Activo)
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/alumnos?id_colegio={{idColegioF1}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("el alumno inactivo no aparece", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.items.map((a) => a.id)).to.not.include(bru.getVar('idAlumnoF1'));
+  });
+}
+
+docs {
+  Nada se elimina: el filtro Estado es Activo por defecto.
+}

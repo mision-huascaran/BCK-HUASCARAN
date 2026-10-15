@@ -1,0 +1,28 @@
+meta {
+  name: AUTH recuperar contraseña · válido (mensaje uniforme)
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/password/recuperar
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoInexistente}}"
+  }
+}
+
+tests {
+  test("200 con el mismo mensaje exista o no la cuenta", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.mensaje).to.equal('Si el correo está registrado y activo, recibirá un PIN.');
+  });
+}
+
+docs {
+  CU004/CU005: el mensaje uniforme no revela si el correo está registrado (no se envía ningún correo).
+}

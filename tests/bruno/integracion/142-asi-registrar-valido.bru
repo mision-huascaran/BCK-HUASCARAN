@@ -1,0 +1,30 @@
+meta {
+  name: ASI registrar · válido
+  type: http
+  seq: 142
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "fecha": "{{fechaClase}}",
+    "registros": [{ "id_alumno": {{idAlumnoInt}}, "estado": "presente" }]
+  }
+}
+
+tests {
+  test("aplicado", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.registros[0].aplicado).to.equal(true);
+    expect(res.body.registros[0].estado).to.equal('presente');
+  });
+}

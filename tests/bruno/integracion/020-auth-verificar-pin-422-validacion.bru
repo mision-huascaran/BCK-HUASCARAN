@@ -1,0 +1,25 @@
+meta {
+  name: AUTH verificar PIN · 422 validacion
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/password/verificar-codigo
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoInexistente}}"
+  }
+}
+
+tests {
+  test("422 validacion", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('codigo');
+  });
+}

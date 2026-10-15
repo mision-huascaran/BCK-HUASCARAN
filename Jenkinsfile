@@ -2,6 +2,7 @@
 //
 //   development → despliegue
 //   qa, uat     → pruebas (pytest + cobertura), SonarQube, Quality Gate y despliegue
+//   qa          → además, Integration Tests y E2E Tests (Bruno) contra el despliegue
 //   main        → todavía no despliega
 //
 // El .env de cada entorno está en Jenkins como credencial "Secret file":
@@ -13,7 +14,8 @@ pipeline {
     agent any
 
     options {
-        buildDiscarder(logRotator(numToKeepStr: '5'))
+        // Los reportes (artifacts) solo se conservan de la última ejecución.
+        buildDiscarder(logRotator(numToKeepStr: '5', artifactNumToKeepStr: '1'))
         disableConcurrentBuilds()
     }
 
@@ -148,6 +150,83 @@ pipeline {
                     fi
                     echo "OK: la API responde."
                 '''
+            }
+        }
+
+        // Colecciones Bruno contra el backend recién desplegado en qa (tests/bruno/README.md).
+        // Solo qa: el seed de las cuentas E2E no corre en uat.
+        stage('Integration Tests') {
+            when {
+                beforeAgent true
+                branch 'qa'
+            }
+            agent {
+                docker {
+                    image 'node:22-bookworm-slim'
+                    reuseNode true
+                }
+            }
+            steps {
+                // Si fallan, se marca el stage y se sigue con E2E Tests para tener ambos reportes.
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    withCredentials([file(credentialsId: 'HUASCARAN_BACKEND_QA', variable: 'ENV_FILE')]) {
+                        sh '''
+                            set +x
+                            # Bruno carga el .env de la raíz (el que dejó Deploy) y pisa las variables
+                            # exportadas; además corta los valores en '#'. El despliegue ya terminó.
+                            rm -f .env
+                            . tests/bruno/credenciales-e2e.sh
+                            export HOME="${WORKSPACE}/.bruno-home"
+                            export npm_config_cache="${WORKSPACE}/.npm"
+                            rm -f integracion.xml integracion.html
+                            npx --yes @usebruno/cli@4.2.0 run tests/bruno/integracion --env qa \
+                                --reporter-junit integracion.xml --reporter-html integracion.html \
+                                --reporter-skip-request-body --reporter-skip-headers Authorization
+                        '''
+                    }
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'integracion.xml'
+                    archiveArtifacts artifacts: 'integracion.xml, integracion.html', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('E2E Tests') {
+            when {
+                beforeAgent true
+                branch 'qa'
+            }
+            agent {
+                docker {
+                    image 'node:22-bookworm-slim'
+                    reuseNode true
+                }
+            }
+            steps {
+                withCredentials([file(credentialsId: 'HUASCARAN_BACKEND_QA', variable: 'ENV_FILE')]) {
+                    sh '''
+                        set +x
+                        # Bruno carga el .env de la raíz (el que dejó Deploy) y pisa las variables
+                        # exportadas; además corta los valores en '#'. El despliegue ya terminó.
+                        rm -f .env
+                        . tests/bruno/credenciales-e2e.sh
+                        export HOME="${WORKSPACE}/.bruno-home"
+                        export npm_config_cache="${WORKSPACE}/.npm"
+                        rm -f e2e.xml e2e.html
+                        npx --yes @usebruno/cli@4.2.0 run tests/bruno/e2e --env qa \
+                            --reporter-junit e2e.xml --reporter-html e2e.html \
+                            --reporter-skip-request-body --reporter-skip-headers Authorization
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'e2e.xml'
+                    archiveArtifacts artifacts: 'e2e.xml, e2e.html', allowEmptyArchive: true
+                }
             }
         }
     }

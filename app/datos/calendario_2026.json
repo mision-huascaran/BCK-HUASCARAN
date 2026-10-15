@@ -1,0 +1,15 @@
+{
+  "_nota": "CALENDARIO FICTICIO. No es el calendario escolar real de Misión Huascarán: es un borrador para desarrollo y pruebas hasta que el equipo confirme las fechas reales. Este archivo es la fuente de verdad del calendario (no hay pantalla para editarlo): lo carga `python -m app.cli cargar-calendario` en cada arranque.",
+  "ficticio": true,
+  "anio": {
+    "nombre": "2026",
+    "fecha_inicio": "2026-04-06",
+    "fecha_fin": "2026-12-18"
+  },
+  "periodos": [
+    {"numero": 1, "fecha_inicio": "2026-04-06", "fecha_fin": "2026-05-29", "corte_diagnostico": "2026-04-15"},
+    {"numero": 2, "fecha_inicio": "2026-06-01", "fecha_fin": "2026-07-24", "corte_diagnostico": "2026-07-08"},
+    {"numero": 3, "fecha_inicio": "2026-08-10", "fecha_fin": "2026-10-16", "corte_diagnostico": "2026-10-07"},
+    {"numero": 4, "fecha_inicio": "2026-10-19", "fecha_fin": "2026-12-18", "corte_diagnostico": "2026-12-03"}
+  ]
+}

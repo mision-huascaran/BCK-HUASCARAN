@@ -1,0 +1,18 @@
+meta {
+  name: USR mis asignaciones · sin token
+  type: http
+  seq: 92
+}
+
+get {
+  url: {{baseUrl}}/me/asignaciones
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

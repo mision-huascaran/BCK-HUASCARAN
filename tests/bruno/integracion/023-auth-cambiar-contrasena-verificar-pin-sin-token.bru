@@ -1,0 +1,24 @@
+meta {
+  name: AUTH cambiar contraseña: verificar PIN · sin token
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/me/password/verificar-codigo
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "codigo": "123456"
+  }
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

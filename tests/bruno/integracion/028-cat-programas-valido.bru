@@ -1,0 +1,26 @@
+meta {
+  name: CAT programas · válido
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/programas
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  bru.setVar('idProgramas', JSON.stringify(res.body.map((p) => p.id)));
+}
+
+tests {
+  test("Alfabetización y Comprensión Lectora", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.map((p) => p.nombre)).to.include.members(['Alfabetización', 'Comprensión Lectora']);
+  });
+}

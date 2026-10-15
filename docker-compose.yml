@@ -10,9 +10,16 @@ services:
     container_name: ${ENTORNO:-local}-bck-huascaran
     env_file:
       - .env
-    # Los usuarios de prueba solo se cargan si CARGAR_DATOS_PRUEBA=true en el
-    # .env (el seed no duplica si ya existen). En producción debe ir en false.
-    command: sh -c 'alembic upgrade head && if [ "$${CARGAR_DATOS_PRUEBA:-false}" = "true" ]; then python -m app.seed_data; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000'
+    # Arranque, en orden (cada paso es idempotente y se repite en cada arranque):
+    #   1. alembic upgrade head: esquema al día.
+    #   2. python -m app.cli inicializar: datos maestros reales (catálogos, Supervisor
+    #      original, calendario, feriados y, si CARGAR_COLEGIOS_INICIALES=true, los
+    #      colegios iniciales). Un dato con problemas queda como WARNING/ERROR en el log y
+    #      no detiene el arranque; solo un fallo de infraestructura (sin BD) lo detiene.
+    #   3. Seed de usuarios de prueba, solo si CARGAR_DATOS_PRUEBA=true en el .env (no
+    #      duplica si ya existen). En producción debe ir en false.
+    #   4. uvicorn.
+    command: sh -c 'alembic upgrade head && python -m app.cli inicializar && if [ "$${CARGAR_DATOS_PRUEBA:-false}" = "true" ]; then python -m app.seed_data; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000'
     networks:
       - proxy_net
     restart: unless-stopped

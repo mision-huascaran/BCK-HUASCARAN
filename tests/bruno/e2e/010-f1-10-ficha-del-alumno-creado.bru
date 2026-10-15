@@ -1,0 +1,23 @@
+meta {
+  name: F1-10 Ficha del alumno creado
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoF1}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("la ficha existe con la fecha de registro de hoy", function () {
+    expect(res.status).to.equal(200);
+    const hoyLima = new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
+    expect(res.body.fecha_registro).to.equal(hoyLima);
+  });
+}

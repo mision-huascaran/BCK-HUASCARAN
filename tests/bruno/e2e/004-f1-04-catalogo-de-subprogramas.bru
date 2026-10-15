@@ -1,0 +1,27 @@
+meta {
+  name: F1-04 Catálogo de subprogramas
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/programas
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  bru.setVar('idProgramas', JSON.stringify(res.body.map((p) => p.id)));
+  bru.setVar('idPrograma1', res.body[0].id);
+}
+
+tests {
+  test("hay subprogramas", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.length).to.be.greaterThan(0);
+  });
+}

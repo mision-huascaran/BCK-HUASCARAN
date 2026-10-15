@@ -1,0 +1,32 @@
+meta {
+  name: COL crear · 422 sin provincia
+  type: http
+  seq: 49
+}
+
+post {
+  url: {{baseUrl}}/colegios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombre": "I.E. Bruno sin provincia",
+    "departamento": "Áncash",
+    "grados": [{ "id_grado": {{idGrado1}}, "dia_clase": 1 }],
+    "programas": {{idProgramas}}
+  }
+}
+
+tests {
+  test("422 sin provincia", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('provincia');
+  });
+}

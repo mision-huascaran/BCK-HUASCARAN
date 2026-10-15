@@ -1,0 +1,38 @@
+meta {
+  name: AUTH cerrar sesión anterior · válido
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/me/sesiones/{{idSesionSupervisor2}}/cerrar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "fin": "{{finSesion2}}"
+  }
+}
+
+script:pre-request {
+  const espera = Date.parse(bru.getVar('finSesion2')) + 1000 - Date.now();
+  if (espera > 0) await new Promise((r) => setTimeout(r, espera));
+}
+
+tests {
+  test("queda cerrada como Manual a la hora real", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.sesion.tipo_cierre).to.equal('Manual');
+    expect(Date.parse(res.body.sesion.fin)).to.equal(Date.parse(bru.getVar('finSesion2')));
+  });
+}
+
+docs {
+  CU008: un "Cerrar sesión" hecho sin conexión se registra tras el nuevo login, con su hora real.
+}

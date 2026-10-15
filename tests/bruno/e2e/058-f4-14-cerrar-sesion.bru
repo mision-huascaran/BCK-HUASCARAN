@@ -1,0 +1,19 @@
+meta {
+  name: F4-14 Cerrar sesión
+  type: http
+  seq: 58
+}
+
+post {
+  url: {{baseUrl}}/logout
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("204", function () { expect(res.status).to.equal(204); });
+}

@@ -1,0 +1,37 @@
+meta {
+  name: ALU crear · válido Docente
+  type: http
+  seq: 103
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "Alumno Bruno",
+    "apellidos": "Integración {{runUsr}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoDoc}},
+    "id_programa": {{idProgramaDoc}}
+  }
+}
+
+script:post-response {
+  bru.setVar('idAlumnoInt', res.body.id);
+}
+
+tests {
+  test("201 activo en su aula", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.activo).to.equal(true);
+    expect(res.body.colegio.id).to.equal(bru.getVar('idColegioDoc'));
+  });
+}
