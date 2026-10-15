@@ -74,7 +74,7 @@ def test_cu022_docente_lee_su_clase_sin_actividad(client, entorno, cabeceras):
         "editable": True,
         "alumnos": [{
             "id_alumno": entorno.alumnos["ana"].id_alumno, "nombres": "Ana", "apellidos": "Torres",
-            "activo": True, "estado": None, "observacion": None,
+            "activo": True, "en_aula": True, "estado": None, "observacion": None,
         }],
     }
 
@@ -200,7 +200,9 @@ def test_cu022_incluye_a_quien_tiene_registro_aunque_hoy_este_inactivo_o_en_otro
     del_lunes = consultar(client, docente, clase(entorno, LUNES)).json()["alumnos"]
     de_hoy = consultar(client, docente, clase(entorno)).json()["alumnos"]
 
-    assert [(a["nombres"], a["activo"], a["estado"]) for a in del_lunes] == [("Beto", True, "presente"), ("Ana", False, "ausente")]
+    assert [(a["nombres"], a["activo"], a["en_aula"], a["estado"]) for a in del_lunes] == [
+        ("Beto", True, False, "presente"), ("Ana", False, True, "ausente"),
+    ]
     assert de_hoy == []
 
 
@@ -425,3 +427,113 @@ def test_cu022_la_supervisora_ve_lo_que_registro_el_docente_en_otra_sesion(clien
     cuerpo = consultar(client, cabecera_de(db, entorno.supervisor), clase(entorno, MARTES)).json()
 
     assert alumno_de_la_clase(cuerpo, entorno, "ana")["estado"] == "ausente"
+
+
+# ── El registro guarda su aula: rotar a un alumno no muda sus asistencias ──────────
+
+def rotar(db, entorno, alumno, colegio="Andino", grado="1.º") -> None:
+    """El Supervisor cambia de colegio o de grado al alumno (CU014)."""
+    fila = releer(db, Alumno, entorno.alumnos[alumno].id_alumno)
+    fila.id_colegio, fila.id_grado = entorno.colegios[colegio].id_colegio, entorno.grados[grado]
+    db.add(fila)
+    db.commit()
+
+
+def test_cu022_el_registro_guarda_el_aula_del_alumno(client, db, entorno, cabeceras, actividad):
+    guardar(client, cabeceras["Docente"], [marca(entorno, "ana")], fecha=LUNES)
+
+    fila = filas(db)[0]
+    assert (fila.id_colegio, fila.id_grado, fila.id_programa) == (
+        entorno.colegios["Andino"].id_colegio, entorno.grados["2.º"], entorno.programas["Comprensión Lectora"],
+    )
+
+
+@pytest.mark.parametrize("colegio, grado", [("Andino", "1.º"), ("Lejano", "2.º")], ids=["de_grado", "de_colegio"])
+def test_cu022_al_rotar_el_aula_original_lo_muestra_fuera_del_aula(client, db, entorno, cabeceras, actividad,
+                                                                     colegio, grado):
+    """Ana se registró el lunes en 2.º y rota: el lunes de 2.º la sigue mostrando
+    (`en_aula: false`) y hoy ya no la lista; su aula nueva sí, desde hoy."""
+    docente, sup = cabeceras["Docente"], cabeceras["Supervisor"]
+    guardar(client, docente, [marca(entorno, "ana", "tardanza")], fecha=LUNES)
+
+    rotar(db, entorno, "ana", colegio, grado)
+
+    del_lunes = consultar(client, sup, clase(entorno, LUNES)).json()["alumnos"]
+    de_hoy = consultar(client, sup, clase(entorno)).json()["alumnos"]
+    nueva_hoy = consultar(client, sup, clase(entorno, colegio=colegio, grado=grado)).json()["alumnos"]
+    assert [(a["nombres"], a["activo"], a["en_aula"], a["estado"]) for a in del_lunes] == [("Ana", True, False, "tardanza")]
+    assert de_hoy == []
+    assert ("Ana", True, None) in [(a["nombres"], a["en_aula"], a["estado"]) for a in nueva_hoy]
+
+
+def test_cu022_quien_ya_tiene_registro_ese_dia_en_otra_aula_no_aparece_en_la_nueva(client, db, entorno, cabeceras,
+                                                                                     actividad):
+    """Ana se registró el lunes en 2.º y ese mismo día pasó a 1.º: en el lunes de 1.º no
+    aparece (su asistencia de ese día ya se tomó en 2.º)."""
+    guardar(client, cabeceras["Docente"], [marca(entorno, "ana")], fecha=LUNES)
+    rotar(db, entorno, "ana", grado="1.º")
+
+    lunes_de_primero = consultar(client, cabeceras["Docente"], clase(entorno, LUNES, grado="1.º")).json()["alumnos"]
+
+    assert [a["nombres"] for a in lunes_de_primero] == []
+
+
+def test_cu022_editar_un_registro_existente_no_lo_muda(client, db, entorno, cabeceras, actividad):
+    docente = cabeceras["Docente"]
+    guardar(client, docente, [marca(entorno, "ana", "presente")], fecha=LUNES)
+    rotar(db, entorno, "ana", grado="1.º")
+
+    respuesta = guardar(client, docente, [marca(entorno, "ana", "ausente")], fecha=LUNES)
+
+    assert respuesta.json()["registros"][0]["aplicado"] is True
+    fila = filas(db)[0]
+    assert (len(filas(db)), fila.estado, fila.id_grado) == (1, "ausente", entorno.grados["2.º"])
+
+
+def test_cu022_el_alcance_se_valida_contra_el_aula_del_registro(client, db, entorno, cabeceras, actividad):
+    """Ana rota al Lejano (fuera del alcance): su registro del lunes (Andino 2.º) se puede
+    corregir, pero no puede registrarse una clase nueva suya. Al revés, un registro del
+    Lejano no lo puede tocar aunque Ana vuelva al Andino."""
+    docente = cabeceras["Docente"]
+    guardar(client, docente, [marca(entorno, "ana", "presente")], fecha=LUNES)
+    rotar(db, entorno, "ana", colegio="Lejano", grado="2.º")
+
+    corregir = guardar(client, docente, [marca(entorno, "ana", "tardanza")], fecha=LUNES)
+    nueva = guardar(client, docente, [marca(entorno, "ana")], fecha=MARTES)
+
+    assert corregir.status_code == 200
+    assert (nueva.status_code, nueva.json()["errores"][0]["mensaje"]) == (
+        422, "El alumno no pertenece a un colegio y grado que tenga asignados.",
+    )
+    guardar_en_otra_aula = Asistencia(
+        id_alumno=entorno.alumnos["ana"].id_alumno, fecha=MARTES, id_programa=entorno.programas["Comprensión Lectora"],
+        id_colegio=entorno.colegios["Lejano"].id_colegio, id_grado=entorno.grados["2.º"], estado="presente",
+        id_docente=entorno.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc(),
+    )
+    db.add(guardar_en_otra_aula)
+    db.commit()
+    rotar(db, entorno, "ana", colegio="Andino", grado="2.º")
+
+    ajena = guardar(client, docente, [marca(entorno, "ana", "ausente")], fecha=MARTES)
+
+    assert (ajena.status_code, ajena.json()["errores"][0]["mensaje"]) == (
+        422, "Su asistencia de esa fecha es de un colegio y grado que no tiene asignados.",
+    )
+
+
+def test_cu015_el_porcentaje_usa_el_aula_guardada(client, db, entorno, cabeceras, actividad):
+    """Ana y Beto (2.º): lunes Ana tardanza y Beto presente; martes solo Beto. Ana: 1 de 2.
+    Ana rota a 1.º: allí no hubo clases (0 %), y en 2.º siguen siendo 2 clases para Beto."""
+    docente = cabeceras["Docente"]
+    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["2.º"],
+                        entorno.programas["Comprensión Lectora"], entorno.supervisor.id_usuario).id_alumno
+    db.commit()
+    guardar(client, docente, [marca(entorno, "ana", "tardanza"), {"id_alumno": beto, "estado": "presente"}], fecha=LUNES)
+    guardar(client, docente, [{"id_alumno": beto, "estado": "presente"}], fecha=MARTES)
+    porcentaje = lambda a: client.get(f"/alumnos/{a}/resumen", headers=docente).json()["asistencia_porcentaje"]  # noqa: E731
+    ana = entorno.alumnos["ana"].id_alumno
+    assert (porcentaje(ana), porcentaje(beto)) == (50.0, 100.0)
+
+    rotar(db, entorno, "ana", grado="1.º")
+
+    assert (porcentaje(ana), porcentaje(beto)) == (0.0, 100.0)

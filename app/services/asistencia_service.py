@@ -10,15 +10,15 @@ registro guarda la fecha de la clase.
 - Escritura: solo el Docente, con una actividad activa (queda en la auditoría y cuenta
   como productividad del módulo Asistencia), sobre alumnos activos de su alcance y en un
   día lectivo del periodo vigente. Todo o nada.
-- Una fila por (alumno, fecha, subprograma): se crea la primera vez y después se
-  actualiza. Con dos dispositivos gana la captura más reciente (`fecha_registro`). Sin
-  cambios reales no se escribe ni se audita.
+- Una fila por (alumno, fecha, subprograma): se crea la primera vez, con el aula
+  (colegio y grado) que el alumno tiene en ese momento, y después se actualiza sin mudarla
+  aunque el alumno haya rotado. Con dos dispositivos gana la captura más reciente
+  (`fecha_registro`). Sin cambios reales no se escribe ni se audita.
 """
 from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import status
-from sqlalchemy import and_, or_
 from sqlmodel import Session, col, select
 
 from app.core.database import insert_con_conflicto
@@ -93,12 +93,14 @@ def _validar_aula(db: Session, id_colegio: int, id_grado: int, id_programa: int)
 def consultar_clase(
     db: Session, usuario: Usuario, id_colegio: int, id_grado: int, id_programa: int, fecha: date
 ) -> AsistenciaClase:
-    """Asistencia de una clase.
+    """Asistencia de una clase (aula = colegio + grado + subprograma, en una fecha).
 
-    Alumnos: los activos del colegio y grado cuyo subprograma actual es el de la clase,
-    más los del colegio y grado que tienen un registro en la clase aunque hoy estén
-    inactivos o en otro subprograma (`activo: false` si están inactivos). El colegio y el
-    grado son los actuales del alumno: el registro no los guarda.
+    Alumnos:
+    - los que tienen un registro de ESA clase (por el aula guardada en el registro), aunque
+      hoy estén inactivos (`activo: false`) o en otra aula (`en_aula: false`);
+    - los activos que hoy pertenecen al aula y todavía no tienen registro en esa fecha y
+      subprograma. Uno que ya tiene registro esa fecha en otra aula (rotó ese mismo día)
+      no se lista: su asistencia de ese día ya se tomó allá y no puede tener dos.
 
     Errores: 403 `aula_fuera_de_alcance` (Docente), 422 del aula y 422
     `fecha_no_lectiva` (Docente: día lectivo del periodo vigente; Supervisor: cualquier
@@ -117,35 +119,47 @@ def consultar_clase(
     if not lectiva:
         raise _fecha_no_lectiva()
 
-    de_la_clase = and_(
-        Asistencia.id_alumno == Alumno.id_alumno,
-        Asistencia.fecha == fecha,
-        Asistencia.id_programa == id_programa,
-    )
-    filas = db.exec(
+    aula = (id_colegio, id_grado, id_programa)
+    registrados = db.exec(
         select(Alumno, Asistencia.estado, Asistencia.observacion)
-        .outerjoin(Asistencia, de_la_clase)
+        .join(Alumno, Alumno.id_alumno == Asistencia.id_alumno)
         .where(
+            Asistencia.id_colegio == id_colegio,
+            Asistencia.id_grado == id_grado,
+            Asistencia.id_programa == id_programa,
+            Asistencia.fecha == fecha,
+        )
+    ).all()
+    con_registro_en_la_fecha = select(Asistencia.id_alumno).where(
+        Asistencia.fecha == fecha, Asistencia.id_programa == id_programa
+    )
+    sin_registro = db.exec(
+        select(Alumno).where(
             Alumno.id_colegio == id_colegio,
             Alumno.id_grado == id_grado,
-            or_(
-                and_(col(Alumno.activo).is_(True), Alumno.id_programa_actual == id_programa),
-                col(Asistencia.id).is_not(None),
-            ),
+            Alumno.id_programa_actual == id_programa,
+            col(Alumno.activo).is_(True),
+            col(Alumno.id_alumno).not_in(con_registro_en_la_fecha),
         )
-        .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
     ).all()
+    filas = [*registrados, *((alumno, None, None) for alumno in sin_registro)]
+    filas.sort(key=lambda f: (f[0].apellidos, f[0].nombres, f[0].id_alumno))
     return AsistenciaClase(
         fecha=fecha,
         editable=es_docente,
         alumnos=[
             AlumnoAsistencia(
                 id_alumno=alumno.id_alumno, nombres=alumno.nombres, apellidos=alumno.apellidos,
-                activo=alumno.activo, estado=estado, observacion=observacion,
+                activo=alumno.activo, en_aula=_aula_de(alumno) == aula, estado=estado, observacion=observacion,
             )
             for alumno, estado, observacion in filas
         ],
     )
+
+
+def _aula_de(alumno: Alumno) -> tuple[int, int, int]:
+    """Aula a la que el alumno pertenece hoy: (colegio, grado, subprograma)."""
+    return alumno.id_colegio, alumno.id_grado, alumno.id_programa_actual
 
 
 # ── Registro ────────────────────────────────────────────────────────────────────────
@@ -159,28 +173,37 @@ def _fecha_registro(fecha: Optional[datetime], ahora: datetime) -> datetime:
     return fecha
 
 
-def _alumnos_validos(db: Session, usuario: Usuario, data: AsistenciaGuardar) -> dict[int, Alumno]:
-    """Los alumnos de los registros. 422 `validacion` con un error por registro inválido:
-    alumno repetido, inexistente o inactivo, o fuera del alcance vigente del docente. Si
-    hay alguno, no se guarda nada."""
+def _validar_registros(
+    db: Session, usuario: Usuario, data: AsistenciaGuardar
+) -> tuple[dict[int, Alumno], dict[tuple[int, int], Asistencia]]:
+    """Los alumnos de los registros y sus filas ya guardadas en la fecha (bloqueadas).
+
+    422 `validacion` con un error por registro inválido: alumno repetido, inexistente o
+    inactivo, o fuera del alcance vigente del docente. El alcance se mide contra el aula
+    del registro: la guardada si ya existe (no se muda), la actual del alumno si es nuevo.
+    Si hay alguno, no se guarda nada."""
     alcance = alcance_de(db, usuario) or set()
     ids = {r.id_alumno for r in data.registros}
     alumnos = {a.id_alumno: a for a in db.exec(select(Alumno).where(col(Alumno.id_alumno).in_(ids))).all()}
+    existentes = _existentes(db, data.fecha, list(alumnos))
     vistos: set[int] = set()
     errores = []
     for i, registro in enumerate(data.registros):
         campo = f"registros.{i}.id_alumno"
         alumno = alumnos.get(registro.id_alumno)
+        fila = existentes.get((alumno.id_alumno, alumno.id_programa_actual)) if alumno else None
         if registro.id_alumno in vistos:
             errores.append((campo, "El alumno está repetido."))
         elif alumno is None or not alumno.activo:
             errores.append((campo, "El alumno no existe o está inactivo."))
-        elif (alumno.id_colegio, alumno.id_grado) not in alcance:
+        elif fila is not None and (fila.id_colegio, fila.id_grado) not in alcance:
+            errores.append((campo, "Su asistencia de esa fecha es de un colegio y grado que no tiene asignados."))
+        elif fila is None and (alumno.id_colegio, alumno.id_grado) not in alcance:
             errores.append((campo, "El alumno no pertenece a un colegio y grado que tenga asignados."))
         vistos.add(registro.id_alumno)
     if errores:
         raise _error_validacion(errores)
-    return alumnos
+    return alumnos, existentes
 
 
 def _existentes(db: Session, fecha: date, ids_alumno: list[int]) -> dict[tuple[int, int], Asistencia]:
@@ -232,7 +255,8 @@ def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -
     Orden: actividad activa (409 `actividad_requerida`), día lectivo del periodo vigente
     (422 `fecha_no_lectiva`), `fecha_registro` y registros (422 `validacion`).
 
-    Cada registro va a la clase del subprograma actual del alumno. Si la fila guardada
+    Un registro nuevo va a la clase del aula y subprograma actuales del alumno; uno que ya
+    existe conserva su aula aunque el alumno haya rotado. Si la fila guardada
     tiene una captura posterior a la que llega, gana la guardada: el registro no se
     aplica y la respuesta lo indica con `aplicado: false`. Varios cambios al mismo alumno
     y clase dentro de una actividad cuentan como un solo cambio (CU017: registros
@@ -243,17 +267,20 @@ def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -
         raise _fecha_no_lectiva()
     ahora = ahora_utc()
     fecha_registro = _fecha_registro(data.fecha_registro, ahora)
-    alumnos = _alumnos_validos(db, usuario, data)
+    alumnos, existentes = _validar_registros(db, usuario, data)
 
     auditoria = {"id_usuario": usuario.id_usuario, "fecha": ahora, "id_actividad": id_actividad}
     captura = {"id_docente": usuario.id_docente, "fecha_registro": fecha_registro}
-    existentes = _existentes(db, data.fecha, list(alumnos))
     guardados = []
     for registro in data.registros:
-        clave = (registro.id_alumno, alumnos[registro.id_alumno].id_programa_actual)
-        clase = {"id_alumno": clave[0], "fecha": data.fecha, "id_programa": clave[1]}
+        alumno = alumnos[registro.id_alumno]
+        clave = (alumno.id_alumno, alumno.id_programa_actual)
         fila = existentes.get(clave)
         if fila is None:
+            clase = {
+                "id_alumno": alumno.id_alumno, "fecha": data.fecha, "id_programa": alumno.id_programa_actual,
+                "id_colegio": alumno.id_colegio, "id_grado": alumno.id_grado,
+            }
             nuevos = {campo: getattr(registro, campo) for campo in CAMPOS if campo in registro.model_fields_set}
             id_nuevo = _insertar(
                 db, {**clase, **nuevos, **captura, "creado_por": usuario.id_usuario, "creado_en": ahora}

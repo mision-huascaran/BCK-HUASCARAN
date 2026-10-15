@@ -22,6 +22,9 @@ class AlumnoAsistencia(BaseModel):
     apellidos: str
     # False: hoy inactivo, pero con registro en la clase consultada.
     activo: bool
+    # False: tiene registro en esta clase, pero hoy pertenece a otra aula (colegio, grado o
+    # subprograma distintos); el registro sigue siendo de esta clase.
+    en_aula: bool
     # null: aún sin marcar.
     estado: Optional[EstadoAsistencia] = None
     observacion: Optional[str] = None
@@ -31,8 +34,8 @@ class AsistenciaClase(BaseModel):
     fecha: date
     # El usuario es Docente y la fecha es un día lectivo del periodo vigente.
     editable: bool
-    # Activos del colegio, grado y subprograma, más los que tienen registro en la clase;
-    # por apellidos y nombres.
+    # Los que tienen registro en la clase, más los activos del aula aún sin registro esa
+    # fecha; por apellidos y nombres.
     alumnos: list[AlumnoAsistencia]
 
 

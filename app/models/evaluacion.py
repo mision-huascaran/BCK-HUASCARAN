@@ -11,7 +11,7 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Text, Uniqu
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
-from app.models.organizacion import FK_GRADO, FK_PROGRAMA, FK_USUARIO
+from app.models.organizacion import FK_COLEGIO, FK_GRADO, FK_PROGRAMA, FK_USUARIO
 
 FK_ALUMNO = "alumno.id_alumno"
 FK_DOCENTE = "docente.id_docente"
@@ -146,9 +146,9 @@ ESTADOS_ASISTIO = ("presente", "tardanza")
 
 class Asistencia(SQLModel, table=True):
     """Asistencia de un alumno a una clase (CU022): una fila por alumno, fecha y
-    subprograma. Una clase es fecha + colegio + grado + subprograma; el colegio y el
-    grado salen del alumno. Fuente única de asistencia para la rúbrica y el seguimiento
-    de lectura."""
+    subprograma. Una clase es fecha + colegio + grado + subprograma, y la fila guarda su
+    aula (la del alumno al crearla): si después el alumno rota, el registro no se muda.
+    Fuente única de asistencia para la rúbrica y el seguimiento de lectura."""
 
     __tablename__ = "asistencia"
     __table_args__ = (
@@ -156,14 +156,19 @@ class Asistencia(SQLModel, table=True):
         CheckConstraint(
             "estado IS NULL OR estado IN ('presente', 'tardanza', 'ausente')", name="ck_asistencia_estado"
         ),
-        # Clases de una fecha (vencidos e incompletos de CU011, clases dictadas de CU015).
+        # Clases de una fecha o de un periodo (vencidos e incompletos de CU011).
         Index("ix_asistencia_fecha", "fecha"),
+        # La clase de un aula (CU022) y sus clases dictadas (CU015).
+        Index("ix_asistencia_aula_fecha", "id_colegio", "id_grado", "fecha"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     id_alumno: int = Field(foreign_key=FK_ALUMNO)
     # Día de la clase (no el de la captura).
     fecha: date
+    # Aula de la clase: colegio y grado del alumno al crear el registro.
+    id_colegio: int = Field(foreign_key=FK_COLEGIO)
+    id_grado: int = Field(foreign_key=FK_GRADO)
     # Subprograma del alumno al registrar.
     id_programa: int = Field(foreign_key=FK_PROGRAMA)
     estado: Optional[str] = Field(default=None, sa_type=Text)

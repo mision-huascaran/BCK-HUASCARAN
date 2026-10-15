@@ -117,32 +117,26 @@ def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
 
 def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> float:
     """% de asistencia del año, con 1 decimal (CU015): asistencias del alumno (presente
-    o tardanza) sobre las clases dictadas a su colegio, grado y subprograma actuales (las
-    fechas con al menos un registro con estado). 0 si no hubo clases.
-
-    El numerador cuenta solo los registros del alumno en su subprograma actual: así cada
-    uno es de una clase del denominador y el % no pasa de 100."""
-    del_anio = (
+    o tardanza) en su aula actual (colegio, grado y subprograma) sobre las clases
+    dictadas en esa aula (las fechas con al menos un registro con estado). El aula es la
+    guardada en cada registro: lo que el alumno registró en otra aula antes de rotar no
+    cuenta aquí. 0 si no hubo clases."""
+    de_su_aula = (
         Asistencia.fecha >= anio.fecha_inicio,
         Asistencia.fecha <= anio.fecha_fin,
+        Asistencia.id_colegio == alumno.id_colegio,
+        Asistencia.id_grado == alumno.id_grado,
         Asistencia.id_programa == alumno.id_programa_actual,
     )
     clases = db.exec(
-        select(func.count(func.distinct(Asistencia.fecha)))
-        .join(Alumno, Alumno.id_alumno == Asistencia.id_alumno)
-        .where(
-            *del_anio,
-            Alumno.id_colegio == alumno.id_colegio,
-            Alumno.id_grado == alumno.id_grado,
-            col(Asistencia.estado).is_not(None),
-        )
+        select(func.count(func.distinct(Asistencia.fecha))).where(*de_su_aula, col(Asistencia.estado).is_not(None))
     ).one()
     if not clases:
         return 0.0
     asistidas = db.exec(
         select(func.count())
         .select_from(Asistencia)
-        .where(*del_anio, Asistencia.id_alumno == alumno.id_alumno, col(Asistencia.estado).in_(ESTADOS_ASISTIO))
+        .where(*de_su_aula, Asistencia.id_alumno == alumno.id_alumno, col(Asistencia.estado).in_(ESTADOS_ASISTIO))
     ).one()
     return round(100 * asistidas / clases, 1)
 

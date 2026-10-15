@@ -320,7 +320,8 @@ def registros(db, entorno):
     db.add(LibroSubidaNivel(id_reporte_semanal=reporte.id, titulo_libro="El zorro", aciertos=4, total_preguntas=5, **base))
     alfabetizacion = entorno.programas["Alfabetización"]
     for semana, estado in zip(semanas, ("presente", "ausente")):
-        db.add(Asistencia(id_alumno=luis, fecha=semana.fecha_inicio, id_programa=alfabetizacion, estado=estado, **captura))
+        db.add(Asistencia(id_alumno=luis, fecha=semana.fecha_inicio, id_programa=alfabetizacion, estado=estado,
+                          id_colegio=entorno.colegios["Andino"].id_colegio, id_grado=entorno.grados["1.º"], **captura))
     nivel_rubrica = db.exec(select(NivelRubrica).order_by(NivelRubrica.id_nivel_rubrica)).first()
     db.add(RubricaRegistroSemanal(id_semana=semanas[1].id_semana, id_nivel_fluidez=nivel_rubrica.id_nivel_rubrica,
                                   observacion="Lee fluido", **claves, **captura))
