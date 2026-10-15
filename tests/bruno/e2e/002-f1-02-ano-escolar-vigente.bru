@@ -1,0 +1,29 @@
+meta {
+  name: F1-02 Año escolar vigente
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/anios-escolares
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  const anio = res.body.find((a) => a.vigente) || res.body[res.body.length - 1];
+  bru.setVar('idAnio', anio.id);
+  // Identificador de la corrida: hace únicos el nombre del colegio, el DNI y el correo.
+  bru.setVar('runId', String(Date.now()));
+}
+
+tests {
+  test("hay un año escolar vigente", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.some((a) => a.vigente)).to.equal(true);
+  });
+}

@@ -1,0 +1,22 @@
+meta {
+  name: F1-17 Inactivar el colegio de prueba
+  type: http
+  seq: 17
+}
+
+patch {
+  url: {{baseUrl}}/colegios/{{idColegioF1}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("queda inactivo", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.activo).to.equal(false);
+  });
+}

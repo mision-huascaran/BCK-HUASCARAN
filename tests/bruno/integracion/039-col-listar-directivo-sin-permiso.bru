@@ -1,0 +1,22 @@
+meta {
+  name: COL listar · Directivo sin permiso
+  type: http
+  seq: 39
+}
+
+get {
+  url: {{baseUrl}}/colegios
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

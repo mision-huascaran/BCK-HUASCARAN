@@ -1,0 +1,32 @@
+meta {
+  name: F2-15 Finalizar la actividad
+  type: http
+  seq: 35
+}
+
+post {
+  url: {{baseUrl}}/actividades/{{idActividadF2}}/finalizar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:post-response {
+  bru.setVar('inicioF2', res.body.actividad.inicio);
+  bru.setVar('finF2', res.body.actividad.fin);
+}
+
+tests {
+  test("finalizada por el docente", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.actividad.estado).to.equal('finalizada');
+    expect(res.body.actividad.tipo_cierre).to.equal('Manual por finalización de actividad');
+  });
+}

@@ -1,0 +1,33 @@
+meta {
+  name: F3-05 El Supervisor intenta registrar asistencia
+  type: http
+  seq: 43
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "fecha": "{{fechaClase}}",
+    "registros": [{ "id_alumno": {{idAlumnoB}}, "estado": "ausente" }]
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}
+
+docs {
+  CU022: el Supervisor solo lee asistencias.
+}

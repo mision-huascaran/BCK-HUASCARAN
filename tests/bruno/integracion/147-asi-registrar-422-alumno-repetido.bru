@@ -1,0 +1,32 @@
+meta {
+  name: ASI registrar · 422 alumno repetido
+  type: http
+  seq: 147
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "fecha": "{{fechaClase}}",
+    "registros": [
+      { "id_alumno": {{idAlumnoInt}}, "estado": "ausente" },
+      { "id_alumno": {{idAlumnoInt}}, "estado": "tardanza" }
+    ]
+  }
+}
+
+tests {
+  test("422 alumno repetido", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+  });
+}

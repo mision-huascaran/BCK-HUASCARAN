@@ -1,0 +1,27 @@
+meta {
+  name: F1-03 Catálogo de grados
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/grados
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  bru.setVar('idGrado1', res.body.find((g) => g.nombre === '1.º').id);
+  bru.setVar('idGrado2', res.body.find((g) => g.nombre === '2.º').id);
+}
+
+tests {
+  test("trae 1.º y 2.º", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.map((g) => g.nombre)).to.include.members(['1.º', '2.º']);
+  });
+}

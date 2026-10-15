@@ -1,0 +1,25 @@
+meta {
+  name: ALU detalle · Docente alumno ajeno
+  type: http
+  seq: 115
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoSup}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 o 404: no ve alumnos de otros colegios", function () {
+    expect([403, 404]).to.include(res.status);
+  });
+}
+
+docs {
+  Prueba mínima del plan: un Docente con token válido pide un alumno de otro colegio y no recibe sus datos.
+}

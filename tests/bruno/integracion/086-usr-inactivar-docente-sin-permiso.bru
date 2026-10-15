@@ -1,0 +1,22 @@
+meta {
+  name: USR inactivar · Docente sin permiso
+  type: http
+  seq: 86
+}
+
+patch {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

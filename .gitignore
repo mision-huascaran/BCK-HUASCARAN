@@ -11,3 +11,11 @@ coverage.xml
 
 # Recovery Keys (eliminadas de CU001) en texto plano que queden de antes: nunca al repo.
 *recovery*key*.txt
+
+# Reportes de las colecciones Bruno (tests/bruno)
+integracion.xml
+integracion.html
+e2e.xml
+e2e.html
+.bruno-home/
+.npm/

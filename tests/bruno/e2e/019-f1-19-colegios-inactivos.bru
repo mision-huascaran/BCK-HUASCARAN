@@ -1,0 +1,22 @@
+meta {
+  name: F1-19 Colegios inactivos
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/colegios?distrito={{distritoColegio}}&activo=false
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("el colegio sigue existiendo como inactivo", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.items.map((x) => x.id)).to.include(bru.getVar('idColegioF1'));
+  });
+}

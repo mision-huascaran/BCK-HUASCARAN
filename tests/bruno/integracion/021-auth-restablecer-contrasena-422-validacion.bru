@@ -1,0 +1,25 @@
+meta {
+  name: AUTH restablecer contraseña · 422 validacion
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/password/restablecer
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoInexistente}}",
+    "codigo": "123456"
+  }
+}
+
+tests {
+  test("422 validacion", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+  });
+}

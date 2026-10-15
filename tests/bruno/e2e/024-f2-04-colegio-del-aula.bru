@@ -1,0 +1,30 @@
+meta {
+  name: F2-04 Colegio del aula
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/colegios/{{idColegioDoc}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  // Subprograma del aula y un grado del mismo colegio que el Docente no tiene asignado.
+  bru.setVar('idProgramaDoc', res.body.programas[0].id);
+  const propios = JSON.parse(bru.getVar('gradosDoc'));
+  const ajeno = res.body.grados.find((g) => !propios.includes(g.id));
+  bru.setVar('idGradoAjeno', ajeno ? ajeno.id : null);
+}
+
+tests {
+  test("el Docente ve su colegio", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.programas.length).to.be.greaterThan(0);
+  });
+}

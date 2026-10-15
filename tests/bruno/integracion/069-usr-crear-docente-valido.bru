@@ -1,0 +1,50 @@
+meta {
+  name: USR crear Docente · válido
+  type: http
+  seq: 69
+}
+
+post {
+  url: {{baseUrl}}/usuarios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "Docente Bruno",
+    "apellidos": "Integración {{runUsr}}",
+    "dni": "{{dniUsr}}",
+    "correo": "{{correoUsr}}",
+    "id_rol": {{idRolDocente}},
+    "asignacion": {
+      "id_colegio": {{idColegioInt}},
+      "id_anio_escolar": {{idAnio}},
+      "grados": [{{idGrado1}}]
+    }
+  }
+}
+
+script:pre-request {
+  const run = String(Date.now());
+  bru.setVar('runUsr', run);
+  bru.setVar('dniUsr', '6' + run.slice(-7));
+  const base = bru.getEnvVar('correoAvisos');
+  bru.setVar('correoUsr', base.replace(/\+[^@]*@|@/, `+bruno.int${run}@`));
+}
+
+script:post-response {
+  bru.setVar('idUsuarioInt', res.body.usuario.id);
+}
+
+tests {
+  test("201 con cambio de contraseña pendiente", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.usuario.debe_cambiar_contrasena).to.equal(true);
+    expect(res.body.usuario.colegios_asignados).to.include(bru.getVar('nombreColegioInt'));
+  });
+}

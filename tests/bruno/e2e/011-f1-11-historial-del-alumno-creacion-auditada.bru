@@ -1,0 +1,24 @@
+meta {
+  name: F1-11 Historial del alumno: creación auditada
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoF1}}/historial
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("la creación quedó en la auditoría con su autor", function () {
+    expect(res.status).to.equal(200);
+    const creacion = res.body.items.find((e) => e.accion === 'crear');
+    expect(creacion).to.not.equal(undefined);
+    expect(creacion.rol).to.equal('Supervisor');
+  });
+}

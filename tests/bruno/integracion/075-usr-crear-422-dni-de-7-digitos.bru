@@ -1,0 +1,29 @@
+meta {
+  name: USR crear · 422 DNI de 7 dígitos
+  type: http
+  seq: 75
+}
+
+post {
+  url: {{baseUrl}}/usuarios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "X", "apellidos": "Y", "dni": "1234567", "correo": "{{correoUsr}}", "id_rol": {{idRolDirectivo}}
+  }
+}
+
+tests {
+  test("422 DNI de 7 dígitos", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('dni');
+  });
+}

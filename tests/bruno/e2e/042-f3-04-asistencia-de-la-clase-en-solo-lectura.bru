@@ -1,0 +1,26 @@
+meta {
+  name: F3-04 Asistencia de la clase en solo lectura
+  type: http
+  seq: 42
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoDoc}}&id_programa={{idProgramaDoc}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("ve lo que registró el Docente, sin poder editar", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.editable).to.equal(false);
+    const a = res.body.alumnos.find((x) => x.id_alumno === bru.getVar('idAlumnoA'));
+    expect(a.estado).to.equal('tardanza');
+    // Inactivo hoy, pero con registro en esa fecha: se sigue listando.
+    expect(a.activo).to.equal(false);
+  });
+}

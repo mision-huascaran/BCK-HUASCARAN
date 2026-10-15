@@ -1,0 +1,19 @@
+meta {
+  name: COL inactivar · válido
+  type: http
+  seq: 191
+}
+
+patch {
+  url: {{baseUrl}}/colegios/{{idColegioInt}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("inactivo", function () { expect(res.body.activo).to.equal(false); });
+}

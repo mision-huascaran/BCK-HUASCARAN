@@ -1,0 +1,14 @@
+{
+  "version": "1",
+  "name": "SICEDU API",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git",
+    "venv",
+    "app",
+    "alembic",
+    ".pytest_cache",
+    ".sonar"
+  ]
+}

@@ -1,0 +1,62 @@
+meta {
+  name: F1-06 Crear docente con contraseña temporal
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/usuarios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "Docente Bruno",
+    "apellidos": "E2E {{runId}}",
+    "dni": "{{dniDocenteF1}}",
+    "correo": "{{correoDocenteF1}}",
+    "id_rol": {{idRolDocente}},
+    "asignacion": {
+      "id_colegio": {{idColegioF1}},
+      "id_anio_escolar": {{idAnio}},
+      "grados": [{{idGrado1}}]
+    }
+  }
+}
+
+script:pre-request {
+  const run = bru.getVar('runId');
+  bru.setVar('dniDocenteF1', '7' + run.slice(-7));
+  // Alias del buzón de avisos (correoAvisos): el correo de bienvenida no sale a terceros.
+  const base = bru.getEnvVar('correoAvisos');
+  bru.setVar('correoDocenteF1', base.replace(/\+[^@]*@|@/, `+bruno${run}@`));
+}
+
+script:post-response {
+  bru.setVar('idUsuarioF1', res.body.usuario.id);
+}
+
+tests {
+  test("201 Docente que debe cambiar la contraseña temporal", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.usuario.rol).to.equal('Docente');
+    expect(res.body.usuario.debe_cambiar_contrasena).to.equal(true);
+    expect(res.body.usuario.colegios_asignados).to.include(bru.getVar('nombreColegio'));
+  });
+  test("la temporal va por correo; solo viene en la respuesta si el correo falló", function () {
+    if (res.body.correo_enviado) {
+      expect(res.body['contraseña_temporal']).to.equal(null);
+    } else {
+      expect(res.body['contraseña_temporal']).to.be.a('string');
+    }
+  });
+}
+
+docs {
+  CU016: el Supervisor crea la cuenta con una contraseña temporal de 48 h que llega por correo.
+}

@@ -1,0 +1,32 @@
+meta {
+  name: F6-02 Intenta crear un alumno
+  type: http
+  seq: 83
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+body:json {
+  {
+    "nombres": "No debe crearse",
+    "apellidos": "Bruno F6",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoDoc}},
+    "id_programa": {{idProgramaDoc}}
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}
