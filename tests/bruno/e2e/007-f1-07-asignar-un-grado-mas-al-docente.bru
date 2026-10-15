@@ -1,0 +1,31 @@
+meta {
+  name: F1-07 Asignar un grado más al docente
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/usuarios/{{idUsuarioF1}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "asignacion": {
+      "id_colegio": {{idColegioF1}},
+      "grados": [{{idGrado1}}, {{idGrado2}}]
+    }
+  }
+}
+
+tests {
+  test("200", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.colegios_asignados).to.include(bru.getVar('nombreColegio'));
+  });
+}

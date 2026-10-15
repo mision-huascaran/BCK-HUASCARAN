@@ -1,0 +1,23 @@
+meta {
+  name: F3-02 Seguimiento del docente
+  type: http
+  seq: 40
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes/{{idDocente}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("cabecera del docente con su última conexión", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.id_docente).to.equal(bru.getVar('idDocente'));
+    expect(res.body.ultima_conexion).to.not.equal(null);
+  });
+}

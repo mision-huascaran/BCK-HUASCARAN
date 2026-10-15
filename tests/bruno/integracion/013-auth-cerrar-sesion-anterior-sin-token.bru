@@ -1,0 +1,24 @@
+meta {
+  name: AUTH cerrar sesión anterior · sin token
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/me/sesiones/{{idSesionSupervisor2}}/cerrar
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "fin": "{{finSesion2}}"
+  }
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

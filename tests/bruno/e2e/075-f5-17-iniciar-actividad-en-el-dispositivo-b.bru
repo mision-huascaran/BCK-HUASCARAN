@@ -1,0 +1,33 @@
+meta {
+  name: F5-17 Iniciar actividad en el dispositivo B
+  type: http
+  seq: 75
+}
+
+post {
+  url: {{baseUrl}}/actividades
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+body:json {
+  {
+    "id_actividad": "{{idActividadB}}"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('idActividadB', uuid());
+}
+
+tests {
+  test("201", function () { expect(res.status).to.equal(201); });
+}

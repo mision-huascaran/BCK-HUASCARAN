@@ -1,0 +1,25 @@
+meta {
+  name: F1-08 Verificar la asignación del docente
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/usuarios/{{idUsuarioF1}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("queda asignado a 1.º y 2.º del colegio nuevo", function () {
+    expect(res.status).to.equal(200);
+    const periodos = res.body.asignacion.periodos;
+    const periodo = periodos.find((p) => p.vigente) || periodos[0];
+    expect(periodo.id_colegio).to.equal(bru.getVar('idColegioF1'));
+    expect(periodo.grados.map((g) => g.id_grado)).to.have.members([bru.getVar('idGrado1'), bru.getVar('idGrado2')]);
+  });
+}

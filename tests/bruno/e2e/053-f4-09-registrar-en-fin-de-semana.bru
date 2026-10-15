@@ -1,0 +1,36 @@
+meta {
+  name: F4-09 Registrar en fin de semana
+  type: http
+  seq: 53
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "fecha": "{{fechaSabado}}",
+    "registros": [{ "id_alumno": {{idAlumnoCualquiera}}, "estado": "presente" }]
+  }
+}
+
+script:pre-request {
+  // El sábado más reciente (hora de Lima).
+  const d = new Date(Date.now() - 5 * 3600e3);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 1) % 7));
+  bru.setVar('fechaSabado', d.toISOString().slice(0, 10));
+}
+
+tests {
+  test("422 fecha_no_lectiva", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('fecha_no_lectiva');
+  });
+}

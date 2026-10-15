@@ -1,0 +1,23 @@
+meta {
+  name: CAT periodos académicos · válido
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/periodos-academicos?id_anio_escolar={{idAnio}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("periodos del año, a lo más uno vigente", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.length).to.be.greaterThan(0);
+    expect(res.body.filter((p) => p.vigente).length).to.be.at.most(1);
+  });
+}

@@ -1,0 +1,19 @@
+meta {
+  name: F5-21 Inactivar al alumno C
+  type: http
+  seq: 79
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoC}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+tests {
+  test("limpieza del aula de pruebas", function () { expect(res.body.activo).to.equal(false); });
+}

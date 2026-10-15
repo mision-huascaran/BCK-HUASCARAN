@@ -1,0 +1,25 @@
+meta {
+  name: ALU inactivar · válido Supervisor (idAlumnoInt)
+  type: http
+  seq: 186
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("inactivo", function () { expect(res.body.activo).to.equal(false); });
+}
+
+docs {
+  # Cierre
+
+  Nada se elimina: lo creado en la corrida queda inactivo.
+}

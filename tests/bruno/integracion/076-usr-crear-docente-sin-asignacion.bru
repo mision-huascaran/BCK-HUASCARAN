@@ -1,0 +1,28 @@
+meta {
+  name: USR crear · Docente sin asignación
+  type: http
+  seq: 76
+}
+
+post {
+  url: {{baseUrl}}/usuarios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "X", "apellidos": "Y", "dni": "{{dniUsr2}}", "correo": "{{correoUsr2}}", "id_rol": {{idRolDocente}}
+  }
+}
+
+tests {
+  test("422 asignacion_requerida", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('asignacion_requerida');
+  });
+}

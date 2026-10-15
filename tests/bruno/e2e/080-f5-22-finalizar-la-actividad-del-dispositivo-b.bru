@@ -1,0 +1,23 @@
+meta {
+  name: F5-22 Finalizar la actividad del dispositivo B
+  type: http
+  seq: 80
+}
+
+post {
+  url: {{baseUrl}}/actividades/{{idActividadB}}/finalizar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("finalizada", function () { expect(res.body.actividad.estado).to.equal("finalizada"); });
+}

@@ -1,0 +1,19 @@
+meta {
+  name: ALU detalle · válido
+  type: http
+  seq: 114
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("200", function () { expect(res.status).to.equal(200); });
+}

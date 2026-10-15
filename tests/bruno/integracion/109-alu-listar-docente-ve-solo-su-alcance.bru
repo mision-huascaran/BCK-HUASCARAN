@@ -1,0 +1,23 @@
+meta {
+  name: ALU listar · Docente ve solo su alcance
+  type: http
+  seq: 109
+}
+
+get {
+  url: {{baseUrl}}/alumnos
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("solo alumnos de sus colegios", function () {
+    expect(res.status).to.equal(200);
+    const propios = JSON.parse(bru.getVar('colegiosDoc'));
+    expect(res.body.items.every((a) => propios.includes(a.colegio.id))).to.equal(true);
+  });
+}

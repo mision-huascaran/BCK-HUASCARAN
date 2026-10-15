@@ -1,0 +1,35 @@
+meta {
+  name: ASI registrar · 422 fecha_registro futura
+  type: http
+  seq: 151
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "fecha": "{{fechaClase}}",
+    "registros": [{ "id_alumno": {{idAlumnoInt}}, "estado": "ausente" }],
+    "fecha_registro": "{{manana}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar('manana', new Date(Date.now() + 86400e3).toISOString());
+}
+
+tests {
+  test("422 fecha_registro futura", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('fecha_registro');
+  });
+}

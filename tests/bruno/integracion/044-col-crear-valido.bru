@@ -1,0 +1,45 @@
+meta {
+  name: COL crear · válido
+  type: http
+  seq: 44
+}
+
+post {
+  url: {{baseUrl}}/colegios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombre": "{{nombreColegioInt}}",
+    "departamento": "Áncash",
+    "provincia": "Huaraz",
+    "grados": [
+      { "id_grado": {{idGrado1}}, "dia_clase": 3 },
+      { "id_grado": {{idGrado2}}, "dia_clase": 4 }
+    ],
+    "programas": {{idProgramas}}
+  }
+}
+
+script:pre-request {
+  bru.setVar('nombreColegioInt', 'I.E. Bruno Integración ' + Date.now());
+}
+
+script:post-response {
+  bru.setVar('idColegioInt', res.body.id);
+}
+
+tests {
+  test("201 activo; distrito opcional", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.activo).to.equal(true);
+    expect(res.body.distrito).to.equal(null);
+    expect(res.body.grados.map((g) => g.dia_clase)).to.have.members([3, 4]);
+  });
+}
