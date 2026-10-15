@@ -1,0 +1,19 @@
+meta {
+  name: AUTH logout Docente · válido
+  type: http
+  seq: 194
+}
+
+post {
+  url: {{baseUrl}}/logout
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("204", function () { expect(res.status).to.equal(204); });
+}

@@ -1,0 +1,22 @@
+meta {
+  name: AUTH token de la sesión cerrada
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor2}}
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

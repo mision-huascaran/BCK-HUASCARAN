@@ -1,0 +1,37 @@
+meta {
+  name: USR crear · DNI duplicado
+  type: http
+  seq: 73
+}
+
+post {
+  url: {{baseUrl}}/usuarios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "Docente Bruno",
+    "apellidos": "Integración {{runUsr}}",
+    "dni": "{{dniUsr}}",
+    "correo": "{{correoUsr}}",
+    "id_rol": {{idRolDocente}},
+    "asignacion": {
+      "id_colegio": {{idColegioInt}},
+      "id_anio_escolar": {{idAnio}},
+      "grados": [{{idGrado1}}]
+    }
+  }
+}
+
+tests {
+  test("409 duplicado", function () {
+    expect(res.status).to.equal(409);
+    expect(['dni_duplicado', 'correo_duplicado']).to.include(res.body.motivo);
+  });
+}

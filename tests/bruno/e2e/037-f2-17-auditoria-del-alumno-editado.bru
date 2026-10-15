@@ -1,0 +1,29 @@
+meta {
+  name: F2-17 Auditoría del alumno editado
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoA}}/historial
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("la edición guarda el valor anterior y el nuevo, dentro de la actividad", function () {
+    expect(res.status).to.equal(200);
+    const run = bru.getVar('runId');
+    const edicion = res.body.items.find((e) => e.accion === 'editar' && e.cambios.some((c) => c.campo.toLowerCase() === 'apellidos'));
+    expect(edicion, 'evento editar').to.not.equal(undefined);
+    const cambio = edicion.cambios.find((c) => c.campo.toLowerCase() === 'apellidos');
+    expect(cambio.anterior).to.equal('Bruno F2 ' + run);
+    expect(cambio.nuevo).to.equal('Bruno F2 editado ' + run);
+    const t = Date.parse(edicion.fecha);
+    expect(t).to.be.within(Date.parse(bru.getVar('inicioF2')), Date.parse(bru.getVar('finF2')));
+  });
+}

@@ -1,0 +1,32 @@
+meta {
+  name: F5-06 Finalizar la actividad (con conexión)
+  type: http
+  seq: 64
+}
+
+post {
+  url: {{baseUrl}}/actividades/{{idActividadOnline}}/finalizar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:post-response {
+  // Sin conexión, el cliente fecha cada evento con el reloj del servidor (offset de la
+  // última conexión). Aquí se toman a partir del fin de esta actividad, que dio el servidor.
+  const fin = Date.parse(res.body.actividad.fin);
+  bru.setVar('tInicioOffline', new Date(fin + 1000).toISOString());
+  bru.setVar('tCaptura', new Date(fin + 2000).toISOString());
+  bru.setVar('tCierreOffline', new Date(fin + 3000).toISOString());
+}
+
+tests {
+  test("finalizada", function () { expect(res.body.actividad.estado).to.equal("finalizada"); });
+}

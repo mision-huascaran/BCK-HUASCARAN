@@ -1,0 +1,26 @@
+meta {
+  name: F5-14 La actividad sincronizada
+  type: http
+  seq: 72
+}
+
+get {
+  url: {{baseUrl}}/actividades/{{idActividadOffline}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+tests {
+  test("finalizada por el cierre de sesión y con un solo cambio de asistencia", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.estado).to.equal('finalizada');
+    expect(res.body.tipo_cierre).to.equal('Forzado por cierre de sesión');
+    expect(Date.parse(res.body.fin)).to.equal(Date.parse(bru.getVar('tCierreOffline')));
+    const asistencia = res.body.cambios_por_modulo.find((m) => m.modulo === 'asistencia');
+    expect(asistencia.total).to.equal(1);
+  });
+}

@@ -1,0 +1,32 @@
+meta {
+  name: AUTH cerrar sesión anterior · es la sesión actual
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/me/sesiones/{{idSesionSupervisor}}/cerrar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "fin": "{{ahora}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar('ahora', new Date().toISOString());
+}
+
+tests {
+  test("422 sesion_actual", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('sesion_actual');
+  });
+}

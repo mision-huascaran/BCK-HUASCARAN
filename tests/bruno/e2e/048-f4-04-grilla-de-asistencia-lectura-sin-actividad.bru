@@ -1,0 +1,50 @@
+meta {
+  name: F4-04 Grilla de asistencia (lectura sin actividad)
+  type: http
+  seq: 48
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoDoc}}&id_programa={{idProgramaDoc}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  // Día lectivo más reciente del periodo vigente, hasta hoy (hora de Lima, UTC-5). Los
+  // feriados solo los conoce el servidor: se prueba hacia atrás hasta que acepte la fecha.
+  const base = bru.getEnvVar('baseUrl');
+  const headers = { Authorization: 'Bearer ' + bru.getVar('tokenDocente') };
+  const aula = `id_colegio=${bru.getVar('idColegioDoc')}&id_grado=${bru.getVar('idGradoDoc')}&id_programa=${bru.getVar('idProgramaDoc')}`;
+  let fecha = null;
+  for (let i = 0; i < 15 && !fecha; i++) {
+    const dia = new Date(Date.now() - 5 * 3600e3 - i * 86400e3);
+    if ([0, 6].includes(dia.getUTCDay())) continue;
+    const candidata = dia.toISOString().slice(0, 10);
+    try {
+      await bru.sendRequest({ method: 'GET', url: `${base}/asistencias?${aula}&fecha=${candidata}`, headers });
+      fecha = candidata;
+    } catch (e) {
+      // 422 fecha_no_lectiva (feriado o fuera del periodo vigente): se prueba el día anterior.
+    }
+  }
+  if (!fecha) {
+    throw new Error('No hay un día lectivo del periodo vigente en las últimas dos semanas (¿receso o entre periodos?).');
+  }
+  bru.setVar('fechaClase', fecha);
+}
+
+script:post-response {
+  const alguno = res.body.alumnos[0];
+  bru.setVar('idAlumnoCualquiera', alguno ? alguno.id_alumno : 1);
+}
+
+tests {
+  test("leer no exige actividad, pero la grilla no es editable sin ella en la interfaz", function () {
+    expect(res.status).to.equal(200);
+  });
+}

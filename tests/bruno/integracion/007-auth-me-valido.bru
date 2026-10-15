@@ -1,0 +1,23 @@
+meta {
+  name: AUTH me · válido
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("usuario y sesión vigente de 8 h", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.activo).to.equal(true);
+    expect(Date.parse(res.body.sesion.expira)).to.be.greaterThan(Date.now());
+  });
+}

@@ -1,0 +1,22 @@
+meta {
+  name: ASI consultar · aula ajena
+  type: http
+  seq: 139
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoAjeno}}&id_programa={{idProgramaDoc}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 aula_fuera_de_alcance", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('aula_fuera_de_alcance');
+  });
+}

@@ -1,0 +1,22 @@
+meta {
+  name: F2-13 Inactivar al alumno A
+  type: http
+  seq: 33
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoA}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("queda inactivo (limpieza del aula de pruebas)", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.activo).to.equal(false);
+  });
+}

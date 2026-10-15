@@ -1,0 +1,24 @@
+meta {
+  name: F5-16 La clase después de sincronizar
+  type: http
+  seq: 74
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoDoc}}&id_programa={{idProgramaDoc}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+tests {
+  test("el alumno C aparece una sola vez, presente", function () {
+    expect(res.status).to.equal(200);
+    const filas = res.body.alumnos.filter((a) => a.id_alumno === bru.getVar('idAlumnoC'));
+    expect(filas.length).to.equal(1);
+    expect(filas[0].estado).to.equal('presente');
+  });
+}

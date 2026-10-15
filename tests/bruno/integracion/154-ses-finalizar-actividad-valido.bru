@@ -1,0 +1,26 @@
+meta {
+  name: SES finalizar actividad · válido
+  type: http
+  seq: 154
+}
+
+post {
+  url: {{baseUrl}}/actividades/{{idActividadInt}}/finalizar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("finalizada por el docente", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.actividad.tipo_cierre).to.equal('Manual por finalización de actividad');
+  });
+}

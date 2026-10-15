@@ -23,3 +23,7 @@ Dockerfile
 coverage.xml
 requirements-dev.txt
 pytest.ini
+
+# colecciones Bruno (tests/bruno): no van en la imagen
+bruno.json
+environments/

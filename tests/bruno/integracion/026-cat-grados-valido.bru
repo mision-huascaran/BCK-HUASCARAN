@@ -1,0 +1,33 @@
+meta {
+  name: CAT grados · válido
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/grados
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  bru.setVar('idGrado1', res.body.find((g) => g.nombre === '1.º').id);
+  bru.setVar('idGrado2', res.body.find((g) => g.nombre === '2.º').id);
+}
+
+tests {
+  test("1.º a 6.º", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.map((g) => g.nombre)).to.include.members(['1.º', '2.º', '3.º', '4.º', '5.º', '6.º']);
+  });
+}
+
+docs {
+  # Catálogos
+
+  Los usa cualquier rol autenticado (no hay caso 403).
+}

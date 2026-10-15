@@ -1,0 +1,35 @@
+meta {
+  name: COL crear · nombre duplicado
+  type: http
+  seq: 47
+}
+
+post {
+  url: {{baseUrl}}/colegios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombre": "{{nombreColegioInt}}",
+    "departamento": "Áncash",
+    "provincia": "Huaraz",
+    "grados": [
+      { "id_grado": {{idGrado1}}, "dia_clase": 3 },
+      { "id_grado": {{idGrado2}}, "dia_clase": 4 }
+    ],
+    "programas": {{idProgramas}}
+  }
+}
+
+tests {
+  test("409 colegio_duplicado", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('colegio_duplicado');
+  });
+}

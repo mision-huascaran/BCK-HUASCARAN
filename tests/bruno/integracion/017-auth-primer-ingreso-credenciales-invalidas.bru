@@ -1,0 +1,31 @@
+meta {
+  name: AUTH primer ingreso · credenciales inválidas
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/password/primer-ingreso
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoInexistente}}",
+    "contraseña_temporal": "Temporal#2026",
+    "contraseña_nueva": "Nueva#2026x",
+    "confirmar_contraseña_nueva": "Nueva#2026x"
+  }
+}
+
+tests {
+  test("401 credenciales_invalidas", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('credenciales_invalidas');
+  });
+}
+
+docs {
+  CU001/CU016: el primer ingreso exige la contraseña temporal vigente de una cuenta con cambio pendiente.
+}
