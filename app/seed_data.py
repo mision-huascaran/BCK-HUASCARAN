@@ -240,10 +240,12 @@ def seed() -> None:
             )
             session.commit()
 
+        # Solo los correos: este script corre en el despliegue y su salida queda en el log
+        # (bug #500). Las contraseñas de prueba están en este archivo.
         print("Seed completado.")
-        print(f"Docente     -> correo: {PROFESOR_CORREO}  password: {PROFESOR_PASSWORD}")
-        print(f"Supervisor  -> correo: {JEFA_CORREO}  password: {JEFA_PASSWORD}")
-        print(f"Directivo   -> correo: {DIRECTIVO_CORREO}  password: {DIRECTIVO_PASSWORD}")
+        print(f"Docente     -> correo: {PROFESOR_CORREO}")
+        print(f"Supervisor  -> correo: {JEFA_CORREO}")
+        print(f"Directivo   -> correo: {DIRECTIVO_CORREO}")
         if periodo is None:
             print("Sin calendario cargado: no se creó la asignación de prueba.")
         else:

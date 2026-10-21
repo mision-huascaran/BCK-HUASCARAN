@@ -508,7 +508,19 @@ def test_seed_crea_cuentas_y_es_idempotente(motor_de_la_app, db, capsys):
     correos = set(db.exec(select(Usuario.correo)).all())
     assert {seed_data.JEFA_CORREO, seed_data.PROFESOR_CORREO, seed_data.DIRECTIVO_CORREO} <= correos
     assert len(db.exec(select(Colegio)).all()) == 3
-    assert "Sin calendario cargado" in capsys.readouterr().out
+    salida = capsys.readouterr().out
+    assert "Sin calendario cargado" in salida
+    assert seed_data.PROFESOR_CORREO in salida
+
+
+def test_seed_no_imprime_contrasenas(motor_de_la_app, capsys):
+    """Bug #500: la salida del seed queda en el log del despliegue."""
+    seed_data.seed()
+
+    salida = capsys.readouterr().out
+    for contrasena in (seed_data.PROFESOR_PASSWORD, seed_data.JEFA_PASSWORD, seed_data.DIRECTIVO_PASSWORD):
+        assert contrasena not in salida
+    assert "password" not in salida.lower()
 
 
 def test_seed_asigna_al_docente_en_el_periodo_vigente(motor_de_la_app, db, entorno):

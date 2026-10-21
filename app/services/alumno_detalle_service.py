@@ -313,7 +313,7 @@ def _legible(campo: str, valor: Optional[str], nombres: dict[str, dict[str, str]
 def historial(db: Session, id_alumno: int, page: int) -> Paginado[EventoHistorial]:
     """Eventos de `auditoria` del alumno en el año escolar de referencia, del más reciente
     al más antiguo. Las filas con el mismo (fecha, usuario, acción) son un solo evento, y
-    la paginación es sobre los eventos (10 por página), no sobre las filas.
+    la paginación es sobre los eventos (`TAMANO_PAGINA` por página), no sobre las filas.
 
     `crear` no guarda campos: sus `cambios` vienen vacíos. `activar` e `inactivar` se
     guardan con el campo `activo`: vienen con el cambio de "Estado".

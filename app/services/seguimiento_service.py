@@ -7,7 +7,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import status
-from sqlalchemy import case, func
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio
@@ -25,7 +25,12 @@ from app.services.actividad_consulta import (
 )
 from app.services.asignacion_service import colegios_vigentes_por_docente
 from app.services.calendario import periodo_vigente
-from app.services.sincronizacion import estado_docente_sql, pendientes_docente_sql
+from app.services.sincronizacion import (
+    errores_docente_sql,
+    estado_docente_sql,
+    pendientes_docente_sql,
+    prioridad_estado_docente_sql,
+)
 from app.services.usuario_service import DOCENTE
 
 
@@ -37,12 +42,13 @@ def _consulta_docentes():
         .subquery()
     )
     pendientes = pendientes_docente_sql()
+    estado = estado_docente_sql(pendientes, errores_docente_sql())
     return (
-        select(Usuario, ultima.c.inicio, estado_docente_sql(pendientes), pendientes)
+        select(Usuario, ultima.c.inicio, estado, pendientes)
         .join(Rol, Rol.id_rol == Usuario.id_rol)
         .outerjoin(ultima, ultima.c.id_usuario == Usuario.id_usuario)
         .where(Rol.nombre == DOCENTE, col(Usuario.id_docente).is_not(None))
-    ), ultima.c.inicio, pendientes
+    ), ultima.c.inicio, estado
 
 
 def _filas_a_items(db: Session, filas) -> list[DocenteSeguimiento]:
@@ -71,10 +77,11 @@ def listar_docentes(
     activo: bool,
     page: int,
 ) -> Paginado[DocenteSeguimiento]:
-    """CU020. Primero los que tienen registros pendientes, luego por nombre. Un número
-    fijo de consultas: total, página y colegios de la página (más el periodo vigente)."""
+    """CU020. Por estado de sincronización (error → pendiente → sin información → al
+    día) y, dentro de cada uno, por nombre. Un número fijo de consultas: total, página y
+    colegios de la página (más los calendarios)."""
     exigir_rango_valido(desde, hasta)
-    consulta, ultima_conexion, pendientes = _consulta_docentes()
+    consulta, ultima_conexion, estado = _consulta_docentes()
     consulta = consulta.where(Usuario.activo == activo, *entre_fechas(ultima_conexion, desde, hasta))
     if id_colegio is not None:
         periodo = periodo_vigente(db)
@@ -89,9 +96,9 @@ def listar_docentes(
             )
         )
     if sincronizacion is not None:
-        consulta = consulta.where(estado_docente_sql(pendientes) == sincronizacion)
+        consulta = consulta.where(estado == sincronizacion)
     consulta = consulta.order_by(
-        case((pendientes > 0, 0), else_=1), Usuario.nombres, Usuario.apellidos, Usuario.id_usuario
+        prioridad_estado_docente_sql(estado), Usuario.nombres, Usuario.apellidos, Usuario.id_usuario
     )
     filas, total = paginar(db, consulta, page)
     return pagina(_filas_a_items(db, filas), total, page)

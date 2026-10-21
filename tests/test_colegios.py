@@ -62,6 +62,29 @@ def test_cu013_cada_grado_lleva_su_dia_de_clase(client, entorno, sup, grados, ca
         assert [e["campo"] for e in respuesta.json()["errores"]] == [campo]
 
 
+@pytest.mark.parametrize("nivel", ["Secundaria", "Inicial", "primaria", ""])
+def test_cu013_nivel_educativo_solo_primaria(client, db, entorno, sup, nivel):
+    alta = client.post("/colegios", json=datos(entorno, nivel_educativo=nivel), headers=sup)
+    edicion = client.patch(
+        f"/colegios/{entorno.colegios['Andino'].id_colegio}", json={"nivel_educativo": nivel}, headers=sup
+    )
+
+    for respuesta in (alta, edicion):
+        assert respuesta.status_code == 422
+        assert [e["campo"] for e in respuesta.json()["errores"]] == ["nivel_educativo"]
+    assert releer(db, Colegio, entorno.colegios["Andino"].id_colegio).nivel_educativo == "Primaria"
+
+
+def test_cu013_nivel_educativo_primaria_explicito_se_acepta(client, entorno, sup):
+    alta = client.post("/colegios", json=datos(entorno, nivel_educativo="Primaria"), headers=sup)
+    edicion = client.patch(
+        f"/colegios/{entorno.colegios['Andino'].id_colegio}", json={"nivel_educativo": "Primaria"}, headers=sup
+    )
+
+    assert (alta.status_code, alta.json()["nivel_educativo"]) == (201, "Primaria")
+    assert edicion.status_code == 200
+
+
 def test_cu013_cambiar_solo_el_dia_de_clase_se_audita(client, db, entorno, sup):
     colegio = client.post("/colegios", json=datos(entorno), headers=sup).json()
     grados = [{"id_grado": entorno.grados["1.º"], "dia_clase": 5}, {"id_grado": entorno.grados["2.º"], "dia_clase": 3}]

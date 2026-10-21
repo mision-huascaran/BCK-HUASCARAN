@@ -292,10 +292,10 @@ def iniciar_servidor(puerto: int) -> None:
      API:      http://127.0.0.1:{puerto}
      Swagger:  http://127.0.0.1:{puerto}/docs
 
-   Usuarios de prueba:
-     profesor.prueba@sicedu.test / ProfesorTest123
-     jefa.prueba@sicedu.test     / JefaTest123
-     directivo.prueba@sicedu.test / DirectivoTest123
+   Usuarios de prueba (contraseñas en app/seed_data.py):
+     profesor.prueba@sicedu.test
+     jefa.prueba@sicedu.test
+     directivo.prueba@sicedu.test
 
    Ctrl+C para detener (la base de datos sigue corriendo en Docker)
   ------------------------------------------------------------

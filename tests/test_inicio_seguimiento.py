@@ -301,7 +301,10 @@ def test_cu020_tabla_de_seguimiento(client, entorno, cabeceras):
     cuerpo = client.get("/seguimiento/docentes", headers=cabeceras["Supervisor"]).json()
 
     fila = cuerpo["items"][0]
-    assert (fila["id_docente"], fila["sincronizacion"], fila["registros_pendientes"]) == (entorno.id_docente, "al_dia", 0)
+    # Sin información de la cola offline (llega en T5): ni "al día" ni 0 pendientes.
+    assert (fila["id_docente"], fila["sincronizacion"], fila["registros_pendientes"]) == (
+        entorno.id_docente, "sin_informacion", None
+    )
     assert fila["colegios"] == [{"id": entorno.colegios["Andino"].id_colegio, "nombre": "Colegio Andino"}]
     assert fila["ultima_conexion"] is not None
 
@@ -319,7 +322,65 @@ def test_cu020_filtros(client, db, entorno, cabeceras):
     assert nombres(desde=hoy, hasta=hoy) == ["Rosa"]
     assert nombres(id_colegio=entorno.colegios["Andino"].id_colegio) == ["Rosa"]
     assert nombres(sincronizacion="pendiente") == []
+    assert nombres(sincronizacion="sin_informacion") == ["Nunca", "Rosa"]
     assert nombres(activo="false") == []
+
+
+def test_cu020_ultima_conexion_null_si_nunca_inicio_sesion(client, db, entorno, cabeceras):
+    crear_docente(db, entorno, "Nunca", "nunca@sicedu.test", "70000003")
+    db.commit()
+
+    items = client.get("/seguimiento/docentes", headers=cabeceras["Supervisor"]).json()["items"]
+
+    assert {d["nombres"]: d["ultima_conexion"] is None for d in items} == {"Nunca": True, "Rosa": False}
+
+
+def test_cu020_por_defecto_solo_docentes_activos(client, db, entorno, cabeceras):
+    inactivo = crear_docente(db, entorno, "Inactiva", "inactiva@sicedu.test", "70000004")
+    inactivo.activo = False
+    db.commit()
+    sup = cabeceras["Supervisor"]
+
+    def nombres(**params):
+        return [d["nombres"] for d in client.get("/seguimiento/docentes", params=params, headers=sup).json()["items"]]
+
+    assert nombres() == ["Rosa"]
+    assert nombres(activo="false") == ["Inactiva"]
+
+
+def test_cu020_ordena_por_estado_de_sincronizacion_y_nombre(client, db, entorno, cabeceras, monkeypatch):
+    """error → pendiente → sin información → al día, y por nombre dentro de cada estado,
+    en la consulta: la segunda página sigue el mismo orden."""
+    from sqlalchemy import case, cast, Integer, null
+
+    from app.core import paginacion
+    from app.models.organizacion import Usuario
+    from app.services import seguimiento_service
+
+    estados = {"Ana": "al_dia", "Beto": "error", "Carla": "pendiente", "Dora": "sin_informacion",
+               "Eva": "error", "Rosa": "pendiente"}
+    for i, nombre in enumerate(n for n in estados if n != "Rosa"):
+        crear_docente(db, entorno, nombre, f"{nombre.lower()}@sicedu.test", f"7100000{i}")
+    db.commit()
+    pendientes = {n: 3 for n, e in estados.items() if e == "pendiente"} | {
+        n: 0 for n, e in estados.items() if e in ("al_dia", "error")
+    }
+    errores = {n: 1 for n, e in estados.items() if e == "error"}
+    monkeypatch.setattr(seguimiento_service, "pendientes_docente_sql", lambda: case(
+        pendientes, value=Usuario.nombres, else_=cast(null(), Integer)))
+    monkeypatch.setattr(seguimiento_service, "errores_docente_sql", lambda: case(errores, value=Usuario.nombres, else_=0))
+    monkeypatch.setattr(paginacion, "TAMANO_PAGINA", 4)
+
+    sup = cabeceras["Supervisor"]
+    paginas = [client.get("/seguimiento/docentes", params={"page": p}, headers=sup).json() for p in (1, 2)]
+    filas = [d for pagina in paginas for d in pagina["items"]]
+
+    assert [(d["nombres"], d["sincronizacion"]) for d in filas] == [
+        ("Beto", "error"), ("Eva", "error"), ("Carla", "pendiente"), ("Rosa", "pendiente"),
+        ("Dora", "sin_informacion"), ("Ana", "al_dia"),
+    ]
+    assert {d["nombres"]: d["registros_pendientes"] for d in filas}["Dora"] is None
+    assert {d["nombres"]: d["registros_pendientes"] for d in filas}["Ana"] == 0
 
 
 def test_cu020_rango_invertido_y_entre_periodos(client, db, entorno, cabeceras):

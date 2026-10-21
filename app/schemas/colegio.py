@@ -1,11 +1,13 @@
 """Colegios (CU013). Los gestiona solo el Supervisor; el Docente lee los de su alcance."""
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import AfterValidator, BaseModel, Field
 
 from app.schemas.comun import ItemCatalogo, ParcheSinNulos, Texto
 
 NIVEL_EDUCATIVO_POR_DEFECTO = "Primaria"
+# Esta versión solo admite Primaria (CU013): cualquier otro valor es un 422.
+NivelEducativo = Literal["Primaria"]
 SECCION_POR_DEFECTO = "Única"
 
 
@@ -35,7 +37,7 @@ class ColegioCrear(BaseModel):
     departamento: Texto
     provincia: Texto
     distrito: Optional[Texto] = None
-    nivel_educativo: Texto = NIVEL_EDUCATIVO_POR_DEFECTO
+    nivel_educativo: NivelEducativo = NIVEL_EDUCATIVO_POR_DEFECTO
     seccion: Texto = SECCION_POR_DEFECTO
     grados: GradosOfrecidos
     # Ids de catálogo; al menos uno. Los repetidos se ignoran.
@@ -52,7 +54,7 @@ class ColegioEditar(ParcheSinNulos):
     departamento: Optional[Texto] = None
     provincia: Optional[Texto] = None
     distrito: Optional[Texto] = None
-    nivel_educativo: Optional[Texto] = None
+    nivel_educativo: Optional[NivelEducativo] = None
     seccion: Optional[Texto] = None
     grados: Optional[GradosOfrecidos] = None
     programas: Optional[list[int]] = Field(default=None, min_length=1)

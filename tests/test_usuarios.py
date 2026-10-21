@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 from sqlmodel import select
 
+from app.core.paginacion import TAMANO_PAGINA
 from app.core.politica_contrasena import cumple_politica_contrasena
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import AnioEscolar, Docente, DocenteColegioGrado, PeriodoAcademico, Usuario
@@ -198,7 +199,7 @@ def test_cu016_listado_ordenado_por_rol_y_nombre(client, entorno, sup):
     assert [u["rol"] for u in cuerpo["items"]] == ["Docente", "Supervisor", "Supervisor", "Directivo"]
     assert cuerpo["items"][0]["colegios_asignados"] == ["Colegio Andino"]
     assert [u["es_supervisor_original"] for u in cuerpo["items"]].count(True) == 1
-    assert (cuerpo["total"], cuerpo["page"], cuerpo["page_size"], cuerpo["total_pages"]) == (4, 1, 10, 1)
+    assert (cuerpo["total"], cuerpo["page"], cuerpo["page_size"], cuerpo["total_pages"]) == (4, 1, 40, 1)
 
 
 @pytest.mark.parametrize(
@@ -216,14 +217,16 @@ def test_cu016_filtros_del_listado(client, entorno, sup, params, correos):
     assert [u["correo"] for u in cuerpo["items"]] == correos
 
 
-def test_cu016_paginacion_de_10_en_10(client, db, entorno, sup):
-    for n in range(10):
-        crear_docente(db, entorno, f"Extra{n:02d}", f"extra{n}@sicedu.test", f"6000000{n}")
+def test_cu016_paginacion_de_40_en_40(client, db, entorno, sup):
+    for n in range(TAMANO_PAGINA):
+        crear_docente(db, entorno, f"Extra{n:02d}", f"extra{n}@sicedu.test", f"600000{n:02d}")
     db.commit()
 
+    primera = client.get("/usuarios", headers=sup).json()
     segunda = client.get("/usuarios", params={"page": 2}, headers=sup).json()
 
-    assert (segunda["total"], segunda["total_pages"], len(segunda["items"])) == (14, 2, 4)
+    assert (primera["page_size"], len(primera["items"])) == (40, 40)
+    assert (segunda["total"], segunda["total_pages"], len(segunda["items"])) == (44, 2, 4)
     assert client.get("/usuarios", params={"page": 0}, headers=sup).status_code == 422
 
 

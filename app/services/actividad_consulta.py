@@ -19,9 +19,11 @@ from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadDetalle, ActividadResumen
 from app.services import cambios
 from app.services.actividad import EN_CURSO, FINALIZADA
-from app.services.sincronizacion import estado_actividad_sql, pendientes_actividad_sql
+from app.services.sincronizacion import errores_actividad_sql, estado_actividad_sql, pendientes_actividad_sql
 
 MOTIVO_NO_ENCONTRADA = "actividad_no_encontrada"
+# CU019: el mismo texto para una actividad ajena o inexistente.
+MENSAJE_NO_DISPONIBLE = "El detalle solicitado no está disponible."
 
 
 def exigir_rango_valido(desde: Optional[date], hasta: Optional[date]) -> None:
@@ -63,7 +65,7 @@ def listar_actividades(
     """Actividades del docente, de la más reciente a la más antigua. Tres consultas: el
     total, la página y los cambios de las actividades de la página."""
     exigir_rango_valido(filtros.desde, filtros.hasta)
-    sincronizacion = estado_actividad_sql(pendientes_actividad_sql())
+    sincronizacion = estado_actividad_sql(pendientes_actividad_sql(), errores_actividad_sql())
     consulta = select(Actividad, sincronizacion).where(
         Actividad.id_docente == id_docente,
         *entre_fechas(Actividad.inicio, filtros.desde, filtros.hasta),
@@ -109,16 +111,12 @@ def detalle_actividad(db: Session, id_docente: Optional[int], id_actividad: uuid
     no revelar que existe."""
     pendientes = pendientes_actividad_sql()
     fila = db.exec(
-        select(Actividad, estado_actividad_sql(pendientes), pendientes).where(
+        select(Actividad, estado_actividad_sql(pendientes, errores_actividad_sql()), pendientes).where(
             Actividad.id_actividad == id_actividad, Actividad.id_docente == id_docente
         )
     ).first()
     if fila is None:
-        raise ErrorNegocio(
-            status.HTTP_404_NOT_FOUND,
-            "El detalle solicitado no se encuentra disponible.",
-            motivo=MOTIVO_NO_ENCONTRADA,
-        )
+        raise ErrorNegocio(status.HTTP_404_NOT_FOUND, MENSAJE_NO_DISPONIBLE, motivo=MOTIVO_NO_ENCONTRADA)
     actividad, sincronizacion, registros_pendientes = fila
     registros = cambios.registros_de(db, id_actividad)
     return ActividadDetalle(

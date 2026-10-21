@@ -20,4 +20,5 @@ class DocenteSeguimiento(BaseModel):
     # Inicio de su sesión autenticada más reciente; null si nunca entró.
     ultima_conexion: Optional[datetime] = None
     sincronizacion: EstadoSincronizacionDocente
-    registros_pendientes: int
+    # "Registros pendientes informados": null si el servidor no puede determinarlos.
+    registros_pendientes: Optional[int] = None

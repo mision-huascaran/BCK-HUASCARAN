@@ -9,7 +9,7 @@ from sqlmodel import select
 from app.core.tiempo import ahora_utc
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
-from tests.conftest import cabecera_de, crear_docente, id_sesion_de, iniciar_actividad, instante, iso, motivo, releer
+from tests.conftest import asignar, cabecera_de, crear_docente, id_sesion_de, iniciar_actividad, instante, iso, motivo, releer
 
 MANUAL = "Manual por finalización de actividad"
 FORZADO = "Forzado por cierre de sesión"
@@ -327,7 +327,7 @@ def test_cu019_detalle_de_la_actividad(client, entorno, doc, actividad):
     cuerpo = client.get(f"/actividades/{actividad['id']}", headers=doc).json()
 
     assert (cuerpo["estado"], cuerpo["tipo_cierre"], cuerpo["registros_pendientes"], cuerpo["cambios"]) == (
-        "finalizada", MANUAL, 0, 1
+        "finalizada", MANUAL, None, 1
     )
     assert cuerpo["cambios_por_modulo"] == [
         {"modulo": "alumnos", "total": 1, "creados": 0, "editados": 1, "activados": 0, "inactivados": 1}
@@ -338,11 +338,41 @@ def test_cu019_detalle_de_la_actividad(client, entorno, doc, actividad):
     ]
 
 
-def test_cu019_detalle_ajeno_o_inexistente(client, entorno, doc):
-    respuesta = client.get(f"/actividades/{uuid.uuid4()}", headers=doc)
+def test_cu019_detalle_ajeno_o_inexistente_misma_respuesta(client, db, entorno, doc):
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    db.commit()
+    ajena = iniciar_actividad(client, cabecera_de(db, otro))
 
-    assert (respuesta.status_code, motivo(respuesta)) == (404, "actividad_no_encontrada")
-    assert respuesta.json()["detail"] == "El detalle solicitado no se encuentra disponible."
+    de_otro = client.get(f"/actividades/{ajena['id']}", headers=doc)
+    inexistente = client.get(f"/actividades/{uuid.uuid4()}", headers=doc)
+
+    for respuesta in (de_otro, inexistente):
+        assert respuesta.status_code == 404
+        assert respuesta.json() == {
+            "detail": "El detalle solicitado no está disponible.", "motivo": "actividad_no_encontrada"
+        }
+
+
+def test_cu017_listado_trae_el_id_de_actividad(client, doc, actividad):
+    fila = client.get("/actividades", headers=doc).json()["items"][0]
+
+    assert fila["id"] == actividad["id"]
+
+
+@pytest.mark.parametrize("estado", ["sincronizada", "pendiente", "error"])
+def test_cu018_admite_los_tres_estados_de_sincronizacion(client, doc, actividad, estado):
+    respuesta = client.get("/actividades", params={"sincronizacion": estado}, headers=doc)
+
+    assert respuesta.status_code == 200
+    esperadas = [actividad["id"]] if estado == "sincronizada" else []
+    assert [a["id"] for a in respuesta.json()["items"]] == esperadas
+
+
+def test_cu018_estado_de_sincronizacion_desconocido(client, doc):
+    respuesta = client.get("/actividades", params={"sincronizacion": "al_dia"}, headers=doc)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
 
 
 def test_cu019_detalle_sin_cambios(client, entorno, doc, actividad):

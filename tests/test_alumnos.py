@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 from sqlmodel import select
 
+from app.core.paginacion import TAMANO_PAGINA
 from app.core.tiempo import ahora_utc
 from app.models.evaluacion import (
     Asistencia,
@@ -542,16 +543,16 @@ def test_cu015_historial_agrupa_por_evento_con_nombres_legibles(client, db, ento
     assert (crear["usuario"], crear["rol"], crear["cambios"]) == ("Rosa Quispe", "Docente", [])
 
 
-def test_cu015_historial_pagina_de_10_eventos(client, db, entorno, cabeceras):
+def test_cu015_historial_pagina_de_40_eventos(client, db, entorno, cabeceras):
     sup = cabeceras["Supervisor"]
     luis = entorno.alumnos["luis"].id_alumno
-    for n in range(11):
+    for n in range(TAMANO_PAGINA + 1):
         client.patch(f"/alumnos/{luis}", json={"nombres": f"Luis {n}"}, headers=sup)
 
     segunda = client.get(f"/alumnos/{luis}/historial", params={"page": 2}, headers=sup).json()
     tercera = client.get(f"/alumnos/{luis}/historial", params={"page": 3}, headers=sup).json()
 
-    assert (segunda["total"], len(segunda["items"]), tercera["items"]) == (11, 1, [])
+    assert (segunda["total"], len(segunda["items"]), tercera["items"]) == (41, 1, [])
     assert (segunda["items"][0]["usuario"], segunda["items"][0]["rol"]) == ("Sara Supervisora", "Supervisor")
 
 
