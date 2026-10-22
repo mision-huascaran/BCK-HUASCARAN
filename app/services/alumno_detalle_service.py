@@ -8,7 +8,7 @@ Las pestañas son mini-grillas: Registro de Vuelo, una fila por periodo (4 como 
 Rúbrica y Seguimiento de Lectura, los 5 registros más recientes.
 """
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import func
@@ -39,6 +39,7 @@ from app.models.organizacion import (
     Grado,
     PeriodoAcademico,
     Programa,
+    Seccion,
     Rol,
     Usuario,
 )
@@ -57,6 +58,7 @@ from app.schemas.alumno import (
 )
 from app.services.calendario import anio_de_referencia
 from app.services.nivel_descriptivo import escala_del_grado
+from app.services.pertenencia import CAMPO_AUDITORIA, fecha_legible
 
 # Filas de las mini-grillas del detalle (CU015).
 FILAS_REGISTRO_VUELO = 4  # una por periodo
@@ -268,13 +270,17 @@ ETIQUETAS = {
     "id_grado": "Grado",
     "id_programa": "Subprograma",
     "id_colegio": "Colegio",
+    "id_seccion": "Sección",
     "activo": "Estado",
+    # Campo virtual de la pertenencia (CU014): la fecha desde la que rige el evento.
+    CAMPO_AUDITORIA: "Fecha efectiva",
 }
 # Campos que guardan un id de catálogo -> (modelo, columna id).
 CATALOGOS = {
     "id_grado": (Grado, "id_grado"),
     "id_programa": (Programa, "id_programa"),
     "id_colegio": (Colegio, "id_colegio"),
+    "id_seccion": (Seccion, "id_seccion"),
 }
 ESTADOS = {"true": "Activo", "false": "Inactivo"}
 
@@ -306,6 +312,8 @@ def _legible(campo: str, valor: Optional[str], nombres: dict[str, dict[str, str]
         return None
     if campo == "activo":
         return ESTADOS.get(valor, valor)
+    if campo == CAMPO_AUDITORIA:
+        return fecha_legible(date.fromisoformat(valor))
     # Si el id ya no existe en el catálogo, se muestra el id.
     return nombres.get(campo, {}).get(valor, valor)
 

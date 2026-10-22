@@ -16,8 +16,9 @@ from sqlmodel import Session, select
 from app.cli.comun import DIR_DATOS, Resumen, id_supervisor_original, leer_json, log
 from app.core.config import settings
 from app.core.tiempo import ahora_utc
-from app.models.organizacion import Colegio, ColegioGrado, ColegioPrograma, Grado, Programa
-from app.services.colegio_service import completar_oferta, nombre_comparable
+from app.core.texto import nombre_comparable
+from app.models.organizacion import Colegio, Grado, Programa
+from app.services.colegio_service import completar_oferta
 
 ARCHIVO_COLEGIOS = DIR_DATOS / "colegios_iniciales.json"
 
@@ -28,10 +29,7 @@ def _crear_colegio(
     colegio = Colegio(nombre=datos["nombre"], provincia=datos["provincia"], **comunes, **auditoria)
     db.add(colegio)
     db.flush()
-    for grado in grados:
-        db.add(ColegioGrado(id_colegio=colegio.id_colegio, id_grado=grado.id_grado, **auditoria))
-    for programa in programas:
-        db.add(ColegioPrograma(id_colegio=colegio.id_colegio, id_programa=programa.id_programa, **auditoria))
+    completar_oferta(db, colegio, grados, programas, auditoria)
     return colegio
 
 

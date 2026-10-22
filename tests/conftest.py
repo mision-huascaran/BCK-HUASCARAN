@@ -52,7 +52,9 @@ from app.core.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.organizacion import (  # noqa: E402
     ORIGEN_MANUAL,
+    SECCION_UNICA,
     Alumno,
+    AlumnoPertenencia,
     AnioEscolar,
     Calendario,
     CalendarioPeriodo,
@@ -66,6 +68,7 @@ from app.models.organizacion import (  # noqa: E402
     PeriodoAcademico,
     Programa,
     Rol,
+    Seccion,
     Usuario,
 )
 from app.services import auth_service  # noqa: E402
@@ -349,6 +352,8 @@ def crear_colegio(db, nombre, grados, programas, id_actor, dias_clase=None, **ca
     for id_grado in grados:
         db.add(ColegioGrado(id_colegio=colegio.id_colegio, id_grado=id_grado, dia_clase=dias_clase.get(id_grado),
                             creado_por=id_actor, creado_en=ahora))
+        db.add(Seccion(id_colegio=colegio.id_colegio, id_grado=id_grado, nombre=SECCION_UNICA,
+                       creado_por=id_actor, creado_en=ahora))
     for id_programa in programas:
         db.add(
             ColegioPrograma(
@@ -359,12 +364,34 @@ def crear_colegio(db, nombre, grados, programas, id_actor, dias_clase=None, **ca
     return colegio
 
 
-def crear_alumno(db, nombres, apellidos, colegio, id_grado, id_programa, id_actor, activo=True) -> Alumno:
+def seccion_de(db, colegio, id_grado, nombre=SECCION_UNICA) -> Seccion:
+    return db.exec(
+        select(Seccion).where(
+            Seccion.id_colegio == colegio.id_colegio, Seccion.id_grado == id_grado, Seccion.nombre == nombre
+        )
+    ).one()
+
+
+def agregar_seccion(db, colegio, id_grado, nombre, id_actor) -> Seccion:
+    seccion = Seccion(id_colegio=colegio.id_colegio, id_grado=id_grado, nombre=nombre,
+                      creado_por=id_actor, creado_en=tiempo.ahora_utc())
+    db.add(seccion)
+    db.flush()
+    return seccion
+
+
+def crear_alumno(
+    db, nombres, apellidos, colegio, id_grado, id_programa, id_actor, activo=True, seccion=None, desde=None
+) -> Alumno:
+    """Alumno en la sección "Única" de su grado (o `seccion`). Si está activo, con su
+    intervalo de pertenencia vigente desde `desde` (hoy por defecto)."""
+    seccion = seccion or seccion_de(db, colegio, id_grado)
     alumno = Alumno(
         nombres=nombres,
         apellidos=apellidos,
         id_colegio=colegio.id_colegio,
         id_grado=id_grado,
+        id_seccion=seccion.id_seccion,
         id_programa_actual=id_programa,
         fecha_registro=tiempo.hoy_lima(),
         activo=activo,
@@ -373,6 +400,13 @@ def crear_alumno(db, nombres, apellidos, colegio, id_grado, id_programa, id_acto
     )
     db.add(alumno)
     db.flush()
+    if activo:
+        db.add(AlumnoPertenencia(
+            id_alumno=alumno.id_alumno, id_colegio=colegio.id_colegio, id_grado=id_grado,
+            id_seccion=seccion.id_seccion, id_programa=id_programa, desde=desde or tiempo.hoy_lima(),
+            creado_por=id_actor, creado_en=tiempo.ahora_utc(),
+        ))
+        db.flush()
     return alumno
 
 
@@ -525,6 +559,11 @@ def iniciar_actividad(client, cabecera, **cuerpo) -> dict:
 def actividad(client, cabeceras) -> dict:
     """Actividad en curso del Docente (habilita sus escrituras)."""
     return iniciar_actividad(client, cabeceras["Docente"])
+
+
+def hoy_iso() -> str:
+    """Hoy (día de Lima) como fecha ISO, para las fechas efectivas de los requests."""
+    return tiempo.hoy_lima().isoformat()
 
 
 def iso(instante: datetime) -> str:

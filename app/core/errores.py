@@ -10,12 +10,12 @@ frontend lee el mensaje siempre del mismo campo.
 """
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.validacion import documentar_formato_422, manejar_error_validacion
+from app.core.validacion import MOTIVO_VALIDACION, documentar_formato_422, manejar_error_validacion
 
 # Textos por defecto de Starlette para rutas inexistentes o métodos no admitidos.
 TRADUCCIONES_HTTP = {
@@ -47,6 +47,17 @@ class ErrorNegocio(Exception):
             cuerpo["motivo"] = self.motivo
         cuerpo.update(self.extra)
         return cuerpo
+
+
+def error_de_campo(campo: str, mensaje: str) -> ErrorNegocio:
+    """422 de una regla de negocio sobre un campo, con el formato único de validación
+    (`motivo: validacion`, `errores: [{campo, mensaje}]`) y el mensaje también en `detail`."""
+    return ErrorNegocio(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        mensaje,
+        motivo=MOTIVO_VALIDACION,
+        extra={"errores": [{"campo": campo, "mensaje": mensaje}]},
+    )
 
 
 def manejar_error_negocio(_request: Request, error: ErrorNegocio) -> JSONResponse:

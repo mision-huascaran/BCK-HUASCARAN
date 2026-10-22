@@ -19,16 +19,13 @@ from app.models.evaluacion import (
     RubricaRegistroSemanal,
     SemanaReporte,
 )
-from app.models.organizacion import Alumno, AlumnoProgramaHistorial, CicloEbr, Colegio
+from app.models.organizacion import AlumnoPertenencia, CicloEbr
 from app.models.trazabilidad import Auditoria
 from app.services import alumno_detalle_service
 from tests.conftest import (
     crear_colegio,
-    crear_particular,
+    hoy_iso,
     motivo,
-    rangos_en_receso,
-    releer,
-    terminar_pa_vigente,
 )
 
 
@@ -39,6 +36,7 @@ def nuevo(entorno, colegio="Andino", grado="2.º", programa="Comprensión Lector
         "id_colegio": entorno.colegios[colegio].id_colegio,
         "id_grado": entorno.grados[grado],
         "id_programa": entorno.programas[programa],
+        "pertenece_desde": hoy_iso(),
         **cambios,
     }
 
@@ -100,7 +98,7 @@ def test_cu014_lista_y_ciclo_calculado(client, entorno, cabeceras):
     item = client.get("/alumnos", params={"q": "mario"}, headers=cabeceras["Supervisor"]).json()["items"][0]
 
     assert item["ciclo"] == "IV"
-    assert item["seccion"] == "Única"
+    assert item["seccion"]["nombre"] == "Única"
     assert item["colegio"]["nombre"] == "Colegio Lejano"
     assert item["programa"]["nombre"] == "Comprensión Lectora"
 
@@ -113,10 +111,12 @@ def test_cu014_el_docente_crea_con_actividad_y_queda_auditado(client, db, entorn
     assert respuesta.status_code == 201
     cuerpo = respuesta.json()
     assert (cuerpo["ciclo"], cuerpo["activo"]) == ("III", True)
-    fila = db.exec(select(Auditoria).where(Auditoria.tabla == "alumno")).one()
-    assert (fila.accion, str(fila.id_actividad)) == ("crear", actividad["id"])
-    historial = db.exec(select(AlumnoProgramaHistorial).where(AlumnoProgramaHistorial.id_alumno == cuerpo["id"])).one()
-    assert historial.id_periodo_academico == entorno.periodos["vigente"].id_periodo_academico
+    filas = db.exec(select(Auditoria).where(Auditoria.tabla == "alumno")).all()
+    assert {(f.accion, str(f.id_actividad)) for f in filas} == {("crear", actividad["id"])}
+    intervalo = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == cuerpo["id"])).one()
+    assert (intervalo.desde.isoformat(), intervalo.hasta, str(intervalo.id_actividad)) == (
+        hoy_iso(), None, actividad["id"]
+    )
 
 
 def test_cu014_el_docente_sin_actividad_no_escribe(client, entorno, cabeceras):
@@ -202,24 +202,21 @@ def test_cu015_detalle_inexistente_y_fuera_de_alcance(client, entorno, cabeceras
     assert (fuera.status_code, motivo(fuera)) == (403, "alumno_fuera_de_alcance")
 
 
-def test_cu014_editar_y_cambiar_subprograma_registra_el_historial(client, db, entorno, cabeceras, actividad):
+def test_cu014_editar_y_cambiar_subprograma_cambia_la_pertenencia(client, db, entorno, cabeceras, actividad):
     ana = entorno.alumnos["ana"].id_alumno
 
     respuesta = client.patch(
-        f"/alumnos/{ana}", json={"apellidos": "Torres Vega", "id_programa": entorno.programas["Alfabetización"]},
+        f"/alumnos/{ana}",
+        json={"apellidos": "Torres Vega", "id_programa": entorno.programas["Alfabetización"],
+              "cambio_grupo_desde": hoy_iso()},
         headers=cabeceras["Docente"],
     )
 
     assert respuesta.json()["programa"]["nombre"] == "Alfabetización"
-    historial = db.exec(select(AlumnoProgramaHistorial).where(AlumnoProgramaHistorial.id_alumno == ana)).one()
-    assert historial.id_programa == entorno.programas["Alfabetización"]
+    intervalo = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == ana)).one()
+    assert intervalo.id_programa == entorno.programas["Alfabetización"]
     campos = set(db.exec(select(Auditoria.campo).where(Auditoria.accion == "editar")).all())
-    assert campos == {"apellidos", "id_programa"}
-
-    client.patch(f"/alumnos/{ana}", json={"id_programa": entorno.programas["Comprensión Lectora"]}, headers=cabeceras["Docente"])
-    db.expire_all()
-    historial = db.exec(select(AlumnoProgramaHistorial).where(AlumnoProgramaHistorial.id_alumno == ana)).one()
-    assert historial.id_programa == entorno.programas["Comprensión Lectora"]
+    assert campos == {"apellidos", "id_programa", "pertenencia"}
 
 
 def test_cu014_editar_sin_cambios_no_audita(client, db, entorno, cabeceras):
@@ -255,11 +252,12 @@ def test_cu014_edicion_no_permitida(client, entorno, cabeceras, actividad, rol, 
 def test_cu014_el_supervisor_rota_un_alumno_de_colegio(client, entorno, cabeceras):
     respuesta = client.patch(
         f"/alumnos/{entorno.alumnos['ana'].id_alumno}",
-        json={"id_colegio": entorno.colegios["Lejano"].id_colegio},
+        json={"id_colegio": entorno.colegios["Lejano"].id_colegio, "cambio_grupo_desde": hoy_iso()},
         headers=cabeceras["Supervisor"],
     )
 
     assert respuesta.json()["colegio"]["nombre"] == "Colegio Lejano"
+    assert respuesta.json()["seccion"]["nombre"] == "Única"
 
 
 def test_cu013_colegio_inactivo_permite_corregir_nombres_pero_no_mover(client, db, entorno, cabeceras):
@@ -282,12 +280,16 @@ def test_cu014_activar_e_inactivar(client, db, entorno, cabeceras, actividad):
     ivan = entorno.alumnos["inactivo"].id_alumno
     docente = cabeceras["Docente"]
 
-    activado = client.patch(f"/alumnos/{ivan}/activar", headers=docente)
-    repetido = client.patch(f"/alumnos/{ivan}/activar", headers=docente)
-    inactivado = client.patch(f"/alumnos/{ivan}/desactivar", headers=docente)
+    fecha = {"aplicar_desde": hoy_iso()}
+
+    activado = client.patch(f"/alumnos/{ivan}/activar", json=fecha, headers=docente)
+    repetido = client.patch(f"/alumnos/{ivan}/activar", json=fecha, headers=docente)
+    inactivado = client.patch(f"/alumnos/{ivan}/desactivar", json=fecha, headers=docente)
 
     assert (activado.json()["activo"], repetido.json()["activo"], inactivado.json()["activo"]) == (True, True, False)
-    acciones = db.exec(select(Auditoria.accion).order_by(Auditoria.id_auditoria)).all()
+    acciones = db.exec(
+        select(Auditoria.accion).where(Auditoria.campo == "activo").order_by(Auditoria.id_auditoria)
+    ).all()
     assert acciones == ["activar", "inactivar"]
 
 
@@ -297,7 +299,10 @@ def test_cu014_activar_exige_colegio_activo(client, db, entorno, cabeceras):
     db.add(andino)
     db.commit()
 
-    respuesta = client.patch(f"/alumnos/{entorno.alumnos['inactivo'].id_alumno}/activar", headers=cabeceras["Supervisor"])
+    respuesta = client.patch(
+        f"/alumnos/{entorno.alumnos['inactivo'].id_alumno}/activar",
+        json={"aplicar_desde": hoy_iso()}, headers=cabeceras["Supervisor"],
+    )
 
     assert motivo(respuesta) == "colegio_inactivo"
 
@@ -525,19 +530,25 @@ def test_cu015_historial_agrupa_por_evento_con_nombres_legibles(client, db, ento
     docente = cabeceras["Docente"]
     creado = client.post("/alumnos", json=nuevo(entorno), headers=docente).json()
     url = f"/alumnos/{creado['id']}"
-    client.patch(url, json={"nombres": "Norma", "id_programa": entorno.programas["Alfabetización"]}, headers=docente)
-    client.patch(f"{url}/desactivar", headers=docente)
+    client.patch(
+        url, json={"nombres": "Norma", "id_programa": entorno.programas["Alfabetización"], "cambio_grupo_desde": hoy_iso()},
+        headers=docente,
+    )
+    client.patch(f"{url}/desactivar", json={"aplicar_desde": hoy_iso()}, headers=docente)
 
     cuerpo = client.get(f"{url}/historial", headers=docente).json()
 
     assert [e["accion"] for e in cuerpo["items"]] == ["inactivar", "editar", "crear"]
     inactivar, editar, crear = cuerpo["items"]
-    assert inactivar["cambios"] == [{"campo": "Estado", "anterior": "Activo", "nuevo": "Inactivo"}]
+    hoy = entorno.hoy.strftime("%d/%m/%Y")
+    efectiva = {"campo": "Fecha efectiva", "anterior": None, "nuevo": hoy}
+    assert inactivar["cambios"] == [{"campo": "Estado", "anterior": "Activo", "nuevo": "Inactivo"}, efectiva]
     assert {(c["campo"], c["anterior"], c["nuevo"]) for c in editar["cambios"]} == {
         ("Nombres", "Nora", "Norma"),
         ("Subprograma", "Comprensión Lectora", "Alfabetización"),
+        ("Fecha efectiva", None, hoy),
     }
-    assert (crear["usuario"], crear["rol"], crear["cambios"]) == ("Rosa Quispe", "Docente", [])
+    assert (crear["usuario"], crear["rol"], crear["cambios"]) == ("Rosa Quispe", "Docente", [efectiva])
 
 
 def test_cu015_historial_pagina_de_40_eventos(client, db, entorno, cabeceras):
@@ -563,31 +574,3 @@ def test_cu015_historial_con_catalogo_borrado_muestra_el_id(client, db, entorno,
 
     assert (evento["usuario"], evento["rol"]) == ("999", "")
     assert evento["cambios"] == [{"campo": "Grado", "anterior": "98", "nuevo": "99"}]
-
-
-def test_cu014_crear_desde_supervisor_entre_periodos_usa_el_proximo(client, db, entorno, cabeceras):
-    """El colegio está en el PR2: el subprograma se registra en el PA3 de su calendario."""
-    terminar_pa_vigente(db, entorno)
-
-    creado = client.post("/alumnos", json=nuevo(entorno), headers=cabeceras["Supervisor"]).json()
-
-    historial = db.exec(select(AlumnoProgramaHistorial).where(AlumnoProgramaHistorial.id_alumno == creado["id"])).one()
-    assert historial.id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
-    assert releer(db, Alumno, creado["id"]).activo is True
-    assert releer(db, Colegio, entorno.colegios["Andino"].id_colegio).activo is True
-
-
-def test_cu014_el_pa_del_subprograma_sale_del_calendario_de_su_colegio(client, db, entorno, cabeceras):
-    """El mismo día, Lejano (con fechas particulares) está en el PR2 y Andino (general) en
-    el PA2: cada alumno nuevo queda en el PA de su colegio."""
-    crear_particular(db, entorno, rangos_en_receso(entorno.hoy))
-    sup = cabeceras["Supervisor"]
-
-    en_lejano = client.post("/alumnos", json=nuevo(entorno, colegio="Lejano", grado="3.º"), headers=sup).json()
-    en_andino = client.post("/alumnos", json=nuevo(entorno, nombres="Otra"), headers=sup).json()
-
-    periodos = {
-        h.id_alumno: h.id_periodo_academico for h in db.exec(select(AlumnoProgramaHistorial)).all()
-    }
-    assert periodos[en_lejano["id"]] == entorno.periodos["futuro"].id_periodo_academico
-    assert periodos[en_andino["id"]] == entorno.periodos["vigente"].id_periodo_academico

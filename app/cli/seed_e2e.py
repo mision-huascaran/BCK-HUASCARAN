@@ -32,6 +32,7 @@ from app.cli.comun import Resumen, id_supervisor_original
 from app.core.correo import normalizar_correo
 from app.core.politica_contrasena import errores_politica_contrasena
 from app.core.security import hash_password, verify_password
+from app.core.texto import nombre_comparable
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     AnioEscolar,
@@ -51,7 +52,7 @@ from app.services.calendario import (
     cargar_calendarios,
     periodos_academicos_del_anio,
 )
-from app.services.colegio_service import completar_oferta, nombre_comparable
+from app.services.colegio_service import completar_oferta
 from app.services.sesiones import cerrar_sesiones_usuario
 from app.services.usuario_service import CIERRE_POR_DESACTIVACION
 
@@ -63,7 +64,6 @@ COLEGIO = {
     "provincia": "Huaraz",
     "distrito": "Huaraz",
     "nivel_educativo": "Primaria",
-    "seccion": "Única",
 }
 GRADOS = ("1.º", "2.º", "3.º", "4.º", "5.º", "6.º")
 PROGRAMAS = ("Alfabetización", "Comprensión Lectora")

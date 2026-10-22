@@ -8,15 +8,18 @@ from app.schemas.comun import ItemCatalogo, ParcheSinNulos, Texto
 NIVEL_EDUCATIVO_POR_DEFECTO = "Primaria"
 # Esta versión solo admite Primaria (CU013): cualquier otro valor es un 422.
 NivelEducativo = Literal["Primaria"]
-SECCION_POR_DEFECTO = "Única"
 
 
 class GradoOfrecido(BaseModel):
-    """Un grado del colegio con su día de clase semanal (CU013)."""
+    """Un grado del colegio con su día de clase semanal y sus secciones (CU013)."""
 
     id_grado: int
     # 1 = lunes … 5 = viernes. Obligatorio.
     dia_clase: int = Field(ge=1, le=5)
+    # Nombres de secciones a agregar. Sin secciones, un grado nuevo nace con "Única". Al
+    # editar, las que no existen se agregan y las existentes se conservan aunque no
+    # vengan (no hay renombrar ni eliminar).
+    secciones: list[Texto] = []
 
 
 def _sin_grados_repetidos(grados: list[GradoOfrecido]) -> list[GradoOfrecido]:
@@ -38,7 +41,6 @@ class ColegioCrear(BaseModel):
     provincia: Texto
     distrito: Optional[Texto] = None
     nivel_educativo: NivelEducativo = NIVEL_EDUCATIVO_POR_DEFECTO
-    seccion: Texto = SECCION_POR_DEFECTO
     grados: GradosOfrecidos
     # Ids de catálogo; al menos uno. Los repetidos se ignoran.
     programas: list[int] = Field(min_length=1)
@@ -55,7 +57,6 @@ class ColegioEditar(ParcheSinNulos):
     provincia: Optional[Texto] = None
     distrito: Optional[Texto] = None
     nivel_educativo: Optional[NivelEducativo] = None
-    seccion: Optional[Texto] = None
     grados: Optional[GradosOfrecidos] = None
     programas: Optional[list[int]] = Field(default=None, min_length=1)
 
@@ -70,13 +71,14 @@ class ColegioItem(BaseModel):
     provincia: str
     # Opcional (CU013): null si no se conoce.
     distrito: Optional[str] = None
-    seccion: str
     activo: bool
 
 
 class GradoColegio(ItemCatalogo):
     # 1 = lunes … 5 = viernes; null en los colegios cargados antes de pedirse.
     dia_clase: Optional[int] = None
+    # Secciones activas del grado, en el orden en que se crearon.
+    secciones: list[ItemCatalogo]
 
 
 class ColegioDetalle(ColegioItem):

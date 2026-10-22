@@ -23,7 +23,7 @@ from app.models.evaluacion import (
     ReporteSemanalAlumno,
     RubricaRegistroSemanal,
 )
-from app.models.organizacion import Alumno, AlumnoProgramaHistorial, CicloEbr, Colegio, Grado, Programa
+from app.models.organizacion import Alumno, CicloEbr, Colegio, Grado, Programa, Seccion
 from app.models.trazabilidad import Auditoria
 from app.schemas.actividad import AsignacionInvolucrada, CambiosModulo, ProductividadModulo
 from app.schemas.comun import ItemCatalogo
@@ -47,7 +47,6 @@ MODULOS = {
     "libro_subida_nivel": LECTURA,
     "evaluacion_diagnostica_alumno": VUELO,
     "alumno": ALUMNOS,
-    "alumno_programa_historial": ALUMNOS,
     "asistencia": ASISTENCIA,
 }
 # Orden de CU021 (productividad), que siguen también CU017 y CU019.
@@ -69,7 +68,6 @@ CAMPO_POR_ACCION = {CREAR: "creados", EDITAR: "editados", ACTIVAR: "activados", 
 
 # Cómo llegar del registro auditado a su alumno, para las asignaciones involucradas.
 CON_ID_ALUMNO = {
-    "alumno_programa_historial": AlumnoProgramaHistorial,
     "asistencia": Asistencia,
     "evaluacion_diagnostica_alumno": EvaluacionDiagnosticaAlumno,
     "reporte_semanal_alumno": ReporteSemanalAlumno,
@@ -184,18 +182,19 @@ def asignaciones_involucradas(db: Session, registros: list[tuple[str, str, str]]
     alumnos = union(*consultas).subquery()
     ciclo = ciclo_sql(Programa.nombre, CicloEbr.nombre)
     filas = db.exec(
-        select(Colegio.id_colegio, Colegio.nombre, Colegio.seccion, Grado.id_grado, Grado.nombre, ciclo)
+        select(Colegio.id_colegio, Colegio.nombre, Seccion.nombre, Grado.id_grado, Grado.nombre, ciclo)
         .select_from(Alumno)
         .join(alumnos, alumnos.c[0] == Alumno.id_alumno)
         .join(Colegio, Colegio.id_colegio == Alumno.id_colegio)
         .join(Grado, Grado.id_grado == Alumno.id_grado)
+        .join(Seccion, Seccion.id_seccion == Alumno.id_seccion)
         .join(CicloEbr, CicloEbr.id_ciclo == Grado.id_ciclo)
         .join(Programa, Programa.id_programa == Alumno.id_programa_actual)
         .distinct()
     ).all()
     # Se ordena aquí: con DISTINCT, PostgreSQL exige que el ORDER BY repita la expresión
     # exacta del ciclo, y sus parámetros se renderizan aparte.
-    filas = sorted(filas, key=lambda f: (f[1], f[3], f[5]))
+    filas = sorted(filas, key=lambda f: (f[1], f[3], f[2], f[5]))
     return [
         AsignacionInvolucrada(
             colegio=ItemCatalogo(id=id_colegio, nombre=colegio),

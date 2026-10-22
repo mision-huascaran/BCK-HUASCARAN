@@ -17,6 +17,7 @@ from app.schemas.alumno import (
     AlumnoDetalle,
     AlumnoEditar,
     AlumnoItem,
+    CambioEstadoAlumno,
     EventoHistorial,
     LecturaSemanal,
     RegistroVuelo,
@@ -41,12 +42,15 @@ def listar_alumnos(
     id_programa: Optional[int] = None,
     ciclo: Optional[Literal["III", "IV", "V"]] = None,
     id_grado: Optional[int] = None,
+    id_seccion: Optional[int] = None,
     activo: bool = True,
     q: Annotated[Optional[str], Query(description="Busca en nombres y apellidos")] = None,
     page: Pagina = 1,
 ):
     """Ordenado por apellidos y nombres. El Docente solo recibe los de su alcance."""
-    return alumno_service.listar_alumnos(db, usuario, id_colegio, id_programa, ciclo, id_grado, activo, q, page)
+    return alumno_service.listar_alumnos(
+        db, usuario, id_colegio, id_programa, ciclo, id_grado, activo, q, page, id_seccion=id_seccion
+    )
 
 
 @router.post("/alumnos", response_model=AlumnoItem, status_code=status.HTTP_201_CREATED)
@@ -66,13 +70,15 @@ def editar_alumno(id_alumno: int, data: AlumnoEditar, db: Db, usuario: ConAcceso
 
 
 @router.patch("/alumnos/{id_alumno}/activar", response_model=AlumnoItem)
-def activar_alumno(id_alumno: int, db: Db, usuario: ConAcceso):
-    return alumno_service.cambiar_estado(db, id_alumno, True, usuario)
+def activar_alumno(id_alumno: int, data: CambioEstadoAlumno, db: Db, usuario: ConAcceso):
+    """Vuelve a su grupo desde `aplicar_desde` (hoy o antes)."""
+    return alumno_service.cambiar_estado(db, id_alumno, True, data, usuario)
 
 
 @router.patch("/alumnos/{id_alumno}/desactivar", response_model=AlumnoItem)
-def desactivar_alumno(id_alumno: int, db: Db, usuario: ConAcceso):
-    return alumno_service.cambiar_estado(db, id_alumno, False, usuario)
+def desactivar_alumno(id_alumno: int, data: CambioEstadoAlumno, db: Db, usuario: ConAcceso):
+    """Deja de pertenecer a su grupo desde `aplicar_desde` (hoy o antes)."""
+    return alumno_service.cambiar_estado(db, id_alumno, False, data, usuario)
 
 
 # ── Pestañas de la vista de detalle (año escolar en curso) ──────────────────────────

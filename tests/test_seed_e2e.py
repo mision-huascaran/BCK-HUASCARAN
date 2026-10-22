@@ -24,6 +24,7 @@ from app.models.organizacion import (
     Grado,
     PeriodoAcademico,
     Rol,
+    Seccion,
     Usuario,
 )
 from app.models.seguridad import ControlAccesoCorreo
@@ -126,9 +127,11 @@ def test_colegio_y_cuentas_con_los_datos_pedidos(db, base):
     sembrar_e2e(db, VARIABLES)
 
     colegio = colegio_e2e(db)
-    assert (colegio.departamento, colegio.provincia, colegio.nivel_educativo, colegio.seccion, colegio.activo) == (
-        "Áncash", "Huaraz", "Primaria", "Única", True
+    assert (colegio.departamento, colegio.provincia, colegio.nivel_educativo, colegio.activo) == (
+        "Áncash", "Huaraz", "Primaria", True
     )
+    secciones = db.exec(select(Seccion.nombre).where(Seccion.id_colegio == colegio.id_colegio)).all()
+    assert secciones == ["Única"] * 6
     oferta = db.exec(select(Grado.nombre).join(ColegioGrado, ColegioGrado.id_grado == Grado.id_grado)
                      .where(ColegioGrado.id_colegio == colegio.id_colegio)).all()
     assert sorted(oferta) == ["1.º", "2.º", "3.º", "4.º", "5.º", "6.º"]

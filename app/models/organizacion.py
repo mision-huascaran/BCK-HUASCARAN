@@ -1,7 +1,8 @@
+import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, Index, SmallInteger, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, SmallInteger, Text, UniqueConstraint, Uuid, text
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
@@ -12,6 +13,12 @@ FK_GRADO = "grado.id_grado"
 FK_PROGRAMA = "programa.id_programa"
 FK_ANIO = "año_escolar.id_anio_escolar"
 FK_CALENDARIO = "calendario.id_calendario"
+FK_PERIODO = "periodo_academico.id_periodo_academico"
+# Destino de las FK compuestas (sección + su colegio y grado): la BD impide poner a un
+# alumno en una sección de otro grado.
+COLUMNAS_GRUPO = ["id_seccion", "id_colegio", "id_grado"]
+FK_GRUPO = ["seccion.id_seccion", "seccion.id_colegio", "seccion.id_grado"]
+SECCION_UNICA = "Única"
 
 # Calendario académico (CU027): PA = periodo académico, PR = receso posterior al PA n.
 TIPO_PA = "PA"
@@ -67,7 +74,6 @@ class Colegio(SQLModel, table=True):
     # Obligatoria (CU013); 'Por definir' en los colegios que no la tenían.
     provincia: str
     distrito: Optional[str] = Field(default=None, sa_type=Text)
-    seccion: str = Field(default="Única", sa_type=Text, sa_column_kwargs={"server_default": "Única"})
     activo: bool = Field(default=True, sa_column_kwargs={"server_default": text("true")})
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
@@ -182,6 +188,7 @@ class Alumno(SQLModel, table=True):
     __table_args__ = (
         # Alumnos de un aula (asistencia, vencidos e incompletos de CU011).
         Index("ix_alumno_colegio_grado", "id_colegio", "id_grado"),
+        ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_alumno_seccion"),
     )
 
     id_alumno: Optional[int] = Field(default=None, primary_key=True)
@@ -189,6 +196,8 @@ class Alumno(SQLModel, table=True):
     apellidos: str
     id_colegio: int = Field(foreign_key=FK_COLEGIO)
     id_grado: int = Field(foreign_key=FK_GRADO)
+    # Sección actual (CU014): foto del grupo vigente, igual que id_programa_actual.
+    id_seccion: int
     id_programa_actual: int = Field(foreign_key=FK_PROGRAMA)
     fecha_registro: date
     activo: bool = Field(default=True)
@@ -213,28 +222,7 @@ class DocenteColegioGrado(SQLModel, table=True):
     id_docente: int = Field(foreign_key="docente.id_docente")
     id_colegio: int = Field(foreign_key=FK_COLEGIO)
     id_grado: int = Field(foreign_key=FK_GRADO)
-    id_periodo_academico: int = Field(foreign_key="periodo_academico.id_periodo_academico")
-
-    creado_por: int = Field(foreign_key=FK_USUARIO)
-    creado_en: datetime = Field(sa_type=UTCDateTime)
-    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
-    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
-
-
-class AlumnoProgramaHistorial(SQLModel, table=True):
-    """Subprograma del alumno en cada periodo: una sola fila por alumno y periodo."""
-
-    __tablename__ = "alumno_programa_historial"
-    __table_args__ = (
-        UniqueConstraint(
-            "id_alumno", "id_periodo_academico", name="uq_alumno_programa_historial_periodo"
-        ),
-    )
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    id_alumno: int = Field(foreign_key="alumno.id_alumno")
-    id_programa: int = Field(foreign_key=FK_PROGRAMA)
-    id_periodo_academico: int = Field(foreign_key="periodo_academico.id_periodo_academico")
+    id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)
@@ -254,6 +242,72 @@ class ColegioGrado(SQLModel, table=True):
     id_grado: int = Field(foreign_key=FK_GRADO, primary_key=True)
     # 1 = lunes … 5 = viernes. Null en los colegios cargados antes de pedirse (no vencen).
     dia_clase: Optional[int] = Field(default=None, sa_type=SmallInteger)
+
+    creado_por: int = Field(foreign_key=FK_USUARIO)
+    creado_en: datetime = Field(sa_type=UTCDateTime)
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
+    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
+
+class Seccion(SQLModel, table=True):
+    """Sección de un grado de un colegio (CU013). Cada grado nace con "Única". Solo se
+    agregan: no hay renombrar ni eliminar (decisión de Carlos)."""
+
+    __tablename__ = "seccion"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["id_colegio", "id_grado"], ["colegio_grado.id_colegio", "colegio_grado.id_grado"],
+            name="fk_seccion_colegio_grado",
+        ),
+        UniqueConstraint("id_colegio", "id_grado", "nombre", name="uq_seccion_colegio_grado_nombre"),
+        UniqueConstraint(*COLUMNAS_GRUPO, name="uq_seccion_grupo"),
+        CheckConstraint("length(trim(nombre)) > 0", name="ck_seccion_nombre"),
+    )
+
+    id_seccion: Optional[int] = Field(default=None, primary_key=True)
+    id_colegio: int
+    id_grado: int
+    nombre: str = Field(sa_type=Text)
+    activo: bool = Field(default=True, sa_column_kwargs={"server_default": text("true")})
+
+    creado_por: int = Field(foreign_key=FK_USUARIO)
+    creado_en: datetime = Field(sa_type=UTCDateTime)
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
+    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
+
+class AlumnoPertenencia(SQLModel, table=True):
+    """Desde cuándo un alumno está en un grupo (colegio + grado + sección + subprograma),
+    CU014. Responde "quién estaba en este grupo en esta fecha".
+
+    `desde` es inclusivo y `hasta` exclusivo (primer día en que ya no pertenece; NULL =
+    vigente). Los intervalos de un alumno no se superponen (validado en el servicio).
+    `creado_en` es cuándo se registró, distinto de `desde`.
+    """
+
+    __tablename__ = "alumno_pertenencia"
+    __table_args__ = (
+        ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_alumno_pertenencia_seccion"),
+        CheckConstraint("hasta IS NULL OR hasta > desde", name="ck_alumno_pertenencia_intervalo"),
+        # Un solo intervalo vigente por alumno.
+        Index(
+            "uq_alumno_pertenencia_vigente", "id_alumno", unique=True,
+            postgresql_where=text("hasta IS NULL"), sqlite_where=text("hasta IS NULL"),
+        ),
+        Index("ix_alumno_pertenencia_alumno_desde", "id_alumno", "desde"),
+        # Listas de un grupo en una fecha (Asistencias, Lectura, Rúbrica, Registro de Vuelo).
+        Index("ix_alumno_pertenencia_grupo", "id_colegio", "id_grado", "id_seccion", "desde"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    id_alumno: int = Field(foreign_key="alumno.id_alumno")
+    id_colegio: int
+    id_grado: int
+    id_seccion: int
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
+    desde: date
+    hasta: Optional[date] = None
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key="actividad.id_actividad")
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)

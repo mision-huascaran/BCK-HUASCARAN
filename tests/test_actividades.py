@@ -13,6 +13,7 @@ from tests.conftest import (
     asignar,
     cabecera_de,
     crear_docente,
+    hoy_iso,
     id_sesion_de,
     iniciar_actividad,
     instante,
@@ -289,7 +290,8 @@ def test_cu017_listado_con_productividad(client, entorno, doc, actividad):
     client.post(
         "/alumnos",
         json={"nombres": "N", "apellidos": "N", "id_colegio": entorno.colegios["Andino"].id_colegio,
-              "id_grado": entorno.grados["2.º"], "id_programa": entorno.programas["Comprensión Lectora"]},
+              "id_grado": entorno.grados["2.º"], "id_programa": entorno.programas["Comprensión Lectora"],
+              "pertenece_desde": hoy_iso()},
         headers=doc,
     )
     client.patch(f"/alumnos/{entorno.alumnos['ana'].id_alumno}", json={"nombres": "Anita"}, headers=doc)
@@ -330,7 +332,7 @@ def test_cu017_solo_el_docente_consulta(client, entorno, cabeceras):
 def test_cu019_detalle_de_la_actividad(client, entorno, doc, actividad):
     ana = entorno.alumnos["ana"].id_alumno
     client.patch(f"/alumnos/{ana}", json={"nombres": "Anita"}, headers=doc)
-    client.patch(f"/alumnos/{ana}/desactivar", headers=doc)
+    client.patch(f"/alumnos/{ana}/desactivar", json={"aplicar_desde": hoy_iso()}, headers=doc)
     finalizar(client, doc, actividad["id"])
 
     cuerpo = client.get(f"/actividades/{actividad['id']}", headers=doc).json()
