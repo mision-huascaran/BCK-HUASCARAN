@@ -23,7 +23,7 @@ from app.cli.supervisor import DatosSupervisor, errores_de_validacion, inicializ
 from app.core.config import Settings
 from app.core.security import verify_password
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import EvaluacionDiagnostica, ReporteSemanalAlumno, SemanaReporte
+from app.models.evaluacion import EvaluacionDiagnostica, SemanaReporte
 from app.models.organizacion import (
     AnioEscolar,
     Calendario,
@@ -46,6 +46,7 @@ from tests.conftest import (
     fijar_periodo,
     registrar_asistencia,
     releer,
+    tabla_lectura,
     terminar_pa_vigente,
 )
 
@@ -293,11 +294,14 @@ def test_cargar_calendario_crea_anio_periodos_calendario_cortes_y_semanas(con_or
         ("PA3", date(2030, 5, 6), date(2030, 5, 10)), ("PR3", date(2030, 5, 11), date(2030, 6, 2)),
         ("PA4", date(2030, 6, 3), date(2030, 6, 7)), ("PR4", date(2030, 6, 8), date(2030, 12, 20)),
     ]
+    # Todo el año escolar (01/03 viernes a 20/12), de lunes a viernes, sin depender de los PA:
+    # la primera semana es la del viernes 1 de marzo.
     semanas = db.exec(select(SemanaReporte).order_by(SemanaReporte.numero_semana)).all()
-    assert [(s.numero_semana, s.fecha_inicio) for s in semanas] == [
-        (1, LUNES), (2, LUNES + timedelta(days=7)), (3, date(2030, 3, 25)), (4, date(2030, 4, 1)),
-        (5, date(2030, 5, 6)), (6, date(2030, 6, 3)),
-    ]
+    assert (semanas[0].fecha_inicio, semanas[0].fecha_fin, semanas[-1].fecha_inicio) == (
+        date(2030, 2, 25), date(2030, 3, 1), date(2030, 12, 16),
+    )
+    assert [s.numero_semana for s in semanas] == list(range(1, len(semanas) + 1))
+    assert all(s.fecha_inicio == semanas[0].fecha_inicio + timedelta(weeks=i) for i, s in enumerate(semanas))
     otra = cargar_calendario(db, escribir(tmp_path, calendario()))
     assert (sum(otra.creados.values()), otra.advertencias) == (0, [])
 
@@ -336,23 +340,23 @@ def test_cargar_calendario_no_pisa_el_calendario_de_la_api(con_original, tmp_pat
     assert any("calendario general 2030: difiere del archivo y no se modifica" in a for a in resumen.advertencias)
     assert any("el periodo 9 existe en la BD" in a for a in resumen.advertencias)
     assert general_2030(db).pa(1).fecha_fin == date(2030, 3, 15)
-    assert resumen.eliminados["semana_reporte"] == 0
+    # El año termina una semana antes: su última semana sobra.
+    assert resumen.eliminados["semana_reporte"] == 1
 
 
-def test_cargar_calendario_genera_las_semanas_con_el_calendario_de_la_bd(con_original, tmp_path):
-    """Si el Supervisor acortó el PA2 (termina el 29/03), la semana del 1/04 sobra."""
+def test_cargar_calendario_las_semanas_no_dependen_de_los_pa(con_original, tmp_path):
+    """Si el Supervisor acortó el PA2, las semanas no cambian: cubren todo el año."""
     db = con_original
     cargar_calendario(db, escribir(tmp_path, calendario()))
+    antes = [s.fecha_inicio for s in db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).all()]
     general = db.exec(select(Calendario)).one()
     fijar_periodo(db, general, "PA2", fin=date(2030, 3, 29))
     fijar_periodo(db, general, "PR2", inicio=date(2030, 3, 30))
 
     resumen = cargar_calendario(db, escribir(tmp_path, calendario()))
 
-    assert resumen.eliminados["semana_reporte"] == 1
-    assert [s.numero_semana for s in db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).all()] == [
-        1, 2, 3, 4, 5
-    ]
+    assert (resumen.eliminados["semana_reporte"], resumen.actualizados["semana_reporte"]) == (0, 0)
+    assert [s.fecha_inicio for s in db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).all()] == antes
 
 
 def test_cargar_calendario_no_mueve_semanas_con_registros(con_original, tmp_path):
@@ -361,21 +365,16 @@ def test_cargar_calendario_no_mueve_semanas_con_registros(con_original, tmp_path
     supervisor = db.exec(select(Usuario)).one()
     colegio = crear_colegio(db, "C", [1], [1], supervisor.id_usuario)
     alumno = crear_alumno(db, "A", "B", colegio, 1, 1, supervisor.id_usuario)
-    ficha = Docente(nombres="D", apellidos="D", creado_por=1, creado_en=ahora_utc())
-    db.add(ficha)
+    db.add(Docente(nombres="D", apellidos="D", creado_por=1, creado_en=ahora_utc()))
     db.flush()
-    semana = db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).first()
-    db.add(ReporteSemanalAlumno(id_alumno=alumno.id_alumno, id_semana=semana.id_semana,
-                                id_anio_escolar=semana.id_anio_escolar, id_periodo_academico=semana.id_periodo_academico,
-                                id_docente=ficha.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc()))
-    db.commit()
-    fijar_periodo(db, db.exec(select(Calendario)).one(), "PA1", inicio=date(2030, 3, 11))
+    # Una tabla de lectura en la última semana del año (16 a 20 de diciembre).
+    tabla = tabla_lectura(db, alumno, date(2030, 12, 17))
 
     resumen = cargar_calendario(db, escribir(tmp_path, calendario(fecha_fin="2030-12-13")))
 
     assert "tiene registros" in resumen.errores[0]
     assert db.exec(select(AnioEscolar)).one().fecha_fin == date(2030, 12, 20)
-    assert db.get(SemanaReporte, semana.id_semana) is not None
+    assert db.get(SemanaReporte, tabla.id_semana) is not None
 
 
 def con_pa1(**cambios) -> list[dict]:
@@ -418,10 +417,12 @@ def test_validar_recesos_del_archivo():
 def test_leer_calendario_con_formato_invalido():
     assert leer_calendario({"anio": {}})[1][0].startswith("formato inválido")
     cal, _ = leer_calendario(calendario())
-    assert len(semanas_deseadas([(p.numero, p.inicio, p.fin) for p in cal.periodos])) == 6
-    # Un PA que no empieza en lunes genera sus semanas desde el lunes siguiente.
-    assert [s.lunes for s in semanas_deseadas([(1, date(2030, 3, 6), date(2030, 3, 22))])] == [
-        date(2030, 3, 11), date(2030, 3, 18)
+    assert len(semanas_deseadas(cal.inicio, cal.fin)) == 43
+    # Un año que empieza en sábado arranca con la semana siguiente.
+    assert semanas_deseadas(date(2030, 3, 2), date(2030, 3, 8))[0].lunes == date(2030, 3, 4)
+    # Uno que empieza un miércoles incluye esa semana; uno que termina un lunes, la suya.
+    assert [s.lunes for s in semanas_deseadas(date(2030, 3, 6), date(2030, 3, 18))] == [
+        date(2030, 3, 4), date(2030, 3, 11), date(2030, 3, 18)
     ]
 
 

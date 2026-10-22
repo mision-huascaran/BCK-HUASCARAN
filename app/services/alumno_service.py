@@ -287,7 +287,7 @@ def crear_alumno(db: Session, data: AlumnoCrear, actor: Usuario) -> AlumnoItem:
     db.add(alumno)
     db.flush()
     movimiento = Movimiento(actor.id_usuario, ahora, id_actividad)
-    pertenencia.abrir(db, alumno, data.pertenece_desde, CAMPO_PERTENECE_DESDE, movimiento)
+    pertenencia.abrir(db, alumno, data.pertenece_desde, CAMPO_PERTENECE_DESDE, movimiento, alta=True)
     registrar_auditoria(
         db, tabla=TABLA, id_registro=alumno.id_alumno, accion=CREAR, cambios=_fecha_efectiva(data.pertenece_desde),
         id_usuario=actor.id_usuario, fecha=ahora, id_actividad=id_actividad,

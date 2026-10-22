@@ -48,7 +48,7 @@ class PeriodoAcademicoResponse(BaseModel):
 
 class SemanaResponse(BaseModel):
     id: int
-    id_periodo_academico: int
+    id_semana: int
     numero_semana: int
     fecha_inicio: date
     fecha_fin: date

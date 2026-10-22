@@ -24,9 +24,9 @@ from sqlmodel import Session, select
 
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
-from app.core.tiempo import ZONA_LIMA, ahora_utc, hoy_lima
+from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.evaluacion import TIPO_ADICIONAL, TIPO_HABITUAL, Asistencia, Clase, ClaseAlumno
-from app.models.organizacion import Alumno, PermisoCorreccion, Seccion, Usuario
+from app.models.organizacion import Alumno, Seccion, Usuario
 from app.schemas.asistencia import (
     AlumnoAsistencia,
     AsistenciaClase,
@@ -36,13 +36,22 @@ from app.schemas.asistencia import (
     Escritura,
     RegistroAsistencia,
 )
-from app.services.actividad import actividad_activa
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
-from app.services.calendario import Calendarios, PeriodoCalendario, cargar_calendarios, nombre_periodo
+from app.services.calendario import Calendarios, PeriodoCalendario, cargar_calendarios
 from app.services.clase_service import colegio_existente, grados_visibles
+from app.services.escritura import Destino, MensajesEscritura, escritura
 from app.services.habilitacion import habilitacion_escritura
 from app.services.pertenencia import fecha_legible, lista_del_grupo
-from app.services.programacion import ClaseDelDia, ClaseProgramada, FiltroGrupos, clase_del_dia
+from app.services.programacion import (
+    ClaseDelDia,
+    ClaseProgramada,
+    FiltroGrupos,
+    NuevaClase,
+    asegurar_fila,
+    clase_del_dia,
+    congelar_lista,
+    fila_de_programada,
+)
 from app.services.sincronizacion import (
     ContextoOperacion,
     Operacion,
@@ -50,13 +59,10 @@ from app.services.sincronizacion import (
     RechazoOperacion,
     procesar_operacion,
 )
-from app.services.usuario_service import DOCENTE, nombre_rol
 
 TABLA = "asistencia"
 MODULO = "asistencias"
 CAMPOS = ("estado", "observacion")
-_clase_alumno = ClaseAlumno.__table__
-_clase = Clase.__table__
 _asistencia = Asistencia.__table__
 
 MENSAJE_FUTURA = "No se pueden registrar asistencias para fechas futuras."
@@ -77,7 +83,6 @@ MENSAJE_SIN_HABILITACION = (
 )
 MENSAJE_ACTIVIDAD = "Inicia una actividad de trabajo para registrar asistencias."
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta las asistencias en solo lectura."
-AVISO_PERMISO = "Corrección excepcional habilitada para {pa} hasta el {fecha} a las {hora}."
 MENSAJE_FUERA_DE_LA_CLASE = "El alumno no está en la lista de esta clase."
 MENSAJE_SIN_CLASE = "No hay una clase programada para esta fecha. Para registrarla, márcala como clase adicional."
 
@@ -107,7 +112,7 @@ def problema_de_fecha(calendarios: Calendarios, id_colegio: int, fecha: date) ->
     return None
 
 
-def _exigir_seccion(db: Session, filtro: FiltroGrupos) -> None:
+def exigir_seccion(db: Session, filtro: FiltroGrupos) -> None:
     seccion = db.get(Seccion, filtro.id_seccion)
     if seccion is None or (seccion.id_colegio, seccion.id_grado) != (filtro.id_colegio, filtro.id_grado):
         raise ErrorNegocio(
@@ -175,27 +180,11 @@ def _alumnos(db: Session, lista: list[tuple[Alumno, int]], id_clase: Optional[in
 
 # ── Escritura permitida ─────────────────────────────────────────────────────────────
 
-def _aviso_permiso(periodo: PeriodoCalendario, fin) -> str:
-    local = fin.astimezone(ZONA_LIMA)
-    return AVISO_PERMISO.format(
-        pa=nombre_periodo(periodo.tipo, periodo.numero), fecha=fecha_legible(local.date()), hora=local.strftime("%H:%M")
-    )
+MENSAJES_ESCRITURA = MensajesEscritura(MENSAJE_SOLO_LECTURA, MENSAJE_SIN_HABILITACION, MENSAJE_ACTIVIDAD)
 
 
 def _escritura(db: Session, usuario: Usuario, filtro: FiltroGrupos, periodo: PeriodoCalendario) -> Escritura:
-    if nombre_rol(db, usuario.id_rol) != DOCENTE:
-        return Escritura(permitida=False, motivo=MENSAJE_SOLO_LECTURA)
-    habilitacion = habilitacion_escritura(
-        db, usuario, filtro.id_colegio, filtro.id_grado, periodo.id_periodo_academico, MODULO
-    )
-    if not habilitacion.permitido:
-        return Escritura(permitida=False, motivo=MENSAJE_SIN_HABILITACION)
-    aviso = None
-    if habilitacion.id_permiso is not None:
-        aviso = _aviso_permiso(periodo, db.get(PermisoCorreccion, habilitacion.id_permiso).fin)
-    if actividad_activa(db, usuario.id_docente) is None:
-        return Escritura(permitida=False, motivo=MENSAJE_ACTIVIDAD, id_permiso=habilitacion.id_permiso, aviso_permiso=aviso)
-    return Escritura(permitida=True, id_permiso=habilitacion.id_permiso, aviso_permiso=aviso)
+    return escritura(db, usuario, Destino(MODULO, filtro.id_colegio, filtro.id_grado, periodo), MENSAJES_ESCRITURA)
 
 
 # ── Consulta ────────────────────────────────────────────────────────────────────────
@@ -212,7 +201,7 @@ def consultar_clase(db: Session, usuario: Usuario, filtro: FiltroGrupos, fecha: 
     `fecha_no_lectiva`, `fecha_fuera_de_periodo`."""
     colegio_existente(db, filtro.id_colegio)
     grados_visibles(db, usuario, filtro.id_colegio, filtro.id_grado)
-    _exigir_seccion(db, filtro)
+    exigir_seccion(db, filtro)
     calendarios = cargar_calendarios(db, ids_colegio=[filtro.id_colegio])
     invalida = problema_de_fecha(calendarios, filtro.id_colegio, fecha)
     if invalida is not None:
@@ -258,45 +247,14 @@ def _destino(db: Session, data: AsistenciaGuardar) -> _Destino:
 
 def _crear_clase(db: Session, destino: _Destino, usuario: Usuario) -> Clase:
     """La fila de la clase del destino; si no existe, la crea (habitual en su fecha
-    programada o adicional). INSERT ... ON CONFLICT DO NOTHING: dos escrituras
-    simultáneas no crean dos clases."""
+    programada o adicional)."""
     clase = destino.del_dia.clase
-    if clase is not None and clase.id_clase is not None:
-        return db.get(Clase, clase.id_clase)
-    if clase is None and not destino.adicional:
+    if clase is not None:
+        return fila_de_programada(db, destino.filtro, clase, usuario.id_usuario)
+    if not destino.adicional:
         raise RechazoOperacion("sin_clase_programada", MENSAJE_SIN_CLASE)
-    filtro = destino.filtro
-    fecha_original = clase.fecha_original if clase is not None else destino.fecha
-    db.execute(
-        insert_con_conflicto(db, _clase)
-        .values(
-            id_colegio=filtro.id_colegio, id_grado=filtro.id_grado, id_seccion=filtro.id_seccion,
-            id_periodo_academico=destino.periodo.id_periodo_academico,
-            tipo=TIPO_HABITUAL if clase is not None else TIPO_ADICIONAL,
-            fecha_original=fecha_original, fecha=destino.fecha, version=1,
-            creado_por=usuario.id_usuario, creado_en=ahora_utc(),
-        )
-        .on_conflict_do_nothing()
-    )
-    return db.exec(
-        select(Clase).where(*filtro.de(Clase), Clase.fecha == destino.fecha).execution_options(populate_existing=True)
-    ).one()
-
-
-def _congelar(db: Session, clase: Clase) -> None:
-    """Guarda la lista de la clase (los alumnos del grupo en su fecha) si todavía no."""
-    if clase.lista_congelada_en is not None:
-        return
-    lista = lista_del_grupo(db, clase.id_colegio, clase.id_grado, clase.id_seccion, clase.fecha)
-    if lista:
-        db.execute(
-            insert_con_conflicto(db, _clase_alumno)
-            .values([{"id_clase": clase.id_clase, "id_alumno": a.id_alumno, "id_programa": p} for a, p in lista])
-            .on_conflict_do_nothing()
-        )
-    clase.lista_congelada_en = ahora_utc()
-    db.add(clase)
-    db.flush()
+    nueva = NuevaClase(destino.fecha, destino.fecha, TIPO_ADICIONAL, destino.periodo.id_periodo_academico)
+    return asegurar_fila(db, destino.filtro, nueva, usuario.id_usuario)
 
 
 def _registro(fila: Asistencia) -> dict[str, Any]:
@@ -389,7 +347,7 @@ def _aplicador(db: Session, usuario: Usuario, destino: _Destino, registro: Regis
         if not habilitacion.permitido:
             raise RechazoOperacion("sin_habilitacion", MENSAJE_SIN_HABILITACION)
         clase = _crear_clase(db, destino, usuario)
-        _congelar(db, clase)
+        congelar_lista(db, clase)
         if db.get(ClaseAlumno, (clase.id_clase, registro.id_alumno)) is None:
             raise RechazoOperacion("alumno_fuera_de_la_clase", MENSAJE_FUERA_DE_LA_CLASE)
         captura = _Captura(usuario, contexto, habilitacion.id_permiso)
@@ -416,7 +374,7 @@ def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -
     destino = _destino(db, data)
     colegio_existente(db, destino.filtro.id_colegio)
     grados_visibles(db, usuario, destino.filtro.id_colegio, destino.filtro.id_grado)
-    _exigir_seccion(db, destino.filtro)
+    exigir_seccion(db, destino.filtro)
     resultados = [
         procesar_operacion(
             db, usuario, registro, _aplicador(db, usuario, destino, registro),

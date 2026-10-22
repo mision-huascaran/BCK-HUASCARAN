@@ -18,6 +18,7 @@ from sqlmodel import Session, col, select
 from app.models.evaluacion import Asistencia, Clase
 from app.models.trazabilidad import OperacionPendiente
 from app.services.calendario import PeriodoCalendario, en_pa_de_su_colegio, pa_actual_de_colegios
+from app.services.lectura_service import filas_confirmadas
 
 PaPorColegio = dict[int, PeriodoCalendario]
 ContadorModulo = Callable[[Session, PaPorColegio], int]
@@ -38,7 +39,7 @@ def asistencias_confirmadas(db: Session, pa_por_colegio: PaPorColegio) -> int:
     ).one()
 
 
-CONTADORES: dict[str, ContadorModulo] = {"asistencias": asistencias_confirmadas}
+CONTADORES: dict[str, ContadorModulo] = {"asistencias": asistencias_confirmadas, "lectura": filas_confirmadas}
 
 
 def porcentaje(sincronizados: int, pendientes: int) -> Optional[int]:

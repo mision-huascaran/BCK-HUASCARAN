@@ -143,7 +143,8 @@ def test_cu021_productividad_texto(conteos, texto):
 
 def test_modulo_de_cada_tabla():
     assert cambios.modulo_de("nivel_final_mensual") == "rubrica"
-    assert cambios.modulo_de("libro_subida_nivel") == "seguimiento_lectura"
+    assert cambios.modulo_de("lectura_semanal") == "seguimiento_lectura"
+    assert cambios.modulo_de("lectura_semanal_alumno") == "seguimiento_lectura"
     assert cambios.modulo_de("tabla_sin_modulo") == "otros"
     assert cambios.modulo_de("tabla_sin_modulo") == "otros"
 
@@ -158,7 +159,7 @@ def test_resumen_por_modulo_cuenta_registros_distintos():
 
 def test_asignaciones_involucradas_de_registros_de_otras_tablas(db, entorno):
     luis = entorno.alumnos["luis"].id_alumno
-    registros = [("asistencia", "999", "crear"), ("libro_subida_nivel", "999", "crear"), ("alumno", str(luis), "editar")]
+    registros = [("asistencia", "999", "crear"), ("lectura_semanal", "999", "crear"), ("alumno", str(luis), "editar")]
 
     asignaciones = cambios.asignaciones_involucradas(db, registros)
 

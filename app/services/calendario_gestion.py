@@ -28,7 +28,7 @@ from sqlmodel import Session, col, select
 from app.core.errores import ErrorNegocio
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
-from app.models.evaluacion import Asistencia, Clase
+from app.models.evaluacion import Asistencia, Clase, LecturaSemanal
 from app.models.organizacion import (
     ORIGEN_MANUAL,
     TIPO_PA,
@@ -75,6 +75,7 @@ TABLA = "calendario"
 CAMPO_PERIODOS = "periodos"
 CAMPO_NO_LECTIVOS = "dias_no_lectivos"
 REGISTRO_ASISTENCIA = "asistencia"
+REGISTRO_LECTURA = "lectura"
 FORMATO_FECHA = "%d/%m/%Y"
 FIN_ANTES_DE_INICIO = "La fecha de fin no puede ser anterior a la fecha de inicio."
 
@@ -302,25 +303,32 @@ class _Registro:
     tipo: str
 
 
-def _registros(db: Session, ids_colegio: set[int], id_anio: int) -> list[_Registro]:
-    """Fechas con registros de esos colegios en los PA del año, con su PA. Hoy, las
-    clases con asistencias, en su fecha vigente (los demás módulos se suman aquí cuando
-    existan)."""
-    if not ids_colegio:
-        return []
-    con_asistencias = select(Asistencia.id_clase)
+def _clases_con(db: Session, ids_colegio: set[int], id_anio: int, ids_clase, tipo: str) -> list[_Registro]:
+    """Las clases de `ids_clase` (subconsulta) de esos colegios en los PA del año, en su
+    fecha vigente."""
     filas = db.exec(
         select(Clase.id_colegio, Clase.fecha, Clase.id_periodo_academico)
         .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == Clase.id_periodo_academico)
         .where(
             col(Clase.id_colegio).in_(ids_colegio),
             PeriodoAcademico.id_anio_escolar == id_anio,
-            col(Clase.id_clase).in_(con_asistencias),
+            col(Clase.id_clase).in_(ids_clase),
         )
         .distinct()
         .order_by(Clase.id_colegio, Clase.fecha)
     ).all()
-    return [_Registro(id_colegio, fecha, id_periodo, REGISTRO_ASISTENCIA) for id_colegio, fecha, id_periodo in filas]
+    return [_Registro(id_colegio, fecha, id_periodo, tipo) for id_colegio, fecha, id_periodo in filas]
+
+
+def _registros(db: Session, ids_colegio: set[int], id_anio: int) -> list[_Registro]:
+    """Fechas con registros de esos colegios en los PA del año, con su PA: las clases con
+    asistencias y las que son referencia de una tabla de lectura."""
+    if not ids_colegio:
+        return []
+    return [
+        *_clases_con(db, ids_colegio, id_anio, select(Asistencia.id_clase), REGISTRO_ASISTENCIA),
+        *_clases_con(db, ids_colegio, id_anio, select(LecturaSemanal.id_clase_referencia), REGISTRO_LECTURA),
+    ]
 
 
 def _motivo_incompatible(id_periodo: int, propuesta: CalendarioResuelto, fecha: date) -> Optional[str]:

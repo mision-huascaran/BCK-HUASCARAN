@@ -420,6 +420,23 @@ def test_hook_entrar_a_un_grupo_con_listas_donde_no_figura(client, db, entorno, 
     assert (respuesta.status_code, motivo(respuesta)) == (409, "conflicto_listas_historicas")
 
 
+def test_hook_alta_solo_choca_con_listas_posteriores(client, db, entorno, cabeceras, lista_del_lunes):
+    """Un alumno nuevo puede entrar el mismo día de una lista ya congelada (entra desde la
+    próxima clase), pero no antes de ella."""
+    def alta(desde):
+        cuerpo = {**grupo(db, entorno), "nombres": "Nora", "apellidos": "Nueva",
+                  "id_programa": entorno.programas["Comprensión Lectora"], "pertenece_desde": desde.isoformat()}
+        return client.post("/alumnos", json=cuerpo, headers=cabeceras["Supervisor"])
+
+    antes = alta(LUNES_ANTERIOR)
+    mismo_dia = alta(LUNES)
+
+    assert (antes.status_code, motivo(antes)) == (409, "conflicto_listas_historicas")
+    assert mismo_dia.status_code == 201
+    clase = db.exec(select(Clase).where(Clase.fecha == LUNES)).one()
+    assert db.get(ClaseAlumno, (clase.id_clase, mismo_dia.json()["id"])) is None
+
+
 def test_hook_inicio_de_pertenencia_posterior_a_una_lista(db, entorno, lista_del_lunes):
     ana = entorno.alumnos["ana"]
     intervalo = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == ana.id_alumno)).one()

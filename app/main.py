@@ -14,6 +14,7 @@ from app.routers import (
     clases,
     colegios,
     inicio,
+    lectura,
     password,
     permisos,
     seguimiento,
@@ -43,6 +44,7 @@ app.include_router(permisos.router)
 app.include_router(asignaciones.router)
 app.include_router(actividades.router)
 app.include_router(asistencias.router)
+app.include_router(lectura.router)
 app.include_router(clases.router)
 app.include_router(inicio.router)
 app.include_router(seguimiento.router)

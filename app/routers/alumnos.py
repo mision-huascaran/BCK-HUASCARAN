@@ -19,7 +19,7 @@ from app.schemas.alumno import (
     AlumnoItem,
     CambioEstadoAlumno,
     EventoHistorial,
-    LecturaSemanal,
+    LecturaDeLaSemana,
     RegistroVuelo,
     Resumen,
     Rubrica,
@@ -99,7 +99,7 @@ def rubrica(id_alumno: int, db: Db, usuario: ConAcceso):
     return detalle.rubrica(db, id_alumno)
 
 
-@router.get("/alumnos/{id_alumno}/lectura", response_model=list[LecturaSemanal])
+@router.get("/alumnos/{id_alumno}/lectura", response_model=list[LecturaDeLaSemana])
 def lectura(id_alumno: int, db: Db, usuario: ConAcceso):
     alumno_service.alumno_visible(db, usuario, id_alumno)
     return detalle.lectura(db, id_alumno)

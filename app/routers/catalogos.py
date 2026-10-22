@@ -5,13 +5,13 @@ Sin paginación: son listas cortas y estables.
 from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, col, select
 
 from app.core.database import get_db
 from app.core.tiempo import hoy_lima
 from app.dependencies import get_current_user
-from app.models.evaluacion import NivelGeneral, NivelRazkids, NivelRubrica, SemanaReporte
+from app.models.evaluacion import NivelGeneral, NivelRazkids, NivelRubrica
 from app.models.organizacion import TIPO_PA, AnioEscolar, Grado, PeriodoAcademico, Programa, Usuario
 from app.schemas.catalogos import (
     AnioEscolarResponse,
@@ -23,7 +23,9 @@ from app.schemas.catalogos import (
     ProgramaResponse,
     SemanaResponse,
 )
+from app.services import lectura_service
 from app.services.calendario import PeriodoCalendario, cargar_calendarios
+from app.services.programacion import FiltroGrupos
 
 router = APIRouter(tags=["catalogos"])
 
@@ -96,19 +98,21 @@ def listar_periodos_academicos(
 
 
 @router.get("/semanas", response_model=list[SemanaResponse])
-def listar_semanas(db: Db, _: Autenticado, id_periodo_academico: Optional[int] = None):
-    hoy = hoy_lima()
-    # Por fecha y número: la numeración es correlativa dentro de cada año escolar.
-    consulta = select(SemanaReporte).order_by(SemanaReporte.fecha_inicio, SemanaReporte.numero_semana)
-    if id_periodo_academico is not None:
-        consulta = consulta.where(SemanaReporte.id_periodo_academico == id_periodo_academico)
-    return [
-        SemanaResponse(
-            id=s.id_semana, id_periodo_academico=s.id_periodo_academico, numero_semana=s.numero_semana,
-            fecha_inicio=s.fecha_inicio, fecha_fin=s.fecha_fin, cerrada=s.fecha_fin < hoy,
-        )
-        for s in db.exec(consulta).all()
-    ]
+def listar_semanas(
+    db: Db,
+    usuario: Autenticado,
+    id_anio_escolar: int,
+    mes: Annotated[int, Query(ge=1, le=12)],
+    id_colegio: int,
+    id_grado: int,
+    id_seccion: int,
+):
+    """Semanas (lunes a viernes) del año con alguna clase del grupo (programada o
+    guardada) en ese mes, para elegir la tabla de lectura (CU023). Una semana que cae en
+    dos meses aparece en el mes de su clase. Errores: 403 `aula_fuera_de_alcance`
+    (Docente), 404 `colegio_no_encontrado` y `anio_no_encontrado`, 422 `seccion_inexistente`."""
+    grupo = FiltroGrupos(id_colegio, id_grado, id_seccion)
+    return lectura_service.semanas_con_clase(db, usuario, grupo, id_anio_escolar, mes)
 
 
 @router.get("/niveles-razkids", response_model=list[NivelRazkidsResponse])

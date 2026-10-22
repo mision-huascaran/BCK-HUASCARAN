@@ -72,7 +72,14 @@ from app.models.organizacion import (  # noqa: E402
     Seccion,
     Usuario,
 )
-from app.models.evaluacion import Asistencia, Clase, ClaseAlumno  # noqa: E402
+from app.models.evaluacion import (  # noqa: E402
+    Asistencia,
+    Clase,
+    ClaseAlumno,
+    LecturaSemanal,
+    LecturaSemanalAlumno,
+    SemanaReporte,
+)
 from app.services import auth_service  # noqa: E402
 from app.services.calendario import periodo_de  # noqa: E402
 from app.services.sesiones import crear_sesion_y_token  # noqa: E402
@@ -706,3 +713,38 @@ def texto_del_correo(mensaje) -> str:
 
 def motivo(respuesta) -> Optional[str]:
     return respuesta.json().get("motivo")
+
+
+def semana_de(db, fecha: date) -> "SemanaReporte":
+    """La semana (lunes a viernes) que contiene la fecha; la crea si no existe."""
+    lunes = fecha - timedelta(days=fecha.weekday())
+    semana = db.exec(select(SemanaReporte).where(SemanaReporte.fecha_inicio == lunes)).first()
+    if semana is None:
+        anio = db.exec(select(AnioEscolar).where(AnioEscolar.fecha_inicio <= fecha, AnioEscolar.fecha_fin >= fecha)).one()
+        numero = (lunes - anio.fecha_inicio).days // 7 + 1
+        semana = SemanaReporte(id_anio_escolar=anio.id_anio_escolar, numero_semana=numero, fecha_inicio=lunes,
+                               fecha_fin=lunes + timedelta(days=4), creado_por=1, creado_en=tiempo.ahora_utc())
+        db.add(semana)
+        db.flush()
+    return semana
+
+
+def tabla_lectura(db, alumno: Alumno, fecha: date, estado="normal", motivo=None, **campos) -> "LecturaSemanal":
+    """Tabla de lectura del grupo y subprograma del alumno, con la clase de su grupo en la
+    fecha como referencia y solo la fila del alumno (con `campos`), sin validar."""
+    clase = clase_guardada(db, alumno, fecha)
+    semana = semana_de(db, fecha)
+    ahora = tiempo.ahora_utc()
+    firma = {"id_docente": db.exec(select(Docente)).first().id_docente, "fecha_registro": ahora, "creado_por": 1,
+             "creado_en": ahora}
+    tabla = LecturaSemanal(
+        id_colegio=alumno.id_colegio, id_grado=alumno.id_grado, id_seccion=alumno.id_seccion,
+        id_programa=alumno.id_programa_actual, id_anio_escolar=semana.id_anio_escolar, mes=fecha.month,
+        id_semana=semana.id_semana, id_clase_referencia=clase.id_clase, estado=estado, motivo_no_realizada=motivo,
+        **firma,
+    )
+    db.add(tabla)
+    db.flush()
+    db.add(LecturaSemanalAlumno(id_lectura_semanal=tabla.id, id_alumno=alumno.id_alumno, **campos, **firma))
+    db.commit()
+    return tabla

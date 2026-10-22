@@ -5,7 +5,8 @@ Dos tablas sostienen todo:
 - `operacion_pendiente`: el aviso de que un dispositivo tiene una operación todavía no
   enviada (POST /sincronizacion/pendientes, al reconectar y antes de enviarlas).
 - `operacion_sincronizacion`: el resultado de cada operación recibida, aceptada,
-  rechazada o descartada (le ganó un registro más reciente). Hace idempotente el envío.
+  rechazada o descartada (le ganó un registro más reciente, o el usuario descartó su
+  rechazo con "Cargar versión actual"). Hace idempotente el envío.
 
 `procesar_operacion` es el único camino de escritura de los módulos con cola offline: la
 aplica en un SAVEPOINT, registra el resultado y borra su aviso de pendiente.
@@ -65,6 +66,8 @@ MENSAJE_FUERA_DE_ACTIVIDAD = "La operación se realizó fuera de una actividad d
 MENSAJE_ACTIVIDAD_REQUERIDA = "Inicia una actividad de trabajo para registrar información."
 MENSAJE_REALIZADO_EN_FUTURO = "La hora de la operación es posterior a la hora actual."
 MENSAJE_OPERACION_AJENA = "El identificador de la operación ya fue usado."
+MENSAJE_OPERACION_NO_ENCONTRADA = "La operación no existe."
+MENSAJE_NO_RECHAZADA = "Solo se puede descartar una operación rechazada."
 
 
 # ── Estados en SQL (los usan Seguimiento y las listas de actividades) ────────────────
@@ -165,11 +168,13 @@ class OperacionDescartada(Exception):
 
 @dataclass(frozen=True)
 class Operacion:
-    """Qué toca la operación: módulo, tabla y clave del registro."""
+    """Qué toca la operación: módulo, tabla y clave del registro. `mensaje_sin_actividad`
+    reemplaza el mensaje genérico de `actividad_requerida` (cada CU tiene el suyo)."""
 
     modulo: str
     entidad: str
     id_entidad: str
+    mensaje_sin_actividad: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -203,7 +208,7 @@ def _actividad_activa(db: Session, id_docente: int) -> Optional[Actividad]:
 
 
 def _actividad_de_la_operacion(
-    db: Session, usuario: Usuario, id_actividad: Optional[uuid.UUID], en: datetime
+    db: Session, usuario: Usuario, id_actividad: Optional[uuid.UUID], en: datetime, mensaje_sin_actividad: str
 ) -> Optional[Actividad]:
     """La actividad del Docente en que cae `en` (la indicada o, sin ella, la activa).
     Para otros roles, None (no trabajan con actividades)."""
@@ -212,7 +217,7 @@ def _actividad_de_la_operacion(
     if id_actividad is None:
         actividad = _actividad_activa(db, usuario.id_docente)
         if actividad is None:
-            raise RechazoOperacion(ACTIVIDAD_REQUERIDA, MENSAJE_ACTIVIDAD_REQUERIDA)
+            raise RechazoOperacion(ACTIVIDAD_REQUERIDA, mensaje_sin_actividad)
     else:
         actividad = db.get(Actividad, id_actividad)
     valida = (
@@ -326,7 +331,9 @@ def procesar_operacion(
     en, actividad = item.realizado_en or ahora, None
     try:
         en = _instante_de(item, ahora)
-        actividad = _actividad_de_la_operacion(db, usuario, item.id_actividad, en)
+        actividad = _actividad_de_la_operacion(
+            db, usuario, item.id_actividad, en, operacion.mensaje_sin_actividad or MENSAJE_ACTIVIDAD_REQUERIDA
+        )
     except RechazoOperacion as rechazo:
         resultado = _rechazada({"id_operacion": item.id_operacion}, rechazo.motivo, rechazo.detail)
         return _registrar(db, usuario, item, operacion, RECHAZADA, resultado, en, None)
@@ -370,10 +377,37 @@ def registrar_pendientes(db: Session, usuario: Usuario, items: list[PendienteInf
     return resultado.rowcount
 
 
+def _estado_consultado(operacion: OperacionSincronizacion) -> str:
+    """El estado que ve el cliente: el de su respuesta (una descartada por un registro más
+    reciente se respondió como aceptada), o `descartada` si el usuario descartó un rechazo."""
+    respuesta = operacion.respuesta or {}
+    estado = respuesta.get("estado", operacion.estado)
+    return DESCARTADA if operacion.estado == DESCARTADA and estado == RECHAZADA else estado
+
+
 def consultar_operacion(db: Session, usuario: Usuario, id_operacion: uuid.UUID) -> EstadoOperacion:
     """El resultado de una operación propia; las ajenas o no recibidas, `desconocida`."""
     operacion = db.get(OperacionSincronizacion, id_operacion)
     if operacion is None or operacion.id_usuario != usuario.id_usuario:
         return EstadoOperacion(estado=DESCONOCIDA)
-    respuesta = operacion.respuesta or {}
-    return EstadoOperacion(estado=respuesta.get("estado", operacion.estado), motivo=operacion.motivo, respuesta=respuesta)
+    return EstadoOperacion(
+        estado=_estado_consultado(operacion), motivo=operacion.motivo, respuesta=operacion.respuesta or {}
+    )
+
+
+def descartar_operacion(db: Session, usuario: Usuario, id_operacion: uuid.UUID) -> EstadoOperacion:
+    """"Cargar versión actual" / "Descartar" de los CU: una operación propia `rechazada`
+    pasa a `descartada` y deja de contar como error en el estado de su actividad y del
+    docente. 404 `operacion_no_encontrada` si no existe o es ajena; 409
+    `operacion_no_rechazada` si no estaba rechazada."""
+    operacion = db.exec(
+        select(OperacionSincronizacion).where(OperacionSincronizacion.id_operacion == id_operacion).with_for_update()
+    ).first()
+    if operacion is None or operacion.id_usuario != usuario.id_usuario:
+        raise ErrorNegocio(status.HTTP_404_NOT_FOUND, MENSAJE_OPERACION_NO_ENCONTRADA, motivo="operacion_no_encontrada")
+    if operacion.estado != RECHAZADA:
+        raise ErrorNegocio(status.HTTP_409_CONFLICT, MENSAJE_NO_RECHAZADA, motivo="operacion_no_rechazada")
+    operacion.estado = DESCARTADA
+    db.add(operacion)
+    db.commit()
+    return EstadoOperacion(estado=DESCARTADA, motivo=operacion.motivo, respuesta=operacion.respuesta or {})

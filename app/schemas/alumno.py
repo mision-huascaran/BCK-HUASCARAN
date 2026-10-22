@@ -8,7 +8,9 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from app.schemas.asistencia import EstadoAsistencia
 from app.schemas.comun import ItemCatalogo, ParcheSinNulos, Texto
+from app.schemas.lectura import EstadoFila, EstadoTabla
 
 
 # ── Requests ────────────────────────────────────────────────────────────────────────
@@ -97,7 +99,8 @@ class AsistenciaDelAlumno(BaseModel):
 class Resumen(BaseModel):
     # Del Registro de Vuelo más reciente del año que lo tenga; null si ninguno.
     nivel_colocado: Optional[NivelColocado] = None
-    # LSL + LSB del año; 0 si el alumno no tiene reportes semanales en el año.
+    # Suma del total de libros (LSN + LSL) de sus filas en las tablas de lectura del año
+    # que se realizaron; 0 si no tiene ninguna.
     libros_leidos_anio: int = 0
     asistencia: AsistenciaDelAlumno = AsistenciaDelAlumno()
 
@@ -116,14 +119,6 @@ class RegistroVuelo(BaseModel):
     observacion: Optional[str] = None
 
 
-class RubricaSemanal(BaseModel):
-    semana: int
-    fecha_inicio: date
-    fluidez: Optional[str] = None
-    comprension: Optional[str] = None
-    observacion: Optional[str] = None
-
-
 class RubricaMensual(BaseModel):
     mes: int
     nivel_final: str
@@ -132,22 +127,28 @@ class RubricaMensual(BaseModel):
 
 
 class Rubrica(BaseModel):
-    semanales: list[RubricaSemanal]
     mensuales: list[RubricaMensual]
 
 
-class LibroLsb(BaseModel):
-    titulo: str
-    aciertos: int
-    total: int
+class LecturaDeLaSemana(BaseModel):
+    """La fila del alumno en una tabla de lectura semanal (CU015)."""
 
-
-class LecturaSemanal(BaseModel):
     semana: int
     fecha_inicio: date
+    fecha_fin: date
+    mes: int
+    id_programa: int
+    estado_tabla: EstadoTabla
+    motivo_no_realizada: Optional[str] = None
+    # Asistencia en la clase de referencia; null = sin marcar.
+    asistencia: Optional[EstadoAsistencia] = None
+    lsn_titulo: Optional[str] = None
+    lsn_nota: Optional[int] = None
+    lsn_maximo: Optional[int] = None
     cantidad_lsl: Optional[int] = None
-    observaciones: Optional[str] = None
-    libros_lsb: list[LibroLsb]
+    total_libros: int
+    observacion: Optional[str] = None
+    estado_fila: EstadoFila
 
 
 class CambioHistorial(BaseModel):

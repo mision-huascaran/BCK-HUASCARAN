@@ -1,4 +1,5 @@
-"""Grupos 2, 3 y 4 del diseño v3: catálogo de evaluación, registro semanal y rúbrica.
+"""Grupos 2, 3 y 4 del diseño v4: catálogo de evaluación, clases, asistencia, lectura
+semanal y rúbrica.
 
 Los catálogos del Grupo 2 (salvo `evaluacion_diagnostica`) no llevan auditoría
 (diseño v3, §1.2). Las tablas de captura guardan en `fecha_registro` el momento real de
@@ -13,16 +14,15 @@ from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
 from app.models.organizacion import COLUMNAS_GRUPO, FK_ANIO, FK_DOCENTE, FK_GRADO, FK_GRUPO, FK_PROGRAMA, FK_USUARIO
+from app.services.reglas_provisionales import UNICA_TABLA_POR_CLASE_Y_SUBPROGRAMA
 
 FK_ALUMNO = "alumno.id_alumno"
 FK_NIVEL_RAZKIDS = "nivel_razkids.id_nivel_rk"
 FK_NIVEL_RUBRICA = "nivel_rubrica.id_nivel_rubrica"
 FK_NIVEL_GENERAL = "nivel_general.id_nivel_general"
 FK_PERIODO = "periodo_academico.id_periodo_academico"
-
-# Columnas de semana_reporte a las que apuntan las FK compuestas de las tablas semanales.
-SEMANA_PERIODO_ANIO = ("id_semana", "id_periodo_academico", "id_anio_escolar")
-REF_SEMANA_PERIODO_ANIO = tuple(f"semana_reporte.{c}" for c in SEMANA_PERIODO_ANIO)
+FK_ACTIVIDAD = "actividad.id_actividad"
+FK_PERMISO = "permiso_correccion.id_permiso"
 
 
 # ── Grupo 2: catálogo del dominio de evaluación ─────────────────────────────────────
@@ -117,18 +117,16 @@ class EvaluacionDiagnostica(SQLModel, table=True):
 
 
 class SemanaReporte(SQLModel, table=True):
+    """Semanas de lunes a viernes de todo el año escolar (no dependen de los PA): una
+    semana sin clase del grupo no tiene tabla de lectura ni obligación."""
+
     __tablename__ = "semana_reporte"
-    __table_args__ = (
-        # Habilita la FK compuesta desde las tablas semanales.
-        UniqueConstraint(*SEMANA_PERIODO_ANIO, name="uq_semana_reporte_semana_periodo_anio"),
-    )
 
     id_semana: Optional[int] = Field(default=None, primary_key=True)
     id_anio_escolar: int = Field(foreign_key=FK_ANIO)
-    id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
     numero_semana: int
     fecha_inicio: date
-    # Fecha de cumplimiento para los registros pendientes (CU011).
+    # Viernes.
     fecha_fin: date
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
@@ -245,9 +243,9 @@ class Asistencia(SQLModel, table=True):
     estado: Optional[str] = Field(default=None, sa_type=Text)
     observacion: Optional[str] = Field(default=None, sa_type=Text)
     id_docente: int = Field(foreign_key=FK_DOCENTE)
-    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key="actividad.id_actividad")
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
     # Permiso de corrección (CU028) con que se registró; null si fue con una asignación.
-    id_permiso: Optional[int] = Field(default=None, foreign_key="permiso_correccion.id_permiso")
+    id_permiso: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
     # Momento real de la captura: con dos dispositivos, gana el más reciente.
     fecha_registro: datetime = Field(sa_type=UTCDateTime)
     version: int = Field(default=1, sa_column_kwargs={"server_default": text("1")})
@@ -297,34 +295,51 @@ class EvaluacionDiagnosticaAlumno(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
-class ReporteSemanalAlumno(SQLModel, table=True):
-    """Seguimiento de Lectura."""
+# Estados de una tabla de lectura semanal (CU023, CU026).
+LECTURA_NORMAL = "normal"
+LECTURA_NO_REALIZADA = "no_realizada"
+# Puntajes máximos posibles de un LSN.
+MAXIMOS_LSN = (5, 10)
 
-    __tablename__ = "reporte_semanal_alumno"
+
+class LecturaSemanal(SQLModel, table=True):
+    """Tabla de Seguimiento de Lectura de un grupo y subprograma en una semana (CU023 a
+    CU026), atada a una clase de referencia del grupo en esa semana: la asistencia de esa
+    clase decide qué filas admiten datos de lectura. El `mes` es el de la fecha de su
+    clase de referencia."""
+
+    __tablename__ = "lectura_semanal"
     __table_args__ = (
-        UniqueConstraint("id_alumno", "id_semana", name="uq_reporte_semanal_alumno_alumno_semana"),
-        # Impide guardar una semana con un periodo o año que no le corresponde.
-        ForeignKeyConstraint(
-            SEMANA_PERIODO_ANIO,
-            REF_SEMANA_PERIODO_ANIO,
-            name="fk_reporte_semanal_alumno_semana_periodo_anio",
+        ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_lectura_semanal_seccion"),
+        UniqueConstraint(
+            "id_colegio", "id_grado", "id_seccion", "id_programa", "id_anio_escolar", "mes", "id_semana",
+            name="uq_lectura_semanal_grupo_semana",
         ),
+        UniqueConstraint(*UNICA_TABLA_POR_CLASE_Y_SUBPROGRAMA, name="uq_lectura_semanal_clase_programa"),
+        CheckConstraint("mes BETWEEN 1 AND 12", name="ck_lectura_semanal_mes"),
+        CheckConstraint("estado IN ('normal', 'no_realizada')", name="ck_lectura_semanal_estado"),
         CheckConstraint(
-            "cantidad_lsl IS NULL OR cantidad_lsl >= 0",
-            name="ck_reporte_semanal_alumno_cantidad_lsl",
+            "estado <> 'no_realizada' OR length(trim(coalesce(motivo_no_realizada, ''))) > 0",
+            name="ck_lectura_semanal_motivo",
         ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    id_alumno: int = Field(foreign_key=FK_ALUMNO)
-    id_semana: int
-    id_anio_escolar: int
-    id_periodo_academico: int
-    # Libros de sala de lectura.
-    cantidad_lsl: Optional[int] = Field(default=None)
-    observaciones: Optional[str] = Field(default=None, sa_type=Text)
+    id_colegio: int
+    id_grado: int
+    id_seccion: int
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
+    id_anio_escolar: int = Field(foreign_key=FK_ANIO)
+    mes: int
+    id_semana: int = Field(foreign_key="semana_reporte.id_semana")
+    id_clase_referencia: int = Field(foreign_key=FK_CLASE)
+    estado: str = Field(default=LECTURA_NORMAL, sa_type=Text, sa_column_kwargs={"server_default": LECTURA_NORMAL})
+    motivo_no_realizada: Optional[str] = Field(default=None, sa_type=Text)
     id_docente: int = Field(foreign_key=FK_DOCENTE)
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
     fecha_registro: datetime = Field(sa_type=UTCDateTime)
+    version: int = Field(default=1, sa_column_kwargs={"server_default": text("1")})
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)
@@ -332,57 +347,47 @@ class ReporteSemanalAlumno(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
-class LibroSubidaNivel(SQLModel, table=True):
-    """Libros de subir de nivel (LSB) de un reporte semanal."""
+class LecturaSemanalAlumno(SQLModel, table=True):
+    """Fila de un alumno de la lista de la clase de referencia (CU024). LSN: uno por
+    semana, todo o nada (título + nota + máximo 5 o 10). LSL: cantidad entera; null = no
+    registrado (≠ 0). El total de libros y el estado de la fila se calculan."""
 
-    __tablename__ = "libro_subida_nivel"
+    __tablename__ = "lectura_semanal_alumno"
     __table_args__ = (
-        CheckConstraint("aciertos <= total_preguntas", name="ck_libro_subida_nivel_aciertos"),
-    )
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    id_reporte_semanal: int = Field(foreign_key="reporte_semanal_alumno.id")
-    titulo_libro: str = Field(sa_type=Text)
-    aciertos: int
-    total_preguntas: int
-
-    creado_por: int = Field(foreign_key=FK_USUARIO)
-    creado_en: datetime = Field(sa_type=UTCDateTime)
-    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
-    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
-
-
-# ── Grupo 4: rúbrica semanal y nivel final ──────────────────────────────────────────
-
-
-class RubricaRegistroSemanal(SQLModel, table=True):
-    """Rúbrica semanal. Sin asistencia (vive en `asistencia`); niveles nullable."""
-
-    __tablename__ = "rubrica_registro_semanal"
-    __table_args__ = (
-        UniqueConstraint("id_alumno", "id_semana", name="uq_rubrica_registro_semanal_alumno_semana"),
-        ForeignKeyConstraint(
-            SEMANA_PERIODO_ANIO,
-            REF_SEMANA_PERIODO_ANIO,
-            name="fk_rubrica_registro_semanal_semana_periodo_anio",
+        UniqueConstraint("id_lectura_semanal", "id_alumno", name="uq_lectura_semanal_alumno_tabla_alumno"),
+        CheckConstraint(
+            "(lsn_titulo IS NULL AND lsn_nota IS NULL AND lsn_maximo IS NULL) OR "
+            "(length(trim(lsn_titulo)) > 0 AND lsn_nota IS NOT NULL AND lsn_maximo IS NOT NULL)",
+            name="ck_lectura_semanal_alumno_lsn_completo",
         ),
+        CheckConstraint("lsn_maximo IS NULL OR lsn_maximo IN (5, 10)", name="ck_lectura_semanal_alumno_lsn_maximo"),
+        CheckConstraint(
+            "lsn_nota IS NULL OR (lsn_nota >= 0 AND lsn_nota <= lsn_maximo)", name="ck_lectura_semanal_alumno_lsn_nota"
+        ),
+        CheckConstraint("cantidad_lsl IS NULL OR cantidad_lsl >= 0", name="ck_lectura_semanal_alumno_cantidad_lsl"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    id_lectura_semanal: int = Field(foreign_key="lectura_semanal.id")
     id_alumno: int = Field(foreign_key=FK_ALUMNO)
-    id_semana: int
-    id_anio_escolar: int
-    id_periodo_academico: int
-    id_nivel_fluidez: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RUBRICA)
-    id_nivel_comprension: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RUBRICA)
+    lsn_titulo: Optional[str] = Field(default=None, sa_type=Text)
+    lsn_nota: Optional[int] = None
+    lsn_maximo: Optional[int] = None
+    cantidad_lsl: Optional[int] = None
     observacion: Optional[str] = Field(default=None, sa_type=Text)
     id_docente: int = Field(foreign_key=FK_DOCENTE)
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
     fecha_registro: datetime = Field(sa_type=UTCDateTime)
+    version: int = Field(default=1, sa_column_kwargs={"server_default": text("1")})
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)
     modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
+
+# ── Grupo 4: nivel final ────────────────────────────────────────────────────────────
 
 
 class NivelFinalMensual(SQLModel, table=True):

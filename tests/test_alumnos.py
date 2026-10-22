@@ -9,14 +9,9 @@ from app.core.tiempo import ahora_utc
 from app.models.evaluacion import (
     EvaluacionDiagnostica,
     EvaluacionDiagnosticaAlumno,
-    LibroSubidaNivel,
     NivelFinalMensual,
     NivelGeneral,
     NivelRazkids,
-    NivelRubrica,
-    ReporteSemanalAlumno,
-    RubricaRegistroSemanal,
-    SemanaReporte,
 )
 from app.models.organizacion import AlumnoPertenencia, CicloEbr
 from app.models.trazabilidad import Auditoria
@@ -26,6 +21,7 @@ from tests.conftest import (
     hoy_iso,
     motivo,
     registrar_asistencia,
+    tabla_lectura,
 )
 
 SIN_ASISTENCIA = {"porcentaje": None, "asistidas": 0, "contabilizadas": 0}
@@ -320,25 +316,17 @@ def registros(db, entorno):
     ahora = ahora_utc()
     base = {"creado_por": entorno.supervisor.id_usuario, "creado_en": ahora}
     captura = {"id_docente": entorno.id_docente, "fecha_registro": ahora, **base}
-    semanas = []
-    for numero in (1, 2):
-        lunes = entorno.hoy - timedelta(days=21 - 7 * numero)
-        semana = SemanaReporte(id_anio_escolar=anio, id_periodo_academico=periodo, numero_semana=numero,
-                               fecha_inicio=lunes, fecha_fin=lunes + timedelta(days=4), **base)
-        db.add(semana)
-        semanas.append(semana)
-    db.flush()
+    alumno = entorno.alumnos["luis"]
+    fechas = [entorno.hoy - timedelta(days=14), entorno.hoy - timedelta(days=7)]
+    for fecha, estado in zip(fechas, ("presente", "ausente")):
+        registrar_asistencia(db, alumno, fecha, estado)
+    # Semana 1: LSN + 3 LSL (4 libros). Semana 2: faltó y no tiene datos.
+    tabla_lectura(db, alumno, fechas[0], lsn_titulo="El zorro", lsn_nota=4, lsn_maximo=5, cantidad_lsl=3,
+                  observacion="Bien")
+    tabla_lectura(db, alumno, fechas[1])
+    # Una tabla no realizada no suma libros.
+    tabla_lectura(db, alumno, entorno.hoy - timedelta(days=21), estado="no_realizada", motivo="Paro")
     claves = {"id_alumno": luis, "id_anio_escolar": anio, "id_periodo_academico": periodo}
-    reporte = ReporteSemanalAlumno(id_semana=semanas[0].id_semana, cantidad_lsl=3, observaciones="Bien", **claves, **captura)
-    db.add(reporte)
-    db.add(ReporteSemanalAlumno(id_semana=semanas[1].id_semana, cantidad_lsl=None, **claves, **captura))
-    db.flush()
-    db.add(LibroSubidaNivel(id_reporte_semanal=reporte.id, titulo_libro="El zorro", aciertos=4, total_preguntas=5, **base))
-    for semana, estado in zip(semanas, ("presente", "ausente")):
-        registrar_asistencia(db, entorno.alumnos["luis"], semana.fecha_inicio, estado)
-    nivel_rubrica = db.exec(select(NivelRubrica).order_by(NivelRubrica.id_nivel_rubrica)).first()
-    db.add(RubricaRegistroSemanal(id_semana=semanas[1].id_semana, id_nivel_fluidez=nivel_rubrica.id_nivel_rubrica,
-                                  observacion="Lee fluido", **claves, **captura))
     generales = db.exec(select(NivelGeneral).order_by(NivelGeneral.orden)).all()
     for mes, nivel in ((4, generales[0]), (5, generales[1])):
         db.add(NivelFinalMensual(mes=mes, id_nivel_final=nivel.id_nivel_general, ajustado_por_docente=mes == 5,
@@ -450,17 +438,10 @@ def test_cu015_rubrica_y_lectura_muestran_los_5_mas_recientes(client, db, entorn
     luis = entorno.alumnos["luis"].id_alumno
     anio, periodo = entorno.anio.id_anio_escolar, entorno.periodos["vigente"].id_periodo_academico
     base = {"creado_por": entorno.supervisor.id_usuario, "creado_en": ahora_utc()}
-    captura = {"id_docente": entorno.id_docente, "fecha_registro": ahora_utc(), **base}
     claves = {"id_alumno": luis, "id_anio_escolar": anio, "id_periodo_academico": periodo}
     nivel_general = db.exec(select(NivelGeneral)).first()
     for numero in range(1, 8):
-        lunes = entorno.hoy - timedelta(days=28 - 7 * numero)
-        semana = SemanaReporte(id_anio_escolar=anio, id_periodo_academico=periodo, numero_semana=numero,
-                               fecha_inicio=lunes, fecha_fin=lunes + timedelta(days=4), **base)
-        db.add(semana)
-        db.flush()
-        db.add(RubricaRegistroSemanal(id_semana=semana.id_semana, **claves, **captura))
-        db.add(ReporteSemanalAlumno(id_semana=semana.id_semana, cantidad_lsl=numero, **claves, **captura))
+        tabla_lectura(db, entorno.alumnos["luis"], entorno.hoy - timedelta(days=56 - 7 * numero), cantidad_lsl=numero)
         db.add(NivelFinalMensual(mes=numero, id_nivel_final=nivel_general.id_nivel_general, ajustado_por_docente=False,
                                  fecha_calculo=ahora_utc(), **claves, **base))
     db.commit()
@@ -470,9 +451,8 @@ def test_cu015_rubrica_y_lectura_muestran_los_5_mas_recientes(client, db, entorn
     rubrica = client.get(f"{url}/rubrica", headers=cabecera).json()
     lectura = client.get(f"{url}/lectura", headers=cabecera).json()
 
-    assert [s["semana"] for s in rubrica["semanales"]] == [7, 6, 5, 4, 3]
     assert [m["mes"] for m in rubrica["mensuales"]] == [7, 6, 5, 4, 3]
-    assert [s["semana"] for s in lectura] == [7, 6, 5, 4, 3]
+    assert [s["cantidad_lsl"] for s in lectura] == [7, 6, 5, 4, 3]
     # El resumen sí suma todo el año, no solo lo que se ve en la grilla.
     assert client.get(f"{url}/resumen", headers=cabecera).json()["libros_leidos_anio"] == sum(range(1, 8))
 
@@ -487,11 +467,14 @@ def test_cu015_pestanas_con_registros(client, entorno, cabeceras, registros):
 
     assert (vuelo[0]["nivel_entrada"], vuelo[0]["nivel_colocado"], vuelo[0]["aciertos"]) == ("A", "B", 8)
     assert vuelo[0]["nivel_descriptivo"] == "En proceso"
-    assert [s["semana"] for s in rubrica["semanales"]] == [2]
-    assert rubrica["semanales"][0]["fluidez"] is not None
     assert [(m["mes"], m["ajustado"]) for m in rubrica["mensuales"]] == [(5, True), (4, False)]
-    assert [(s["semana"], s["cantidad_lsl"]) for s in lectura] == [(2, None), (1, 3)]
-    assert lectura[1]["libros_lsb"] == [{"titulo": "El zorro", "aciertos": 4, "total": 5}]
+    assert [(s["asistencia"], s["estado_fila"], s["total_libros"]) for s in lectura] == [
+        ("ausente", "no_aplica", 0), ("presente", "completada", 4), (None, "no_aplica", 0),
+    ]
+    assert (lectura[1]["lsn_titulo"], lectura[1]["lsn_nota"], lectura[1]["lsn_maximo"]) == ("El zorro", 4, 5)
+    assert (lectura[1]["observacion"], lectura[2]["estado_tabla"], lectura[2]["motivo_no_realizada"]) == (
+        "Bien", "no_realizada", "Paro",
+    )
 
 
 def test_cu015_pestanas_vacias(client, entorno, cabeceras):
@@ -502,7 +485,7 @@ def test_cu015_pestanas_vacias(client, entorno, cabeceras):
         "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
     assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
-    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"semanales": [], "mensuales": []}
+    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"mensuales": []}
     assert client.get(f"{url}/lectura", headers=cabecera).json() == []
 
 
@@ -515,7 +498,7 @@ def test_cu015_sin_anio_escolar_las_pestanas_salen_vacias(client, entorno, cabec
         "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
     assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
-    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"semanales": [], "mensuales": []}
+    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"mensuales": []}
     assert client.get(f"{url}/lectura", headers=cabecera).json() == []
     assert client.get(f"{url}/historial", headers=cabecera).json()["total"] == 0
 

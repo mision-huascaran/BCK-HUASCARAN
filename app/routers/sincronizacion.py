@@ -42,3 +42,12 @@ def consultar_operacion(id_operacion: uuid.UUID, db: Db, docente: Docente):
     """Resultado de una operación enviada que se quedó sin respuesta: `aceptada`,
     `rechazada` (con su `motivo`) o `desconocida` (no llegó, o no es propia)."""
     return sincronizacion.consultar_operacion(db, docente, id_operacion)
+
+
+@router.post("/operaciones/{id_operacion}/descartar", response_model=EstadoOperacion)
+def descartar_operacion(id_operacion: uuid.UUID, db: Db, docente: Docente):
+    """"Cargar versión actual" / "Descartar": una operación propia `rechazada` pasa a
+    `descartada` y deja de contar como error en los estados de la actividad y del
+    docente. Errores: 404 `operacion_no_encontrada` (no existe o es ajena), 409
+    `operacion_no_rechazada`."""
+    return sincronizacion.descartar_operacion(db, docente, id_operacion)

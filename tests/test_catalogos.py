@@ -4,7 +4,6 @@ from datetime import timedelta
 import pytest
 
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import SemanaReporte
 from app.models.organizacion import AnioEscolar, PeriodoAcademico
 from tests.conftest import crear_particular, rangos_en_receso
 
@@ -69,26 +68,6 @@ def test_periodos_academicos_sin_calendario_traen_fechas_null(client, db, entorn
 
     assert periodos == [{"id": periodos[0]["id"], "id_anio_escolar": otro.id_anio_escolar, "numero": 1, "tipo": "PA",
                          "fecha_inicio": None, "fecha_fin": None, "vigente": False}]
-
-
-def test_semanas_por_periodo_y_cerradas(client, db, entorno, cabeceras):
-    hoy = entorno.hoy
-    for numero, lunes in enumerate([hoy - timedelta(days=14), hoy + timedelta(days=7)], start=1):
-        db.add(SemanaReporte(
-            id_anio_escolar=entorno.anio.id_anio_escolar,
-            id_periodo_academico=entorno.periodos["vigente"].id_periodo_academico,
-            numero_semana=numero, fecha_inicio=lunes, fecha_fin=lunes + timedelta(days=4),
-            creado_por=1, creado_en=ahora_utc(),
-        ))
-    db.commit()
-
-    semanas = client.get(
-        "/semanas", params={"id_periodo_academico": entorno.periodos["vigente"].id_periodo_academico},
-        headers=cabeceras["Docente"],
-    ).json()
-
-    assert [(s["numero_semana"], s["cerrada"]) for s in semanas] == [(1, True), (2, False)]
-    assert client.get("/semanas", headers=cabeceras["Docente"]).json() == semanas
 
 
 def test_niveles(client, entorno, cabeceras):

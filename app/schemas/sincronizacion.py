@@ -10,7 +10,7 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 ModuloSincronizacion = Literal["asistencias", "lectura", "rubrica", "registro_vuelo", "alumnos", "actividad"]
 EstadoResultado = Literal["aceptada", "rechazada"]
-EstadoConsultado = Literal["aceptada", "rechazada", "desconocida"]
+EstadoConsultado = Literal["aceptada", "rechazada", "descartada", "desconocida"]
 
 MAX_PENDIENTES_POR_LOTE = 500
 

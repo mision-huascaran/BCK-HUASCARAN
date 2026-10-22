@@ -19,9 +19,12 @@ from typing import Optional
 from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
-from app.models.evaluacion import TIPO_HABITUAL, Asistencia, Clase
+from app.core.database import insert_con_conflicto
+from app.core.tiempo import ahora_utc
+from app.models.evaluacion import TIPO_HABITUAL, Asistencia, Clase, ClaseAlumno
 from app.models.organizacion import AlumnoPertenencia, ColegioGrado, Seccion
 from app.services.calendario import Calendarios, cargar_calendarios
+from app.services.pertenencia import lista_del_grupo
 
 UNA_SEMANA = timedelta(days=7)
 # (id_grado, id_seccion) de un colegio.
@@ -186,3 +189,58 @@ def clase_del_dia(
         )
     ).first()
     return ClaseDelDia(clases[0] if clases else None, trasladada)
+
+
+# ── Fila de la clase y su lista ─────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class NuevaClase:
+    """Lo que hace falta para crear la fila de una clase que todavía no la tiene."""
+
+    fecha: date
+    fecha_original: date
+    tipo: str
+    id_periodo_academico: int
+
+
+def asegurar_fila(db: Session, filtro: FiltroGrupos, nueva: NuevaClase, id_usuario: int) -> Clase:
+    """La fila de la clase del grupo (`filtro` con grado y sección) en `nueva.fecha`; si
+    no existe, la crea. INSERT ... ON CONFLICT DO NOTHING: dos escrituras simultáneas no
+    crean dos clases."""
+    db.execute(
+        insert_con_conflicto(db, Clase.__table__)
+        .values(
+            id_colegio=filtro.id_colegio, id_grado=filtro.id_grado, id_seccion=filtro.id_seccion,
+            id_periodo_academico=nueva.id_periodo_academico, tipo=nueva.tipo, fecha_original=nueva.fecha_original,
+            fecha=nueva.fecha, version=1, creado_por=id_usuario, creado_en=ahora_utc(),
+        )
+        .on_conflict_do_nothing()
+    )
+    return db.exec(
+        select(Clase).where(*filtro.de(Clase), Clase.fecha == nueva.fecha).execution_options(populate_existing=True)
+    ).one()
+
+
+def fila_de_programada(db: Session, filtro: FiltroGrupos, clase: ClaseProgramada, id_usuario: int) -> Clase:
+    """La fila de una clase programada (la crea si es una habitual calculada)."""
+    if clase.id_clase is not None:
+        return db.get(Clase, clase.id_clase)
+    nueva = NuevaClase(clase.fecha, clase.fecha_original, clase.tipo, clase.id_periodo_academico)
+    return asegurar_fila(db, filtro, nueva, id_usuario)
+
+
+def congelar_lista(db: Session, clase: Clase) -> None:
+    """Guarda la lista de la clase (los alumnos del grupo en su fecha, con su
+    subprograma) si todavía no está congelada. Desde ahí no cambia con la pertenencia."""
+    if clase.lista_congelada_en is not None:
+        return
+    lista = lista_del_grupo(db, clase.id_colegio, clase.id_grado, clase.id_seccion, clase.fecha)
+    if lista:
+        db.execute(
+            insert_con_conflicto(db, ClaseAlumno.__table__)
+            .values([{"id_clase": clase.id_clase, "id_alumno": a.id_alumno, "id_programa": p} for a, p in lista])
+            .on_conflict_do_nothing()
+        )
+    clase.lista_congelada_en = ahora_utc()
+    db.add(clase)
+    db.flush()

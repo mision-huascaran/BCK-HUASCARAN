@@ -172,13 +172,17 @@ def _clases_donde_figura_sin_pertenecer(db: Session, id_alumno: int, intervalos:
     return [c for c in clases if not pertenece(c)]
 
 
-def _clases_donde_pertenece_sin_figurar(db: Session, id_alumno: int, intervalos: list[AlumnoPertenencia]) -> list[Clase]:
+def _clases_donde_pertenece_sin_figurar(
+    db: Session, id_alumno: int, intervalos: list[AlumnoPertenencia], alta: bool
+) -> list[Clase]:
     """Clases con lista congelada de un grupo al que el alumno pertenecía en su fecha,
-    pero en cuya lista no figura (pasarlo a un grupo con listas ya guardadas)."""
+    pero en cuya lista no figura (pasarlo a un grupo con listas ya guardadas). En el alta
+    (`alta`), las listas del mismo día en que empieza no cuentan: entra desde la próxima
+    clase."""
     en_sus_listas = select(ClaseAlumno.id_clase).where(ClaseAlumno.id_alumno == id_alumno)
     clases: list[Clase] = []
     for intervalo in intervalos:
-        en_el_intervalo = [Clase.fecha >= intervalo.desde]
+        en_el_intervalo = [Clase.fecha > intervalo.desde if alta else Clase.fecha >= intervalo.desde]
         if intervalo.hasta is not None:
             en_el_intervalo.append(Clase.fecha < intervalo.hasta)
         clases.extend(db.exec(
@@ -214,7 +218,7 @@ def _descripcion(db: Session, clases: list[Clase]) -> list[dict]:
     return salida
 
 
-def validar_contra_listas_historicas(db: Session, id_alumno: int) -> None:
+def validar_contra_listas_historicas(db: Session, id_alumno: int, alta: bool = False) -> None:
     """Rechaza (409 `conflicto_listas_historicas`, con las `clases` afectadas) un cambio
     de pertenencia que contradiga una lista de clase congelada (`clase_alumno`). Se llama
     con el cambio ya aplicado (sin commit) y compara el historial resultante con las
@@ -223,14 +227,18 @@ def validar_contra_listas_historicas(db: Session, id_alumno: int) -> None:
     - el alumno figura en una lista y en su fecha ya no pertenecería a ese grupo (cambio
       de grupo o inactivación desde una fecha anterior, o inicio posterior a la lista);
     - el alumno pertenecería a un grupo en la fecha de una lista congelada en la que no
-      figura (cambio a un grupo que ya tiene listas desde esa fecha).
+      figura (cambio a un grupo que ya tiene listas desde esa fecha). En el alta de un
+      alumno (`alta`) solo chocan las listas de fechas posteriores a su `desde`: se lo
+      puede registrar hoy aunque la clase de hoy ya tenga su lista. Los cambios de grupo
+      y las inactivaciones mantienen la regla estricta (si no, estaría en dos grupos el
+      mismo día).
 
     La petición termina en error y nada se guarda."""
     db.flush()
     intervalos = list(db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == id_alumno)).all())
     conflictos = [
         *_clases_donde_figura_sin_pertenecer(db, id_alumno, intervalos),
-        *_clases_donde_pertenece_sin_figurar(db, id_alumno, intervalos),
+        *_clases_donde_pertenece_sin_figurar(db, id_alumno, intervalos, alta),
     ]
     if conflictos:
         raise ErrorNegocio(
@@ -271,15 +279,15 @@ def _modificado(intervalo: AlumnoPertenencia, movimiento: Movimiento) -> None:
     intervalo.modificado_en = movimiento.ahora
 
 
-def abrir(db: Session, alumno: Alumno, desde: date, campo: str, movimiento: Movimiento) -> None:
-    """Abre un intervalo vigente con el grupo de la ficha del alumno (crear o activar).
-    `desde` no puede ser futura ni anterior al día en que dejó su último grupo."""
+def abrir(db: Session, alumno: Alumno, desde: date, campo: str, movimiento: Movimiento, alta: bool = False) -> None:
+    """Abre un intervalo vigente con el grupo de la ficha del alumno (crear, con `alta`, o
+    activar). `desde` no puede ser futura ni anterior al día en que dejó su último grupo."""
     validar_fecha_efectiva(desde, campo)
     ultima = _ultima(db, alumno.id_alumno)
     if ultima is not None:
         _no_antes_de(desde, ultima.hasta or ultima.desde, MENSAJE_ANTES_DE_LA_SALIDA, campo)
     db.add(_nuevo_intervalo(alumno, desde, movimiento))
-    validar_contra_listas_historicas(db, alumno.id_alumno)
+    validar_contra_listas_historicas(db, alumno.id_alumno, alta)
 
 
 def cerrar(db: Session, id_alumno: int, hasta: date, campo: str, movimiento: Movimiento) -> None:

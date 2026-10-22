@@ -5,7 +5,8 @@ ya empezó (`calendario.anio_de_referencia`). Los permisos (alcance del Docente)
 el router con `alumno_service.alumno_visible`.
 
 Las pestañas son mini-grillas: Registro de Vuelo, una fila por periodo (4 como máximo);
-Rúbrica y Seguimiento de Lectura, los 5 registros más recientes.
+Rúbrica y Seguimiento de Lectura, los 5 registros más recientes (Lectura: sus filas en
+las tablas semanales, por semana).
 """
 from collections import defaultdict
 from datetime import date, datetime
@@ -22,15 +23,14 @@ from app.models.evaluacion import (
     Asistencia,
     Clase,
     ClaseAlumno,
+    LECTURA_NORMAL,
     EvaluacionDiagnostica,
     EvaluacionDiagnosticaAlumno,
-    LibroSubidaNivel,
+    LecturaSemanal,
+    LecturaSemanalAlumno,
     NivelFinalMensual,
     NivelGeneral,
     NivelRazkids,
-    NivelRubrica,
-    ReporteSemanalAlumno,
-    RubricaRegistroSemanal,
     SemanaReporte,
 )
 from app.models.organizacion import (
@@ -50,15 +50,14 @@ from app.schemas.alumno import (
     AsistenciaDelAlumno,
     CambioHistorial,
     EventoHistorial,
-    LecturaSemanal,
-    LibroLsb,
+    LecturaDeLaSemana,
     NivelColocado,
     RegistroVuelo,
     Resumen,
     Rubrica,
     RubricaMensual,
-    RubricaSemanal,
 )
+from app.services import lectura_service
 from app.services.calendario import anio_de_referencia
 from app.services.nivel_descriptivo import escala_del_grado
 from app.services.pertenencia import CAMPO_AUDITORIA, fecha_legible
@@ -107,17 +106,17 @@ def _nivel_colocado(db: Session, alumno: Alumno, id_anio: int) -> Optional[Nivel
 
 
 def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
-    """LSL + LSB de los reportes del año (0 si no tiene ninguno)."""
-    lsl = db.exec(
-        select(func.coalesce(func.sum(ReporteSemanalAlumno.cantidad_lsl), 0))
-        .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == id_anio)
-    ).one()
-    lsb = db.exec(
-        select(func.count(LibroSubidaNivel.id))
-        .join(ReporteSemanalAlumno, ReporteSemanalAlumno.id == LibroSubidaNivel.id_reporte_semanal)
-        .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == id_anio)
-    ).one()
-    return int(lsl) + lsb
+    """Total de libros leídos en el año: la suma del total de libros (LSN + LSL) de sus
+    filas en las tablas de lectura del año que se realizaron (0 si no tiene ninguna)."""
+    return int(db.exec(
+        select(func.coalesce(func.sum(lectura_service.total_libros_sql()), 0))
+        .join(LecturaSemanal, LecturaSemanal.id == LecturaSemanalAlumno.id_lectura_semanal)
+        .where(
+            LecturaSemanalAlumno.id_alumno == id_alumno,
+            LecturaSemanal.id_anio_escolar == id_anio,
+            LecturaSemanal.estado == LECTURA_NORMAL,
+        )
+    ).one())
 
 
 def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> AsistenciaDelAlumno:
@@ -204,19 +203,7 @@ def registro_vuelo(db: Session, alumno: Alumno) -> list[RegistroVuelo]:
 def rubrica(db: Session, id_alumno: int) -> Rubrica:
     anio = anio_de_referencia(db)
     if anio is None:
-        return Rubrica(semanales=[], mensuales=[])
-    fluidez = aliased(NivelRubrica)
-    comprension = aliased(NivelRubrica)
-    semanales = db.exec(
-        select(SemanaReporte, RubricaRegistroSemanal, fluidez.nombre_nivel, comprension.nombre_nivel)
-        .select_from(RubricaRegistroSemanal)
-        .join(SemanaReporte, SemanaReporte.id_semana == RubricaRegistroSemanal.id_semana)
-        .outerjoin(fluidez, fluidez.id_nivel_rubrica == RubricaRegistroSemanal.id_nivel_fluidez)
-        .outerjoin(comprension, comprension.id_nivel_rubrica == RubricaRegistroSemanal.id_nivel_comprension)
-        .where(RubricaRegistroSemanal.id_alumno == id_alumno, RubricaRegistroSemanal.id_anio_escolar == anio.id_anio_escolar)
-        .order_by(col(SemanaReporte.fecha_inicio).desc())
-        .limit(FILAS_RECIENTES)
-    ).all()
+        return Rubrica(mensuales=[])
     mensuales = db.exec(
         select(NivelFinalMensual, NivelGeneral.nombre_nivel)
         .join(NivelGeneral, NivelGeneral.id_nivel_general == NivelFinalMensual.id_nivel_final)
@@ -225,13 +212,6 @@ def rubrica(db: Session, id_alumno: int) -> Rubrica:
         .limit(FILAS_RECIENTES)
     ).all()
     return Rubrica(
-        semanales=[
-            RubricaSemanal(
-                semana=semana.numero_semana, fecha_inicio=semana.fecha_inicio,
-                fluidez=nivel_fluidez, comprension=nivel_comprension, observacion=registro.observacion,
-            )
-            for semana, registro, nivel_fluidez, nivel_comprension in semanales
-        ],
         mensuales=[
             RubricaMensual(
                 mes=nivel.mes, nivel_final=nombre, ajustado=nivel.ajustado_por_docente,
@@ -242,34 +222,34 @@ def rubrica(db: Session, id_alumno: int) -> Rubrica:
     )
 
 
-def lectura(db: Session, id_alumno: int) -> list[LecturaSemanal]:
+def lectura(db: Session, id_alumno: int) -> list[LecturaDeLaSemana]:
+    """Sus filas en las 5 tablas de lectura más recientes del año, con el estado de la
+    fila y la asistencia de la clase de referencia (CU015)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return []
-    reportes = db.exec(
-        select(ReporteSemanalAlumno, SemanaReporte)
-        .join(SemanaReporte, SemanaReporte.id_semana == ReporteSemanalAlumno.id_semana)
-        .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == anio.id_anio_escolar)
-        .order_by(col(SemanaReporte.fecha_inicio).desc())
+    filas = db.exec(
+        select(LecturaSemanalAlumno, LecturaSemanal, SemanaReporte, Asistencia.estado)
+        .join(LecturaSemanal, LecturaSemanal.id == LecturaSemanalAlumno.id_lectura_semanal)
+        .join(SemanaReporte, SemanaReporte.id_semana == LecturaSemanal.id_semana)
+        .outerjoin(
+            Asistencia,
+            (Asistencia.id_clase == LecturaSemanal.id_clase_referencia)
+            & (Asistencia.id_alumno == LecturaSemanalAlumno.id_alumno),
+        )
+        .where(LecturaSemanalAlumno.id_alumno == id_alumno, LecturaSemanal.id_anio_escolar == anio.id_anio_escolar)
+        .order_by(col(SemanaReporte.fecha_inicio).desc(), col(LecturaSemanal.id).desc())
         .limit(FILAS_RECIENTES)
     ).all()
-    libros: dict[int, list[LibroLsb]] = defaultdict(list)
-    if reportes:
-        for libro in db.exec(
-            select(LibroSubidaNivel)
-            .where(col(LibroSubidaNivel.id_reporte_semanal).in_([r.id for r, _ in reportes]))
-            .order_by(LibroSubidaNivel.id)
-        ).all():
-            libros[libro.id_reporte_semanal].append(
-                LibroLsb(titulo=libro.titulo_libro, aciertos=libro.aciertos, total=libro.total_preguntas)
-            )
     return [
-        LecturaSemanal(
-            semana=semana.numero_semana, fecha_inicio=semana.fecha_inicio,
-            cantidad_lsl=reporte.cantidad_lsl, observaciones=reporte.observaciones,
-            libros_lsb=libros[reporte.id],
+        LecturaDeLaSemana(
+            semana=semana.numero_semana, fecha_inicio=semana.fecha_inicio, fecha_fin=semana.fecha_fin, mes=tabla.mes,
+            id_programa=tabla.id_programa, estado_tabla=tabla.estado, motivo_no_realizada=tabla.motivo_no_realizada,
+            asistencia=asistencia, lsn_titulo=fila.lsn_titulo, lsn_nota=fila.lsn_nota, lsn_maximo=fila.lsn_maximo,
+            cantidad_lsl=fila.cantidad_lsl, total_libros=lectura_service.total_libros(fila),
+            observacion=fila.observacion, estado_fila=lectura_service.estado_fila(tabla.estado, asistencia, fila),
         )
-        for reporte, semana in reportes
+        for fila, tabla, semana, asistencia in filas
     ]
 
 

@@ -572,3 +572,50 @@ def test_grado_a_cargo_con_subprogramas_y_secciones(client, entorno, cabeceras):
     assert primero["subprogramas"] == [{"id": entorno.programas["Alfabetización"], "nombre": "Alfabetización"}]
     assert [s["nombre"] for s in primero["secciones"]] == ["Única"]
     assert andino["subprogramas"] == ["Alfabetización", "Comprensión Lectora"]
+
+
+# ── Descartar una operación rechazada ("Cargar versión actual") ─────────────────────
+
+def test_descartar_un_rechazo_deja_de_contar_como_error(client, db, entorno, cabeceras, actividad):
+    doc = cabeceras["Docente"]
+
+    def rechazar(_):
+        raise RechazoOperacion("regla", "No.")
+
+    rechazada, aceptada = item(), item()
+    procesar_operacion(db, entorno.docente, rechazada, rechazar, OPERACION)
+    procesar_operacion(db, entorno.docente, aceptada, lambda _: {"ok": True}, OPERACION)
+    db.commit()
+    url = f"/sincronizacion/operaciones/{rechazada.id_operacion}"
+    assert estado_actividad(client, doc, actividad["id"]) == ("error", 0)
+
+    descartada = client.post(f"{url}/descartar", headers=doc)
+    otra_vez = client.post(f"{url}/descartar", headers=doc)
+
+    assert (descartada.status_code, descartada.json()["estado"], descartada.json()["motivo"]) == (200, "descartada", "regla")
+    assert (otra_vez.status_code, motivo(otra_vez)) == (409, "operacion_no_rechazada")
+    assert client.get(url, headers=doc).json()["estado"] == "descartada"
+    assert estado_actividad(client, doc, actividad["id"]) == ("sincronizada", 0)
+    assert estado_docente(client, cabeceras) == ("al_dia", 0)
+    no_rechazada = client.post(f"/sincronizacion/operaciones/{aceptada.id_operacion}/descartar", headers=doc)
+    assert (no_rechazada.status_code, motivo(no_rechazada)) == (409, "operacion_no_rechazada")
+
+
+def test_descartar_ajena_inexistente_y_roles(client, db, entorno, cabeceras, actividad):
+    def rechazar(_):
+        raise RechazoOperacion("regla", "No.")
+
+    propia = item()
+    procesar_operacion(db, entorno.docente, propia, rechazar, OPERACION)
+    db.commit()
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "40000010")
+    db.commit()
+    url = f"/sincronizacion/operaciones/{propia.id_operacion}/descartar"
+
+    ajena = client.post(url, headers=cabecera_de(db, otro))
+    inexistente = client.post(f"/sincronizacion/operaciones/{uuid.uuid4()}/descartar", headers=cabeceras["Docente"])
+
+    assert (ajena.status_code, motivo(ajena)) == (404, "operacion_no_encontrada")
+    assert (inexistente.status_code, motivo(inexistente)) == (404, "operacion_no_encontrada")
+    assert client.post(url).status_code == 401
+    assert client.post(url, headers=cabeceras["Supervisor"]).status_code == 403

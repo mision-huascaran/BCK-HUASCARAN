@@ -18,10 +18,8 @@ from app.core.ciclo import ciclo_sql
 from app.models.evaluacion import (
     Asistencia,
     EvaluacionDiagnosticaAlumno,
-    LibroSubidaNivel,
+    LecturaSemanalAlumno,
     NivelFinalMensual,
-    ReporteSemanalAlumno,
-    RubricaRegistroSemanal,
 )
 from app.models.organizacion import Alumno, CicloEbr, Colegio, Grado, Programa, Seccion
 from app.models.trazabilidad import Auditoria
@@ -41,10 +39,9 @@ OTROS = "otros"
 # Tabla auditada -> módulo operativo. Los CU nombran Rúbrica, Seguimiento de Lectura y
 # Registro de Vuelo; Alumnos y Asistencia también requieren actividad y se cuentan.
 MODULOS = {
-    "rubrica_registro_semanal": RUBRICA,
     "nivel_final_mensual": RUBRICA,
-    "reporte_semanal_alumno": LECTURA,
-    "libro_subida_nivel": LECTURA,
+    "lectura_semanal": LECTURA,
+    "lectura_semanal_alumno": LECTURA,
     "evaluacion_diagnostica_alumno": VUELO,
     "alumno": ALUMNOS,
     "asistencia": ASISTENCIA,
@@ -70,8 +67,7 @@ CAMPO_POR_ACCION = {CREAR: "creados", EDITAR: "editados", ACTIVAR: "activados", 
 CON_ID_ALUMNO = {
     "asistencia": Asistencia,
     "evaluacion_diagnostica_alumno": EvaluacionDiagnosticaAlumno,
-    "reporte_semanal_alumno": ReporteSemanalAlumno,
-    "rubrica_registro_semanal": RubricaRegistroSemanal,
+    "lectura_semanal_alumno": LecturaSemanalAlumno,
     "nivel_final_mensual": NivelFinalMensual,
 }
 
@@ -169,12 +165,11 @@ def asignaciones_involucradas(db: Session, registros: list[tuple[str, str, str]]
         ids = _ids_enteros(registros, tabla)
         if ids:
             consultas.append(select(modelo.id_alumno).where(col(modelo.id).in_(ids)))
-    ids = _ids_enteros(registros, "libro_subida_nivel")
+    # Una tabla de lectura (crearla, marcarla no realizada) involucra a los alumnos de sus filas.
+    ids = _ids_enteros(registros, "lectura_semanal")
     if ids:
         consultas.append(
-            select(ReporteSemanalAlumno.id_alumno)
-            .join(LibroSubidaNivel, LibroSubidaNivel.id_reporte_semanal == ReporteSemanalAlumno.id)
-            .where(col(LibroSubidaNivel.id).in_(ids))
+            select(LecturaSemanalAlumno.id_alumno).where(col(LecturaSemanalAlumno.id_lectura_semanal).in_(ids))
         )
     if not consultas:
         return []

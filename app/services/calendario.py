@@ -13,6 +13,7 @@ no se aproxima (CU027). Solo lo que no pertenece a un colegio (catálogos genera
 usa el calendario general (`periodo_general_de`).
 """
 from bisect import bisect_right
+from calendar import monthrange
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -437,3 +438,14 @@ def anio_de_referencia(db: Session) -> Optional[AnioEscolar]:
     return ya_empezado or db.exec(
         select(AnioEscolar).order_by(col(AnioEscolar.fecha_inicio).desc())
     ).first()
+
+
+def rango_del_mes(anio: AnioEscolar, mes: int) -> Optional[tuple[date, date]]:
+    """Primer y último día del mes `mes` (1-12) del año escolar: el del año calendario en
+    que ese mes se superpone con el rango del año escolar. None si no se superpone."""
+    for anio_calendario in range(anio.fecha_inicio.year, anio.fecha_fin.year + 1):
+        primero = date(anio_calendario, mes, 1)
+        ultimo = date(anio_calendario, mes, monthrange(anio_calendario, mes)[1])
+        if primero <= anio.fecha_fin and ultimo >= anio.fecha_inicio:
+            return primero, ultimo
+    return None
