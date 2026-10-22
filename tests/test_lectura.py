@@ -593,6 +593,8 @@ def test_semanas_alcance_y_anio(client, db, entorno, doc, cabeceras):
     assert (fuera.status_code, motivo(fuera)) == (403, "aula_fuera_de_alcance")
     assert (sin_anio.status_code, motivo(sin_anio)) == (404, "anio_no_encontrado")
     assert client.get("/semanas", params=dict(lejano.request.url.params), headers=cabeceras["Supervisor"]).json()
+    directivo = client.get("/semanas", params=dict(lejano.request.url.params), headers=cabeceras["Directivo"])
+    assert (directivo.status_code, motivo(directivo)) == (403, "sin_permiso")
 
 
 # ── Integraciones ───────────────────────────────────────────────────────────────────
