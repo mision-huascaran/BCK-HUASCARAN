@@ -22,6 +22,9 @@ from app.schemas.actividad import ActividadActiva
 from app.schemas.inicio import AlertaOperativa, InicioDirectivo, InicioDocente, InicioSupervisor
 from app.services.actividad import (
     ACTIVIDAD_ACTIVA,
+    MENSAJE_ACTIVIDAD_ACTIVA,
+    MENSAJE_SIN_HABILITACIONES,
+    SIN_ASIGNACIONES,
     actividad_activa,
     cerrar_vencidas_y_confirmar,
     impedimento_para_iniciar,
@@ -35,8 +38,14 @@ from app.services.calendario import (
     en_pa_de_su_colegio,
     pa_actual_de_colegios,
 )
+from app.services.permiso_service import vigentes_del_docente
 from app.services.registros_vencidos import Clase, EstadoRegistros, estado_de_registros
 from app.services.usuario_service import DOCENTE
+
+MENSAJES_NO_PUEDE_INICIAR = {
+    ACTIVIDAD_ACTIVA: MENSAJE_ACTIVIDAD_ACTIVA,
+    SIN_ASIGNACIONES: MENSAJE_SIN_HABILITACIONES,
+}
 
 # Alertas operativas de CU011.
 SINCRONIZACION_OLVIDADA = "sincronizacion_olvidada"
@@ -56,7 +65,7 @@ def inicio_docente(db: Session, usuario: Usuario, sesion: Sesion) -> InicioDocen
     activa = actividad_activa(db, usuario.id_docente)
     # El mismo criterio y orden que `iniciar_actividad`: el botón se habilita justo
     # cuando el inicio se aceptaría, y si no, el front muestra el mensaje del motivo.
-    motivo = ACTIVIDAD_ACTIVA if activa is not None else impedimento_para_iniciar(db, usuario.id_docente)
+    motivo = ACTIVIDAD_ACTIVA if activa is not None else impedimento_para_iniciar(db, usuario)
     return InicioDocente(
         asignaciones=asignaciones,
         totales=totales,
@@ -64,6 +73,8 @@ def inicio_docente(db: Session, usuario: Usuario, sesion: Sesion) -> InicioDocen
         sesion_expira=sesion.expira,
         puede_iniciar_actividad=motivo is None,
         motivo_no_puede_iniciar=motivo,
+        motivo_no_puede=MENSAJES_NO_PUEDE_INICIAR.get(motivo),
+        permisos_vigentes=vigentes_del_docente(db, usuario),
     )
 
 

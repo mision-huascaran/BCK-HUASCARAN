@@ -2,7 +2,7 @@
 
 - Solo el Supervisor los gestiona; el Docente lee los de su alcance (periodo vigente).
 - Borrado lógico: desactivar no toca alumnos, registros ni asignaciones; el colegio sale
-  del alcance operativo de su docente (`alcance_docente` excluye los inactivos).
+  del alcance operativo de su docente (las habilitaciones excluyen los inactivos).
 - Grados y programas ofrecidos viven en `colegio_grado` y `colegio_programa`; cada grado
   con su día de clase (1 = lunes … 5 = viernes), obligatorio en la API, y sus secciones
   (`seccion`): solo se agregan, y cada grado nace con "Única".
@@ -35,15 +35,17 @@ from app.schemas.colegio import (
     ColegioCrear,
     ColegioDetalle,
     ColegioEditar,
+    ColegioEstadoCalendario,
     ColegioItem,
     GradoColegio,
+    EstadoCalendario,
     GradoOfrecido,
     Ubicaciones,
 )
 from app.schemas.comun import ItemCatalogo
-from app.services.alcance import alcance_docente
+from app.services.habilitacion import pares_visibles
 from app.services.auditoria import ACTIVAR, CREAR, EDITAR, INACTIVAR, registrar_auditoria
-from app.services.calendario import cargar_calendarios
+from app.services.calendario import Calendarios, cargar_calendarios
 from app.services.secciones import agregar_secciones, secciones_por_grado
 
 TABLA = "colegio"
@@ -133,13 +135,12 @@ def detalle_de(db: Session, colegio: Colegio) -> ColegioDetalle:
 # ── Lectura ─────────────────────────────────────────────────────────────────────────
 
 def colegios_visibles(db: Session, usuario: Usuario, es_docente: bool) -> Optional[set[int]]:
-    """Ids de los colegios que puede ver: None = todos (Supervisor); el Docente, los de su
-    alcance en el periodo vigente (vacío si no tiene)."""
+    """Ids de los colegios que puede ver: None = todos (Supervisor); el Docente, los de
+    sus habilitaciones vigentes: asignaciones del PA vigente de cada colegio,
+    retroactivas en su PR y permisos de corrección vigentes (vacío si no tiene)."""
     if not es_docente:
         return None
-    if usuario.id_docente is None:
-        return set()
-    return {id_colegio for id_colegio, _ in alcance_docente(db, usuario.id_docente)}
+    return {id_colegio for id_colegio, _ in pares_visibles(db, usuario)}
 
 
 def listar_colegios(
@@ -179,6 +180,34 @@ def ubicaciones(db: Session, visibles: Optional[set[int]], departamento: Optiona
         select(Colegio.distrito).where(*filtro_distritos).distinct().order_by(Colegio.distrito)
     ).all()
     return Ubicaciones(departamentos=list(departamentos), distritos=list(distritos))
+
+
+def _estado_de(calendarios: Calendarios, id_colegio: int, id_anio_escolar: Optional[int]) -> Optional[EstadoCalendario]:
+    hoy = hoy_lima()
+    if id_anio_escolar is None:
+        periodo = calendarios.periodo_de(id_colegio, hoy)
+    else:
+        calendario = calendarios.aplicable(id_colegio, id_anio_escolar)
+        periodo = calendario.periodo_de(hoy) if calendario is not None else None
+    if periodo is None:
+        return None
+    return EstadoCalendario(
+        tipo=periodo.tipo, numero=periodo.numero, es_pr4=not periodo.es_pa and periodo.numero == 4,
+        fecha_fin=periodo.fecha_fin,
+    )
+
+
+def estado_calendario(db: Session, id_anio_escolar: Optional[int]) -> list[ColegioEstadoCalendario]:
+    """Colegios activos, por nombre, con el periodo en que hoy está cada uno según su
+    calendario del año `id_anio_escolar` (o del que contenga hoy, si no se indica)."""
+    colegios = db.exec(select(Colegio).where(col(Colegio.activo).is_(True)).order_by(Colegio.nombre)).all()
+    calendarios = cargar_calendarios(db, id_anio_escolar, ids_colegio=[c.id_colegio for c in colegios])
+    return [
+        ColegioEstadoCalendario(
+            id=c.id_colegio, nombre=c.nombre, estado_calendario=_estado_de(calendarios, c.id_colegio, id_anio_escolar)
+        )
+        for c in colegios
+    ]
 
 
 def _colegio(db: Session, id_colegio: int) -> Colegio:

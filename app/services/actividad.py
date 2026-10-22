@@ -23,14 +23,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio
-from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
+from app.core.tiempo import ahora_utc
 from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
-from app.models.organizacion import Colegio, Usuario
+from app.models.organizacion import Usuario
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadItem, ActividadRespuesta
-from app.services.alcance import asignaciones_habilitadas, tenia_asignacion
-from app.services.calendario import cargar_calendarios
+from app.services.habilitacion import habilitaciones_vigentes
 from app.services.sesiones import (
     CIERRE_ACTIVIDAD_FORZADO,
     CIERRE_ACTIVIDAD_MANUAL,
@@ -45,11 +44,15 @@ from app.services.usuario_service import DOCENTE, nombre_rol
 EN_CURSO = "en_curso"
 FINALIZADA = "finalizada"
 
-# Por qué un docente no puede iniciar una actividad ahora (CU010). Van en el 409 de
+# Por qué un docente no puede iniciar una actividad ahora (CU010). Van en el error de
 # `iniciar_actividad` (como `motivo`) y en el Inicio del Docente (`motivo_no_puede_iniciar`).
 ACTIVIDAD_ACTIVA = "actividad_activa"
-FUERA_DE_PERIODO = "fuera_de_periodo"
 SIN_ASIGNACIONES = "sin_asignaciones"
+MENSAJE_ACTIVIDAD_ACTIVA = "Debes finalizar la actividad actual antes de iniciar una nueva."
+MENSAJE_SIN_HABILITACIONES = (
+    "No puedes iniciar una actividad porque no tienes asignaciones habilitadas ni permisos "
+    "excepcionales vigentes."
+)
 
 # Cierres que puso el servidor sin saber la hora real: un `finalizar` posterior los corrige.
 CIERRES_AUTOMATICOS = (CIERRE_ACTIVIDAD_POR_EXPIRACION, CIERRE_ACTIVIDAD_FORZADO)
@@ -147,45 +150,24 @@ def _registrada(db: Session, id_actividad: uuid.UUID, id_docente: Optional[int])
 def _ya_hay_una_activa() -> ErrorNegocio:
     return ErrorNegocio(
         status.HTTP_409_CONFLICT,
-        "Debes finalizar la actividad actual antes de iniciar una nueva.",
+        MENSAJE_ACTIVIDAD_ACTIVA,
         motivo="actividad_activa_existente",
     )
 
 
 def _sin_asignaciones() -> ErrorNegocio:
     return ErrorNegocio(
-        status.HTTP_409_CONFLICT,
-        "No puedes iniciar una actividad porque no tienes asignaciones activas, ya sea para el periodo "
-        "académico actual o de receso.",
-        motivo=SIN_ASIGNACIONES,
+        status.HTTP_422_UNPROCESSABLE_CONTENT, MENSAJE_SIN_HABILITACIONES, motivo=SIN_ASIGNACIONES
     )
 
 
-def _fuera_de_periodo() -> ErrorNegocio:
-    return ErrorNegocio(
-        status.HTTP_409_CONFLICT,
-        "No puedes iniciar una actividad fuera del calendario operativo.",
-        motivo=FUERA_DE_PERIODO,
-    )
-
-
-def impedimento_para_iniciar(db: Session, id_docente: Optional[int]) -> Optional[str]:
-    """Qué le impide al docente iniciar una actividad hoy, sin contar una ya activa
-    (CU009): None si tiene al menos una asignación habilitada, es decir, en un colegio
-    activo que hoy está en un PA, y del PA de ese colegio (cada colegio con su
-    calendario). Si no la tiene: `fuera_de_periodo` si ningún colegio activo está hoy en
-    un PA, o `sin_asignaciones` si alguno lo está.
-
-    Punto de extensión (T4): las asignaciones retroactivas en un PR y los permisos
-    excepcionales vigentes también habilitan el inicio (`asignaciones_habilitadas`).
-    """
-    activos = db.exec(select(Colegio.id_colegio).where(col(Colegio.activo).is_(True))).all()
-    calendarios = cargar_calendarios(db, ids_colegio=activos)
-    if id_docente is not None and asignaciones_habilitadas(db, id_docente, calendarios=calendarios):
-        return None
-    if not calendarios.pa_actual_por_colegio(activos, hoy_lima()):
-        return FUERA_DE_PERIODO
-    return SIN_ASIGNACIONES
+def impedimento_para_iniciar(db: Session, usuario: Usuario) -> Optional[str]:
+    """Qué le impide al docente iniciar una actividad ahora, sin contar una ya activa
+    (CU009): None si tiene al menos una habilitación vigente (una asignación del PA en que
+    hoy está su colegio, una retroactiva en su PR o un permiso de corrección vigente, en
+    un colegio activo); si no, `sin_asignaciones`. Iniciar no amplía el alcance: cada
+    escritura posterior se valida con `habilitacion_escritura`."""
+    return None if habilitaciones_vigentes(db, usuario) else SIN_ASIGNACIONES
 
 
 def _inicio_invalido(detail: str) -> ErrorNegocio:
@@ -241,10 +223,7 @@ def iniciar_actividad(
     activa = _sin_otra_activa(db, usuario.id_docente, id_actividad)
     if activa is not None:
         return activa, False
-    impedimento = impedimento_para_iniciar(db, usuario.id_docente)
-    if impedimento == FUERA_DE_PERIODO:
-        raise _fuera_de_periodo()
-    if impedimento == SIN_ASIGNACIONES:
+    if impedimento_para_iniciar(db, usuario) is not None:
         raise _sin_asignaciones()
 
     ahora = ahora_utc()
@@ -341,10 +320,8 @@ def _registrar_en_otra_sesion(
         if activa is not None:
             return activa, False
     # Lo que queda en curso habilita escrituras hoy: exige colegio activo, como el inicio
-    # normal. Lo ya terminado es historia: basta con que tuviera la asignación ese día.
-    if usuario.id_docente is None or not tenia_asignacion(
-        db, usuario.id_docente, fecha_lima(inicio), solo_colegios_activos=en_curso
-    ):
+    # normal. Lo ya terminado es historia: basta con que estuviera habilitado al empezar.
+    if not habilitaciones_vigentes(db, usuario, en=inicio, solo_colegios_activos=en_curso):
         raise _sin_asignaciones()
     _verificar_sin_superposicion(db, otra.id_sesion, usuario.id_docente, inicio, fin)
 

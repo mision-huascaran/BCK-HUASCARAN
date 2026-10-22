@@ -12,7 +12,14 @@ from app.core.database import get_db
 from app.core.paginacion import Pagina, Paginado
 from app.dependencies import require_role
 from app.models.organizacion import Usuario
-from app.schemas.colegio import ColegioCrear, ColegioDetalle, ColegioEditar, ColegioItem, Ubicaciones
+from app.schemas.colegio import (
+    ColegioCrear,
+    ColegioDetalle,
+    ColegioEditar,
+    ColegioEstadoCalendario,
+    ColegioItem,
+    Ubicaciones,
+)
 from app.services import colegio_service
 from app.services.usuario_service import DOCENTE, SUPERVISOR, nombre_rol
 
@@ -48,6 +55,13 @@ def listar_ubicaciones(db: Db, usuario: Lector, departamento: Optional[str] = No
     """Departamentos y distritos distintos, para los filtros. Con `departamento`, los
     distritos se limitan a ese departamento."""
     return colegio_service.ubicaciones(db, _visibles(db, usuario), departamento)
+
+
+@router.get("/colegios/estado-calendario", response_model=list[ColegioEstadoCalendario])
+def estado_calendario(db: Db, _: Supervisor, id_anio_escolar: Optional[int] = None):
+    """Colegios activos con el periodo (PA o PR) en que hoy está cada uno, para el modal de
+    asignación (CU016): si está en un PR, el request pide `inicio_asignacion`."""
+    return colegio_service.estado_calendario(db, id_anio_escolar)
 
 
 @router.get("/colegios/{id_colegio}", response_model=ColegioDetalle)

@@ -1,4 +1,5 @@
 """Colegios (CU013). Los gestiona solo el Supervisor; el Docente lee los de su alcance."""
+from datetime import date
 from typing import Annotated, Literal, Optional
 
 from pydantic import AfterValidator, BaseModel, Field
@@ -84,6 +85,24 @@ class GradoColegio(ItemCatalogo):
 class ColegioDetalle(ColegioItem):
     grados: list[GradoColegio]
     programas: list[ItemCatalogo]
+
+
+class EstadoCalendario(BaseModel):
+    """En qué periodo está hoy el colegio según su calendario (CU016, CU027)."""
+
+    tipo: Literal["PA", "PR"]
+    numero: int
+    # En el PR4 no existe "Próximo": el front lo deshabilita.
+    es_pr4: bool
+    fecha_fin: date
+
+
+class ColegioEstadoCalendario(ItemCatalogo):
+    """Colegio activo con su estado de calendario, para el modal de asignación: si está
+    en un PR, el front muestra el bloque Retroactivo / Próximo. Null si hoy no cae en el
+    calendario del año (p. ej. el año todavía no empezó) o el año no tiene calendario."""
+
+    estado_calendario: Optional[EstadoCalendario] = None
 
 
 class Ubicaciones(BaseModel):

@@ -42,6 +42,7 @@ from app.services.actividad import requerir_actividad_activa
 from app.services.alcance import alcance_docente
 from app.services import pertenencia
 from app.services.auditoria import ACTIVAR, CREAR, EDITAR, INACTIVAR, registrar_auditoria
+from app.services.habilitacion import pares_visibles
 from app.services.pertenencia import CAMPO_AUDITORIA, Movimiento
 from app.services.secciones import seccion_para
 from app.services.usuario_service import DOCENTE, nombre_rol
@@ -89,15 +90,20 @@ def _fuera_de_alcance() -> ErrorNegocio:
 
 # ── Alcance ─────────────────────────────────────────────────────────────────────────
 
-def alcance_de(db: Session, usuario: Usuario) -> Alcance:
+def alcance_de(db: Session, usuario: Usuario, lectura: bool = False) -> Alcance:
     """Pares (colegio, grado) del Docente; None (sin recorte) para el Supervisor.
 
-    Un conjunto vacío significa "no tiene nada a cargo", que no es lo mismo que None.
+    Escritura: sus asignaciones del PA vigente de cada colegio. Lectura (`lectura`):
+    además, los grupos de sus asignaciones retroactivas en su PR y de sus permisos de
+    corrección vigentes (CU028). Un conjunto vacío significa "no tiene nada a cargo", que
+    no es lo mismo que None.
     """
     if nombre_rol(db, usuario.id_rol) != DOCENTE:
         return None
     if usuario.id_docente is None:
         return set()
+    if lectura:
+        return pares_visibles(db, usuario)
     return alcance_docente(db, usuario.id_docente)
 
 
@@ -150,7 +156,7 @@ def item_de(db: Session, id_alumno: int) -> AlumnoItem:
 def alumno_visible(db: Session, usuario: Usuario, id_alumno: int) -> Alumno:
     """El alumno, si existe (404) y está en el alcance de quien pregunta (403)."""
     alumno = _fila(db, id_alumno)[0]
-    _exigir_alcance(alcance_de(db, usuario), alumno.id_colegio, alumno.id_grado)
+    _exigir_alcance(alcance_de(db, usuario, lectura=True), alumno.id_colegio, alumno.id_grado)
     return alumno
 
 
@@ -174,7 +180,7 @@ def listar_alumnos(
     tildes y en cualquier orden ("juan perez" encuentra a "Juan Carlos Pérez Quispe").
     Los caracteres % y _ se buscan literalmente.
     """
-    alcance = alcance_de(db, usuario)
+    alcance = alcance_de(db, usuario, lectura=True)
     if alcance is not None and not alcance:
         return pagina([], 0, page)
 
@@ -206,7 +212,7 @@ def listar_alumnos(
 def obtener_alumno(db: Session, usuario: Usuario, id_alumno: int) -> AlumnoDetalle:
     fila = _fila(db, id_alumno)
     alumno = fila[0]
-    _exigir_alcance(alcance_de(db, usuario), alumno.id_colegio, alumno.id_grado)
+    _exigir_alcance(alcance_de(db, usuario, lectura=True), alumno.id_colegio, alumno.id_grado)
     actual = pertenencia.vigente(db, id_alumno)
     return AlumnoDetalle(
         **_item(fila).model_dump(),
@@ -309,7 +315,8 @@ def _valores_finales(db: Session, alumno: Alumno, data: AlumnoEditar, alcance: A
     final = {campo: getattr(alumno, atributo) for campo, atributo in CAMPOS_AUDITADOS.items()}
     final.update({campo: getattr(data, campo) for campo in enviados if campo in CAMPOS_AUDITADOS})
     _exigir_alcance(alcance, final["id_colegio"], final["id_grado"])
-    if (final["id_colegio"], final["id_grado"]) != (alumno.id_colegio, alumno.id_grado) and "id_seccion" not in enviados:
+    cambia_aula = (final["id_colegio"], final["id_grado"]) != (alumno.id_colegio, alumno.id_grado)
+    if cambia_aula and "id_seccion" not in enviados:
         final["id_seccion"] = None
     if any(final[campo] != getattr(alumno, CAMPOS_AUDITADOS[campo]) for campo in CAMPOS_DE_UBICACION):
         # Corregir solo nombres o apellidos no exige colegio activo (CU013, CU014).

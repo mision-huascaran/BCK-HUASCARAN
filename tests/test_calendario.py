@@ -217,7 +217,7 @@ def test_actividad_solo_con_un_colegio_en_receso_no_inicia(client, db, entorno):
 
     respuesta = client.post("/actividades", json={"id_actividad": str(uuid.uuid4())}, headers=cabecera)
 
-    assert (respuesta.status_code, motivo(respuesta)) == (409, "sin_asignaciones")
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "sin_asignaciones")
 
 
 def test_actividad_con_un_colegio_en_pa_inicia(client, db, entorno):

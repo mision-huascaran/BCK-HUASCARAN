@@ -66,6 +66,7 @@ from app.services.calendario import (
     nombre_periodo,
     resolver,
 )
+from app.services.habilitacion import ORIGEN_PERMISO, habilitaciones_vigentes
 from app.services.usuario_service import DOCENTE, nombre_rol
 
 TABLA = "calendario"
@@ -596,25 +597,28 @@ def _respuesta_de(db: Session, id_anio: int, colegio: Optional[Colegio]) -> Cale
 
 # ── Consulta ────────────────────────────────────────────────────────────────────────
 
-def _colegios_del_docente(db: Session, id_docente: Optional[int], id_anio: int) -> set[int]:
-    """Colegios en que el docente tiene alguna asignación de un PA de ese año."""
-    if id_docente is None:
+def _colegios_del_docente(db: Session, usuario: Usuario, id_anio: int) -> set[int]:
+    """Colegios en que el docente tiene alguna asignación de un PA de ese año, más los de
+    sus permisos de corrección vigentes (CU028)."""
+    if usuario.id_docente is None:
         return set()
-    return set(
+    asignados = set(
         db.exec(
             select(DocenteColegioGrado.id_colegio)
             .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
-            .where(DocenteColegioGrado.id_docente == id_docente, PeriodoAcademico.id_anio_escolar == id_anio)
+            .where(DocenteColegioGrado.id_docente == usuario.id_docente, PeriodoAcademico.id_anio_escolar == id_anio)
         ).all()
     )
+    return asignados | {h.id_colegio for h in habilitaciones_vigentes(db, usuario) if h.origen == ORIGEN_PERMISO}
 
 
 def _exigir_lectura_docente(db: Session, usuario: Usuario, id_anio: int, id_colegio: Optional[int]) -> None:
-    """El Docente solo lee el calendario aplicable a sus colegios (para validar fechas sin
-    conexión). Punto de extensión (T4): los colegios de sus permisos excepcionales."""
+    """El Docente solo lee el calendario aplicable a sus colegios: los de sus
+    asignaciones del año y los de sus permisos vigentes (para validar fechas sin
+    conexión)."""
     if nombre_rol(db, usuario.id_rol) != DOCENTE:
         return
-    if id_colegio is None or id_colegio not in _colegios_del_docente(db, usuario.id_docente, id_anio):
+    if id_colegio is None or id_colegio not in _colegios_del_docente(db, usuario, id_anio):
         raise ErrorNegocio(
             status.HTTP_403_FORBIDDEN,
             "Solo puedes consultar el calendario de los colegios que tienes asignados.",

@@ -88,7 +88,11 @@ def test_cu010_entre_periodos_no_puede_iniciar(client, db, entorno, cabeceras):
     cuerpo = client.get("/inicio/docente", headers=cabeceras["Docente"]).json()
 
     assert (cuerpo["asignaciones"], cuerpo["puede_iniciar_actividad"]) == ([], False)
-    assert cuerpo["motivo_no_puede_iniciar"] == "fuera_de_periodo"
+    assert cuerpo["motivo_no_puede_iniciar"] == "sin_asignaciones"
+    assert cuerpo["motivo_no_puede"] == (
+        "No puedes iniciar una actividad porque no tienes asignaciones habilitadas ni permisos "
+        "excepcionales vigentes."
+    )
     assert client.get("/me/asignaciones", headers=cabeceras["Docente"]).json() == []
 
 

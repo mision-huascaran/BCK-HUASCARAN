@@ -66,6 +66,7 @@ from app.models.organizacion import (  # noqa: E402
     DocenteColegioGrado,
     Grado,
     PeriodoAcademico,
+    PermisoCorreccion,
     Programa,
     Rol,
     Seccion,
@@ -423,6 +424,26 @@ def asignar(db, id_docente, colegio, ids_grados, periodo, id_actor, creado_en=No
             )
         )
     db.flush()
+
+
+def crear_permiso(
+    db, entorno: "Entorno", id_docente, colegio, grado, periodo="pasado", modulo="lectura",
+    inicio=None, fin=None, **extra,
+) -> PermisoCorreccion:
+    """Permiso de corrección sin validar (para preparar casos): por defecto, vigente de hace
+    una hora a dentro de una hora, para el PA1 (cuyo PR1 ya terminó)."""
+    ahora = tiempo.ahora_utc()
+    permiso = PermisoCorreccion(
+        id_docente=id_docente, id_anio_escolar=entorno.anio.id_anio_escolar,
+        id_periodo_academico=entorno.periodos[periodo].id_periodo_academico,
+        id_colegio=entorno.colegios[colegio].id_colegio, id_grado=entorno.grados[grado], modulo=modulo,
+        inicio=inicio or ahora - timedelta(hours=1), fin=fin or ahora + timedelta(hours=1), motivo="Corrección",
+        otorgado_por=entorno.supervisor.id_usuario, otorgado_en=ahora - timedelta(hours=2), **extra,
+    )
+    db.add(permiso)
+    db.commit()
+    db.refresh(permiso)
+    return permiso
 
 
 def crear_docente(db, entorno: "Entorno", nombres, correo, dni) -> Usuario:

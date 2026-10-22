@@ -88,3 +88,6 @@ class Auditoria(SQLModel, table=True):
     id_actividad: Optional[uuid.UUID] = Field(
         default=None, sa_type=Uuid, foreign_key="actividad.id_actividad"
     )
+    # El permiso de corrección (CU028) con que se hizo el cambio, o con que se otorgó o
+    # revocó ese permiso; null en lo demás.
+    id_permiso: Optional[int] = Field(default=None, foreign_key="permiso_correccion.id_permiso")

@@ -133,8 +133,8 @@ def test_cu016_un_aula_solo_tiene_un_docente(client, entorno, sup):
     assert respuesta.status_code == 409
     assert motivo(respuesta) == "grado_asignado"
     assert respuesta.json()["detail"] == (
-        "Error: Uno o más grados seleccionados para este colegio ya se encuentran asignados a "
-        "otro docente en el periodo vigente."
+        "No se puede guardar la asignación. El colegio Colegio Andino, grado 1.º, ya tiene un "
+        f"Docente asignado en PA2 del año escolar {entorno.anio.nombre}."
     )
 
 

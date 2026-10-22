@@ -58,6 +58,7 @@ def registrar_auditoria(
     id_usuario: int,
     fecha: datetime,
     id_actividad: Optional[uuid.UUID] = None,
+    id_permiso: Optional[int] = None,
 ) -> int:
     """Agrega las filas de historial de una operación. No hace commit.
 
@@ -80,6 +81,7 @@ def registrar_auditoria(
         "id_usuario": id_usuario,
         "fecha": fecha,
         "id_actividad": id_actividad,
+        "id_permiso": id_permiso,
     }
     filas = []
     if accion == CREAR:

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.schemas.actividad import ActividadActiva
 from app.schemas.asignacion import MiAsignacion, TotalesACargo
+from app.schemas.permiso import PermisoVigente
 
 
 class InicioDocente(BaseModel):
@@ -21,10 +22,14 @@ class InicioDocente(BaseModel):
     # Vencimiento de la sesión del token; viene siempre, haya o no actividad (CU010).
     sesion_expira: datetime
     puede_iniciar_actividad: bool
-    # Por qué no puede (null si puede); el front muestra el mensaje con el botón
-    # deshabilitado. Los mismos motivos que el 409 de POST /actividades, salvo
-    # `actividad_activa` (= `actividad_activa_existente`).
-    motivo_no_puede_iniciar: Optional[Literal["actividad_activa", "fuera_de_periodo", "sin_asignaciones"]] = None
+    # Por qué no puede (null si puede): el código, como el `motivo` del error de POST
+    # /actividades (salvo `actividad_activa` = `actividad_activa_existente`), y el texto
+    # que el front muestra con el botón deshabilitado.
+    motivo_no_puede_iniciar: Optional[Literal["actividad_activa", "sin_asignaciones"]] = None
+    motivo_no_puede: Optional[str] = None
+    # Permisos de corrección vigentes (CU028). Los grupos a los que solo llega por un
+    # permiso no suman a `asignaciones` ni a `totales`.
+    permisos_vigentes: list[PermisoVigente] = []
     registros_offline_pendientes: Optional[int] = None
 
 

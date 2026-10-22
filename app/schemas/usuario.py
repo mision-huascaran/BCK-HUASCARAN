@@ -1,5 +1,5 @@
 """Gestión de cuentas de usuario (CU016). Solo el Supervisor."""
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -9,11 +9,18 @@ from app.schemas.comun import Dni, ParcheSinNulos, Texto
 
 # ── Requests ────────────────────────────────────────────────────────────────────────
 
+# Si el colegio está hoy en un receso (PR n): "retroactivo" agrega el PA n recién
+# culminado y sigue con el próximo; "proximo" empieza en el PA n + 1 (no existe en el PR4).
+# Obligatorio solo en ese caso; en un PA o en un año que no empezó se ignora.
+InicioAsignacion = Literal["retroactivo", "proximo"]
+
+
 class AsignacionCrear(BaseModel):
     id_colegio: int
     id_anio_escolar: int
     # Sin `grados`: todos los que ofrece el colegio. Si viene, no puede estar vacía.
     grados: Optional[list[int]] = Field(default=None, min_length=1)
+    inicio_asignacion: Optional[InicioAsignacion] = None
 
 
 class UsuarioCrear(BaseModel):
@@ -30,8 +37,10 @@ class AsignacionEditar(ParcheSinNulos):
     id_colegio: Optional[int] = None
     grados: Optional[list[int]] = Field(default=None, min_length=1)
     id_anio_escolar: Optional[int] = None
-    # Id del periodo desde el que aplica el cambio; por defecto el vigente (o el próximo).
+    # Id del periodo desde el que aplica el cambio; por defecto el vigente (en un receso,
+    # según `inicio_asignacion`).
     desde_periodo: Optional[int] = None
+    inicio_asignacion: Optional[InicioAsignacion] = None
 
 
 class UsuarioEditar(ParcheSinNulos):

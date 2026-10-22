@@ -5,8 +5,9 @@ habilitada en una fecha si su PA es el PA en que está SU colegio en esa fecha, 
 calendario de ese colegio (CU027): dos colegios pueden estar en periodos distintos el
 mismo día.
 
-Punto de extensión (T4): las asignaciones retroactivas en un PR y los permisos
-excepcionales de CU028 se suman en `asignaciones_habilitadas`.
+Es el alcance de escritura de Alumnos y Asistencias (hasta T6). Las asignaciones
+retroactivas en un PR y los permisos de CU028 viven en app/services/habilitacion.py, que
+también da el alcance de lectura del Docente (`pares_visibles`).
 """
 from dataclasses import dataclass
 from datetime import date
@@ -65,13 +66,3 @@ def alcance_docente(db: Session, id_docente: int, calendarios: Optional[Calendar
     """Pares (id_colegio, id_grado) habilitados hoy para el docente, en colegios activos."""
     return {(a.id_colegio, a.id_grado) for a in asignaciones_habilitadas(db, id_docente, calendarios=calendarios)}
 
-
-def tenia_asignacion(db: Session, id_docente: int, dia: date, solo_colegios_activos: bool) -> bool:
-    """Si el docente tenía alguna asignación habilitada en `dia` (día de Lima), cada una
-    según el calendario de su colegio.
-
-    Sirve para fechas pasadas, p. ej. una actividad sincronizada después de un nuevo
-    login. `solo_colegios_activos` exige además que el colegio siga activo hoy (no se
-    guarda desde cuándo está inactivo, así que solo tiene sentido para lo que ocurre ahora).
-    """
-    return bool(asignaciones_habilitadas(db, id_docente, dia, solo_colegios_activos))

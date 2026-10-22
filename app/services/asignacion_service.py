@@ -9,6 +9,9 @@ Reglas de negocio:
   colegio de la asignación, es hoy o después): los PA pasados son historial y nunca se
   tocan. "Vigente", "terminado" y "próximo" siempre se miden con el calendario del colegio
   (CU027): dos colegios pueden estar en periodos distintos el mismo día.
+- Si el colegio está hoy en un receso (PR n), el request elige `inicio_asignacion`:
+  "retroactivo" crea además la fila del PA n recién culminado (`retroactiva`), que no
+  puede sustituir a su titular; "proximo" empieza en el PA n + 1 (no existe en el PR4).
 
 Las asignaciones se cambian con POST y PATCH /usuarios; aquí no se hace commit.
 """
@@ -22,7 +25,7 @@ from sqlalchemy import and_, delete, func, or_
 from sqlmodel import Session, col, select
 
 from app.core.ciclo import calcular_ciclo, ordenar_ciclos
-from app.core.errores import ErrorNegocio
+from app.core.errores import ErrorNegocio, error_de_campo
 from app.core.tiempo import hoy_lima
 from app.models.organizacion import (
     Alumno,
@@ -51,6 +54,14 @@ from app.services.calendario import (
 )
 
 SIN_ASIGNACION = "Sin asignación"
+RETROACTIVO = "retroactivo"
+PROXIMO = "proximo"
+CAMPO_INICIO = "asignacion.inicio_asignacion"
+MENSAJE_SIN_PROXIMO = (
+    "Este año escolar ya no tiene otro periodo académico. Para asignar al Docente al "
+    "siguiente año, selecciona ese año escolar."
+)
+ULTIMO_PA = 4
 
 
 def _no_procesable(detail: str, motivo: str) -> ErrorNegocio:
@@ -59,12 +70,15 @@ def _no_procesable(detail: str, motivo: str) -> ErrorNegocio:
 
 @dataclass(frozen=True)
 class Asignacion:
-    """Colegio y grados de un docente a partir de un periodo de un año escolar."""
+    """Colegio y grados de un docente a partir de un periodo de un año escolar.
+    `retroactivo`: el PA recién culminado que se agrega con "Retroactivo" (también está
+    primero en `periodos`)."""
 
     colegio: Colegio
     grados: list[Grado]
     anio: AnioEscolar
     periodos: list[PeriodoAcademico]
+    retroactivo: Optional[PeriodoAcademico] = None
 
     def resumen(self) -> str:
         return resumen_asignacion(self.colegio.nombre, self.grados, self.periodos[0], self.anio)
@@ -146,31 +160,67 @@ def anio_del_colegio(db: Session, id_anio_escolar: int, id_colegio: int) -> Anio
     )
     if calendario is None:
         raise _no_procesable(
-            "El año escolar no tiene un calendario académico configurado.", "calendario_no_configurado"
+            "El año escolar no tiene un calendario académico configurado: revisa el calendario "
+            "antes de guardar la asignación.",
+            "calendario_no_configurado",
         )
     return AnioDelColegio(anio, periodos, calendario)
 
 
-def _periodo_por_defecto(anio: AnioDelColegio) -> Optional[PeriodoAcademico]:
-    """El PA en que hoy está el colegio o, si está en un PR, el siguiente PA del año.
-    None si hoy cae fuera de ese año (= desde el primer PA no terminado)."""
-    actual = anio.calendario.periodo_de(hoy_lima())
-    if actual is None:
-        return None
-    numero = actual.numero if actual.es_pa else actual.numero + 1
+@dataclass(frozen=True)
+class Inicio:
+    """Desde qué PA aplica una asignación (None = desde el primer PA no terminado del año)
+    y, con "Retroactivo", el PA recién culminado que se agrega."""
+
+    desde: Optional[PeriodoAcademico]
+    retroactivo: Optional[PeriodoAcademico] = None
+
+
+def _pa_numero(anio: AnioDelColegio, numero: int) -> Optional[PeriodoAcademico]:
     return next((p for p in anio.periodos if p.numero == numero), None)
 
 
-def periodo_de_inicio(anio: AnioDelColegio, id_periodo: Optional[int]) -> Optional[PeriodoAcademico]:
-    """Desde qué PA del año aplica un cambio, según el calendario del colegio.
+def _inicio_en_receso(anio: AnioDelColegio, colegio: Colegio, numero: int, inicio: Optional[str]) -> Inicio:
+    """El colegio está en el PR `numero`: "retroactivo" agrega el PA culminado y sigue
+    con el próximo; "proximo" empieza en el PA siguiente. Sin elección, 422."""
+    if inicio is None:
+        raise ErrorNegocio(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"El colegio {colegio.nombre} está en receso (PR{numero}): indica si la asignación es "
+            f"retroactiva al PA{numero} o empieza en el próximo periodo.",
+            motivo="inicio_asignacion_requerido",
+            extra={"id_colegio": colegio.id_colegio, "colegio": colegio.nombre, "periodo": f"PR{numero}"},
+        )
+    siguiente = _pa_numero(anio, numero + 1)
+    if inicio == RETROACTIVO:
+        return Inicio(siguiente, retroactivo=_pa_numero(anio, numero))
+    if numero >= ULTIMO_PA or siguiente is None:
+        raise error_de_campo(CAMPO_INICIO, MENSAJE_SIN_PROXIMO)
+    return Inicio(siguiente)
 
-    Con `id_periodo`, ese (debe ser del año y no estar terminado). Sin él, el PA en que
-    está hoy el colegio o, si está en un receso, el próximo; si hoy no cae en ese año,
-    None (= desde el primer PA no terminado del año). Punto de extensión (T4):
-    Retroactivo/Próximo durante un PR.
+
+def inicio_de(
+    anio: AnioDelColegio, colegio: Colegio, id_periodo: Optional[int], inicio: Optional[str] = None
+) -> Inicio:
+    """Desde qué PA del año aplica una asignación, según el calendario del colegio (CU016).
+
+    Con `id_periodo`, ese (del año y no terminado). Sin él: si hoy el colegio está en un
+    PA, ese; si está en un PR, lo que diga `inicio` ("retroactivo" o "proximo"); si hoy
+    no cae en ese año (p. ej. todavía no empezó), desde el primer PA no terminado.
     """
-    if id_periodo is None:
-        return _periodo_por_defecto(anio)
+    if id_periodo is not None:
+        return Inicio(periodo_de_inicio(anio, id_periodo))
+    actual = anio.calendario.periodo_de(hoy_lima())
+    if actual is None:
+        return Inicio(None)
+    if actual.es_pa:
+        return Inicio(_pa_numero(anio, actual.numero))
+    return _inicio_en_receso(anio, colegio, actual.numero, inicio)
+
+
+def periodo_de_inicio(anio: AnioDelColegio, id_periodo: int) -> PeriodoAcademico:
+    """El PA `id_periodo`, que debe ser del año y no estar terminado (en el calendario del
+    colegio)."""
     elegido = next((p for p in anio.periodos if p.id_periodo_academico == id_periodo), None)
     if elegido is None:
         raise _no_procesable(
@@ -182,12 +232,17 @@ def periodo_de_inicio(anio: AnioDelColegio, id_periodo: Optional[int]) -> Option
     return elegido
 
 
-def periodos_asignables(anio: AnioDelColegio, desde: Optional[PeriodoAcademico] = None) -> list[PeriodoAcademico]:
-    """PA no terminados del año (en el calendario del colegio), desde `desde` en adelante."""
+def periodos_asignables(anio: AnioDelColegio, inicio: Optional[Inicio] = None) -> list[PeriodoAcademico]:
+    """PA no terminados del año (en el calendario del colegio), desde `inicio.desde` en
+    adelante, precedidos por el PA retroactivo si lo hay. 422 si no queda ninguno."""
+    inicio = inicio or Inicio(None)
+    desde = inicio.desde
     asignables = [
         p for p in anio.periodos
         if anio.no_terminado(p) and (desde is None or p.numero >= desde.numero)
     ]
+    if inicio.retroactivo is not None:
+        asignables.insert(0, inicio.retroactivo)
     if not asignables:
         raise _no_procesable(
             "El año escolar no tiene periodos vigentes ni futuros para asignar.",
@@ -198,21 +253,33 @@ def periodos_asignables(anio: AnioDelColegio, desde: Optional[PeriodoAcademico] 
 
 # ── Escritura ───────────────────────────────────────────────────────────────────────
 
-def grado_asignado() -> ErrorNegocio:
-    """409 de aula ocupada (CU016), con el texto exacto del caso de uso. También lo usa la
-    traducción del UNIQUE de `docente_colegio_grado` (dos asignaciones simultáneas)."""
-    return ErrorNegocio(
-        status.HTTP_409_CONFLICT,
-        "Error: Uno o más grados seleccionados para este colegio ya se encuentran asignados a "
-        "otro docente en el periodo vigente.",
-        motivo="grado_asignado",
-    )
+def grado_asignado(
+    colegio: Optional[str] = None,
+    grado: Optional[str] = None,
+    periodo: Optional[int] = None,
+    anio: Optional[str] = None,
+) -> ErrorNegocio:
+    """409 de aula ocupada (CU016), con el texto exacto del caso de uso. Sin datos (la
+    traducción del UNIQUE de `docente_colegio_grado` ante dos asignaciones simultáneas),
+    un texto general."""
+    if colegio is None:
+        detalle = "No se puede guardar la asignación. Uno de los grados ya tiene un Docente asignado en ese periodo."
+    else:
+        detalle = (
+            f"No se puede guardar la asignación. El colegio {colegio}, grado {grado}, ya tiene un "
+            f"Docente asignado en PA{periodo} del año escolar {anio}."
+        )
+    return ErrorNegocio(status.HTTP_409_CONFLICT, detalle, motivo="grado_asignado")
 
 
 def _verificar_grados_libres(db: Session, id_docente: int, asignacion: Asignacion) -> None:
-    """409 si alguno de esos grados ya lo tiene otro docente en alguno de esos periodos."""
+    """409 si alguno de esos grados ya lo tiene otro docente en alguno de esos periodos
+    (incluido el retroactivo: no se sustituye al titular histórico). Todo o nada."""
     ocupada = db.exec(
-        select(DocenteColegioGrado.id_docente)
+        select(Grado.nombre, PeriodoAcademico.numero)
+        .select_from(DocenteColegioGrado)
+        .join(Grado, Grado.id_grado == DocenteColegioGrado.id_grado)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
         .where(
             DocenteColegioGrado.id_colegio == asignacion.colegio.id_colegio,
             col(DocenteColegioGrado.id_grado).in_([g.id_grado for g in asignacion.grados]),
@@ -221,10 +288,12 @@ def _verificar_grados_libres(db: Session, id_docente: int, asignacion: Asignacio
             ),
             DocenteColegioGrado.id_docente != id_docente,
         )
+        .order_by(PeriodoAcademico.numero, Grado.id_grado)
         .limit(1)
     ).first()
     if ocupada is not None:
-        raise grado_asignado()
+        grado, numero = ocupada
+        raise grado_asignado(asignacion.colegio.nombre, grado, numero, asignacion.anio.nombre)
 
 
 def reemplazar_asignaciones(
@@ -235,10 +304,12 @@ def reemplazar_asignaciones(
     Solo borra las filas que sobran e inserta las que faltan: las que no cambian se
     conservan con su `creado_en`, que así indica desde cuándo el docente atiende ese
     colegio y grado (lo usa la alerta de inactividad, CU011). Son periodos vigentes o
-    futuros, así que no se pierde historial.
+    futuros, así que no se pierde historial; en el PA retroactivo (ya culminado) solo se
+    agregan filas, marcadas `retroactiva`.
     """
     _verificar_grados_libres(db, id_docente, asignacion)
     ids_periodo = [p.id_periodo_academico for p in asignacion.periodos]
+    id_retroactivo = asignacion.retroactivo.id_periodo_academico if asignacion.retroactivo else None
     deseadas = {
         (asignacion.colegio.id_colegio, grado.id_grado, id_periodo)
         for id_periodo in ids_periodo
@@ -256,7 +327,7 @@ def reemplazar_asignaciones(
         clave = (fila.id_colegio, fila.id_grado, fila.id_periodo_academico)
         if clave in deseadas:
             conservadas.add(clave)
-        else:
+        elif fila.id_periodo_academico != id_retroactivo:
             sobrantes.append(fila.id)
     if sobrantes:
         db.execute(delete(DocenteColegioGrado).where(col(DocenteColegioGrado.id).in_(sobrantes)))
@@ -266,6 +337,7 @@ def reemplazar_asignaciones(
             id_colegio=id_colegio,
             id_grado=id_grado,
             id_periodo_academico=id_periodo,
+            retroactiva=id_periodo == id_retroactivo,
             creado_por=id_actor,
             creado_en=ahora,
         )
@@ -279,13 +351,17 @@ def planificar_asignacion_nueva(
     id_anio_escolar: int,
     ids_grados: Optional[list[int]],
     desde_periodo: Optional[int] = None,
+    inicio_asignacion: Optional[str] = None,
 ) -> Asignacion:
     """Asignación de un docente que no tiene una previa (alta o paso a Docente)."""
     colegio = colegio_activo(db, id_colegio)
     grados = resolver_grados(db, colegio, ids_grados)
     anio = anio_del_colegio(db, id_anio_escolar, colegio.id_colegio)
-    desde = periodo_de_inicio(anio, desde_periodo) if desde_periodo is not None else None
-    return Asignacion(colegio, grados, anio.anio, periodos_asignables(anio, desde))
+    return _armar(colegio, grados, anio, inicio_de(anio, colegio, desde_periodo, inicio_asignacion))
+
+
+def _armar(colegio: Colegio, grados: list[Grado], anio: AnioDelColegio, inicio: Inicio) -> Asignacion:
+    return Asignacion(colegio, grados, anio.anio, periodos_asignables(anio, inicio), inicio.retroactivo)
 
 
 @dataclass(frozen=True)
@@ -333,6 +409,7 @@ def planificar_cambio(
     ids_grados: Optional[list[int]],
     id_anio_escolar: Optional[int],
     desde_periodo: Optional[int],
+    inicio_asignacion: Optional[str] = None,
 ) -> Asignacion:
     """Nueva asignación de un docente que ya tiene una (PATCH /usuarios).
 
@@ -348,38 +425,30 @@ def planificar_cambio(
                 "El docente no tiene asignaciones: se requieren id_colegio e id_anio_escolar.",
                 "asignacion_incompleta",
             )
-        return planificar_asignacion_nueva(db, id_colegio, id_anio_escolar, ids_grados, desde_periodo)
+        return planificar_asignacion_nueva(
+            db, id_colegio, id_anio_escolar, ids_grados, desde_periodo, inicio_asignacion
+        )
 
     id_anio = id_anio_escolar if id_anio_escolar is not None else ultimo.periodo.id_anio_escolar
     # "Desde cuándo" se mide con el calendario del colegio de destino (el nuevo si cambia).
-    anio = anio_del_colegio(db, id_anio, id_colegio if id_colegio is not None else ultimo.id_colegio)
+    destino = colegio_activo(db, id_colegio) if id_colegio is not None else db.get(Colegio, ultimo.id_colegio)
+    anio = anio_del_colegio(db, id_anio, destino.id_colegio)
+    inicio = inicio_de(anio, destino, desde_periodo, inicio_asignacion)
     renovacion = id_anio != ultimo.periodo.id_anio_escolar
-    desde, base = _inicio_y_base(db, id_docente, ultimo, anio, desde_periodo, renovacion)
+    base = _base_del_cambio(db, id_docente, ultimo, inicio, renovacion)
     colegio = colegio_activo(db, id_colegio if id_colegio is not None else base.id_colegio)
     grados = _grados_del_cambio(db, colegio, ids_grados, base)
-    return Asignacion(colegio, grados, anio.anio, periodos_asignables(anio, desde))
+    return _armar(colegio, grados, anio, inicio)
 
 
-def _inicio_y_base(
-    db: Session,
-    id_docente: int,
-    ultimo: EstadoActual,
-    anio: AnioDelColegio,
-    desde_periodo: Optional[int],
-    renovacion: bool,
-) -> tuple[Optional[PeriodoAcademico], EstadoActual]:
-    """Desde qué periodo aplica el cambio y qué asignación toma como punto de partida.
-
-    Renovación: todo el año salvo que se indique `desde_periodo`, partiendo de su último
-    periodo asignado. Mismo año: desde el periodo indicado (o el vigente o el próximo),
-    partiendo de lo que tiene en ese periodo.
-    """
-    if renovacion:
-        desde = periodo_de_inicio(anio, desde_periodo) if desde_periodo is not None else None
-        return desde, ultimo
-    desde = periodo_de_inicio(anio, desde_periodo)
-    base = estado_en(db, id_docente, desde) if desde is not None else None
-    return desde, base or ultimo
+def _base_del_cambio(
+    db: Session, id_docente: int, ultimo: EstadoActual, inicio: Inicio, renovacion: bool
+) -> EstadoActual:
+    """Qué asignación toma el cambio como punto de partida: en una renovación, su último
+    periodo asignado; en el mismo año, lo que tiene en el periodo desde el que aplica."""
+    if renovacion or inicio.desde is None:
+        return ultimo
+    return estado_en(db, id_docente, inicio.desde) or ultimo
 
 
 def _grados_del_cambio(

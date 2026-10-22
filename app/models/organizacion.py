@@ -20,6 +20,9 @@ COLUMNAS_GRUPO = ["id_seccion", "id_colegio", "id_grado"]
 FK_GRUPO = ["seccion.id_seccion", "seccion.id_colegio", "seccion.id_grado"]
 SECCION_UNICA = "Única"
 
+# Módulos que admiten un permiso de corrección (CU028), uno por permiso.
+MODULOS_CON_PERMISO = ("asistencias", "rubrica", "registro_vuelo", "lectura")
+
 # Calendario académico (CU027): PA = periodo académico, PR = receso posterior al PA n.
 TIPO_PA = "PA"
 TIPO_PR = "PR"
@@ -223,11 +226,59 @@ class DocenteColegioGrado(SQLModel, table=True):
     id_colegio: int = Field(foreign_key=FK_COLEGIO)
     id_grado: int = Field(foreign_key=FK_GRADO)
     id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
+    # Fila del PA recién culminado creada durante su PR con "Retroactivo" (CU016): habilita
+    # escritura solo mientras dure ese PR.
+    retroactiva: bool = Field(default=False, sa_column_kwargs={"server_default": text("false")})
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)
     modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
+
+class PermisoCorreccion(SQLModel, table=True):
+    """Permiso excepcional de corrección (CU028): habilita a un docente a escribir en un
+    módulo para un colegio, grado y PA cuyo plazo ordinario ya terminó, durante
+    [inicio, fin). No se edita ni se borra; solo se revoca.
+
+    El estado se calcula: Revocado si tiene `revocado_en`; si no, Programado (antes del
+    inicio), Vigente (entre inicio y fin) o Vencido (desde el fin).
+    """
+
+    __tablename__ = "permiso_correccion"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["id_colegio", "id_grado"], ["colegio_grado.id_colegio", "colegio_grado.id_grado"],
+            name="fk_permiso_correccion_colegio_grado",
+        ),
+        CheckConstraint(
+            "modulo IN (" + ", ".join(f"'{m}'" for m in MODULOS_CON_PERMISO) + ")",
+            name="ck_permiso_correccion_modulo",
+        ),
+        CheckConstraint("fin > inicio", name="ck_permiso_correccion_vigencia"),
+        CheckConstraint("length(trim(motivo)) > 0", name="ck_permiso_correccion_motivo"),
+        # Permisos de un alcance (superposición, habilitación en una fecha).
+        Index(
+            "ix_permiso_correccion_alcance",
+            "id_docente", "id_colegio", "id_grado", "id_periodo_academico", "modulo",
+        ),
+    )
+
+    id_permiso: Optional[int] = Field(default=None, primary_key=True)
+    id_docente: int = Field(foreign_key="docente.id_docente")
+    id_anio_escolar: int = Field(foreign_key=FK_ANIO)
+    id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
+    id_colegio: int
+    id_grado: int
+    modulo: str = Field(sa_type=Text)
+    inicio: datetime = Field(sa_type=UTCDateTime)
+    fin: datetime = Field(sa_type=UTCDateTime)
+    motivo: str = Field(sa_type=Text)
+    otorgado_por: int = Field(foreign_key=FK_USUARIO)
+    otorgado_en: datetime = Field(sa_type=UTCDateTime)
+    revocado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
+    revocado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+    motivo_revocacion: Optional[str] = Field(default=None, sa_type=Text)
 
 
 class ColegioGrado(SQLModel, table=True):

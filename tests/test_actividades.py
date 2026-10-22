@@ -88,24 +88,27 @@ def test_cu009_sin_asignaciones_no_inicia(client, db, entorno):
 
     respuesta = post(client, cabecera_de(db, otro))
 
-    assert (respuesta.status_code, motivo(respuesta)) == (409, "sin_asignaciones")
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "sin_asignaciones")
     assert respuesta.json()["detail"] == (
-        "No puedes iniciar una actividad porque no tienes asignaciones activas, ya sea para el periodo "
-        "académico actual o de receso."
+        "No puedes iniciar una actividad porque no tienes asignaciones habilitadas ni permisos "
+        "excepcionales vigentes."
     )
 
 
-def test_cu010_fuera_de_periodo_no_inicia(client, db, entorno, doc):
-    """Si ningún colegio está hoy en un PA (todos en receso), el motivo es el periodo, no
-    las asignaciones (aunque tampoco tenga)."""
+def test_cu010_en_receso_sin_retroactiva_ni_permiso_no_inicia(client, db, entorno, doc):
+    """Su colegio está en el PR2 y su asignación del PA2 no es retroactiva: no tiene
+    ninguna habilitación vigente."""
     terminar_pa_vigente(db, entorno)
 
     respuesta = post(client, doc)
 
-    assert respuesta.status_code == 409
+    assert respuesta.status_code == 422
     assert respuesta.json() == {
-        "detail": "No puedes iniciar una actividad fuera del calendario operativo.",
-        "motivo": "fuera_de_periodo",
+        "detail": (
+            "No puedes iniciar una actividad porque no tienes asignaciones habilitadas ni permisos "
+        "excepcionales vigentes."
+        ),
+        "motivo": "sin_asignaciones",
     }
 
 
@@ -281,7 +284,7 @@ def test_t71_sin_asignacion_ese_dia_no_registra(client, db, entorno):
 
     respuesta = post(client, b, inicio=iso(sesion_a.inicio), id_sesion=str(sesion_a.id_sesion))
 
-    assert (respuesta.status_code, motivo(respuesta)) == (409, "sin_asignaciones")
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "sin_asignaciones")
 
 
 # ── CU017 a CU019: consulta ─────────────────────────────────────────────────────────

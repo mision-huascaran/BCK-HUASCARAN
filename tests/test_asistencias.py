@@ -17,6 +17,7 @@ from tests.conftest import (
     crear_alumno,
     crear_colegio,
     crear_particular,
+    crear_permiso,
     iso,
     motivo,
     rangos_en_receso,
@@ -112,6 +113,18 @@ def test_cu022_docente_fuera_de_su_alcance(client, entorno, cabeceras):
     respuesta = consultar(client, cabeceras["Docente"], clase(entorno, colegio="Lejano", grado="3.º"))
 
     assert (respuesta.status_code, motivo(respuesta)) == (403, "aula_fuera_de_alcance")
+
+
+def test_t4_asistencias_sigue_igual_con_un_permiso_vigente(client, db, entorno, cabeceras):
+    """Asistencias todavía no usa `habilitacion_escritura` (se rehace en T6): sigue
+    funcionando con la asignación vigente y un permiso de Asistencias no le abre otra aula."""
+    crear_permiso(db, entorno, entorno.id_docente, "Lejano", "3.º", periodo="vigente", modulo="asistencias")
+
+    propia = consultar(client, cabeceras["Docente"], clase(entorno))
+    con_permiso = consultar(client, cabeceras["Docente"], clase(entorno, colegio="Lejano", grado="3.º"))
+
+    assert propia.status_code == 200
+    assert (con_permiso.status_code, motivo(con_permiso)) == (403, "aula_fuera_de_alcance")
 
 
 def test_cu022_supervisor_solo_lee_y_directivo_no_tiene_acceso(client, entorno, cabeceras):
