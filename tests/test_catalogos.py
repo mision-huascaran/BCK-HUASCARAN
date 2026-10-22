@@ -78,12 +78,13 @@ def test_niveles(client, entorno, cabeceras):
     filtrada = client.get(
         "/niveles-rubrica", params={"id_programa": entorno.programas["Alfabetización"]}, headers=cabecera
     ).json()
-    generales = client.get("/niveles-generales", headers=cabecera).json()
+    generales = client.get("/niveles-generales", headers=cabecera)
 
-    assert razkids[0] == {"id": 1, "letra": "aa"}
+    # La escala Raz-Kids es aa..Z (sin Z1 ni Z2) y los niveles generales ya no existen.
+    assert (razkids[0], razkids[-1], len(razkids)) == ({"id": 1, "letra": "aa"}, {"id": 27, "letra": "Z"}, 27)
+    assert generales.status_code == 404
     assert {n["id_programa"] for n in filtrada} == {entorno.programas["Alfabetización"]}
     assert len(filtrada) < len(rubrica)
-    assert [n["orden"] for n in generales] == sorted(n["orden"] for n in generales)
 
 
 # ── Asignaciones ────────────────────────────────────────────────────────────────────

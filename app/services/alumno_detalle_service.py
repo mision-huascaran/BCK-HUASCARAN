@@ -24,13 +24,8 @@ from app.models.evaluacion import (
     Clase,
     ClaseAlumno,
     LECTURA_NORMAL,
-    EvaluacionDiagnostica,
-    EvaluacionDiagnosticaAlumno,
     LecturaSemanal,
     LecturaSemanalAlumno,
-    NivelFinalMensual,
-    NivelGeneral,
-    NivelRazkids,
     NivelRubrica,
     SemanaReporte,
 )
@@ -38,7 +33,6 @@ from app.models.evaluacion import RubricaMensual as EvaluacionRubrica
 from app.models.organizacion import (
     Alumno,
     AnioEscolar,
-    CicloEbr,
     Colegio,
     Grado,
     PeriodoAcademico,
@@ -55,15 +49,15 @@ from app.schemas.alumno import (
     EvaluacionMensual,
     LecturaDeLaSemana,
     NivelColocado,
-    RegistroVuelo,
+    PeriodoDeVuelo,
     Resumen,
     Rubrica,
-    RubricaMensual,
 )
 from app.services import lectura_service, rubrica_service
+from app.services import registro_vuelo as vuelo
 from app.services.calendario import anio_de_referencia
 from app.services.motor_sugerencias import resultado_decimas
-from app.services.nivel_descriptivo import escala_del_grado
+from app.services.nivel_descriptivo import EscalaDescriptiva
 from app.services.pertenencia import CAMPO_AUDITORIA, fecha_legible
 
 # Filas de las mini-grillas del detalle (CU015).
@@ -78,35 +72,26 @@ def resumen(db: Session, alumno: Alumno) -> Resumen:
     if anio is None:
         return Resumen()
     return Resumen(
-        nivel_colocado=_nivel_colocado(db, alumno, anio.id_anio_escolar),
+        nivel_colocado=_nivel_colocado(db, alumno, anio),
         libros_leidos_anio=_libros_leidos(db, alumno.id_alumno, anio.id_anio_escolar),
         asistencia=_asistencia(db, alumno, anio),
     )
 
 
-def _nivel_colocado(db: Session, alumno: Alumno, id_anio: int) -> Optional[NivelColocado]:
-    """Letra Raz-Kids colocada en el Registro de Vuelo más reciente del año: el del
-    periodo más avanzado que tenga `nivel_colocado` (uno incompleto, sin él, no cuenta).
-    None si ninguno lo tiene. Su nivel descriptivo es el del grado actual del alumno."""
-    fila = db.exec(
-        select(NivelRazkids.letra, NivelRazkids.id_nivel_rk, PeriodoAcademico.numero)
-        .select_from(EvaluacionDiagnosticaAlumno)
-        .join(
-            EvaluacionDiagnostica,
-            EvaluacionDiagnostica.id_evaluacion_diagnostica == EvaluacionDiagnosticaAlumno.id_evaluacion_diagnostica,
-        )
-        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == EvaluacionDiagnostica.id_periodo_academico)
-        .join(NivelRazkids, NivelRazkids.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
-        .where(EvaluacionDiagnosticaAlumno.id_alumno == alumno.id_alumno, PeriodoAcademico.id_anio_escolar == id_anio)
-        .order_by(col(PeriodoAcademico.numero).desc())
-    ).first()
-    if fila is None:
-        return None
-    letra, id_nivel_rk, numero = fila
-    return NivelColocado(
-        letra=letra, id_nivel_rk=id_nivel_rk, numero_periodo=numero,
-        nivel_descriptivo=escala_del_grado(db, alumno.id_grado).nivel(id_nivel_rk),
-    )
+def _nivel_colocado(db: Session, alumno: Alumno, anio: AnioEscolar) -> Optional[NivelColocado]:
+    """El nivel colocado del último PA del año que lo tenga (Registro de Vuelo, en
+    cualquier grupo), con su nivel del programa según el grado de esa decisión."""
+    datos = vuelo.cargar_datos(db, anio, [alumno.id_alumno])
+    registros = datos.registros.get(alumno.id_alumno, [])
+    for periodo in reversed(datos.periodos):
+        decision = vuelo.decision_del_periodo(registros, periodo.id_periodo_academico)
+        if decision is not None:
+            escala = datos.escalas.get(decision.id_grado, EscalaDescriptiva(()))
+            return NivelColocado(
+                letra=datos.letras[decision.id_nivel_colocado], id_nivel_rk=decision.id_nivel_colocado,
+                numero_periodo=periodo.numero, nivel_descriptivo=escala.nivel(decision.id_nivel_colocado),
+            )
+    return None
 
 
 def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
@@ -160,54 +145,41 @@ def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> AsistenciaDel
 
 # ── Registro de Vuelo, Rúbrica y Seguimiento de Lectura ─────────────────────────────
 
-def registro_vuelo(db: Session, alumno: Alumno) -> list[RegistroVuelo]:
-    """Una fila por periodo del año. Cada letra colocada trae su nivel descriptivo según
-    el grado actual del alumno (eje Y de la gráfica)."""
+def registro_vuelo(db: Session, alumno: Alumno) -> list[PeriodoDeVuelo]:
+    """Los PA del año con entrada, nivel colocado, proyección y nivel del programa, para
+    la gráfica (decisión vigente en cualquier grupo, V1)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return []
-    entrada = aliased(NivelRazkids)
-    colocado = aliased(NivelRazkids)
-    filas = db.exec(
-        select(
-            PeriodoAcademico.numero, EvaluacionDiagnostica.fecha_realizacion, CicloEbr.nombre,
-            entrada.letra, EvaluacionDiagnosticaAlumno, colocado.letra, NivelGeneral.nombre_nivel,
-        )
-        .select_from(EvaluacionDiagnosticaAlumno)
-        .join(
-            EvaluacionDiagnostica,
-            EvaluacionDiagnostica.id_evaluacion_diagnostica == EvaluacionDiagnosticaAlumno.id_evaluacion_diagnostica,
-        )
-        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == EvaluacionDiagnostica.id_periodo_academico)
-        .join(CicloEbr, CicloEbr.id_ciclo == EvaluacionDiagnosticaAlumno.id_ciclo_evaluado)
-        .join(entrada, entrada.id_nivel_rk == EvaluacionDiagnosticaAlumno.id_nivel_rk_entrada)
-        .outerjoin(colocado, colocado.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
-        .outerjoin(NivelGeneral, NivelGeneral.id_nivel_general == EvaluacionDiagnosticaAlumno.id_nivel_general)
-        .where(
-            EvaluacionDiagnosticaAlumno.id_alumno == alumno.id_alumno,
-            PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
-        )
-        # Una fila por periodo (UNIQUE de la evaluación por periodo y del alumno por
-        # evaluación); si el año tuviera más periodos que filas, se quedan los últimos.
-        .order_by(col(PeriodoAcademico.numero).desc())
-        .limit(FILAS_REGISTRO_VUELO)
-    ).all()
-    escala = escala_del_grado(db, alumno.id_grado)
-    return [
-        RegistroVuelo(
-            corte=corte, fecha=fecha, ciclo_evaluado=ciclo, nivel_entrada=nivel_entrada,
-            aciertos=registro.aciertos_prueba, total=registro.total_prueba,
-            nivel_colocado=nivel_colocado, nivel_descriptivo=escala.nivel(registro.nivel_colocado),
-            nivel_general=nivel_general, observacion=registro.observacion,
-        )
-        for corte, fecha, ciclo, nivel_entrada, registro, nivel_colocado, nivel_general in reversed(filas)
-    ]
+    datos = vuelo.cargar_datos(db, anio, [alumno.id_alumno])
+    registros = datos.registros.get(alumno.id_alumno, [])
+    salida = []
+    for periodo in datos.periodos[:FILAS_REGISTRO_VUELO]:
+        decision = vuelo.decision_del_periodo(registros, periodo.id_periodo_academico)
+        id_grado = _grado_en(registros, periodo.id_periodo_academico) or alumno.id_grado
+        id_entrada, origen = vuelo.entrada_de(datos, alumno.id_alumno, periodo, id_grado)
+        colocado = decision.id_nivel_colocado if decision else None
+        escala = datos.escalas.get(decision.id_grado if decision else id_grado, EscalaDescriptiva(()))
+        salida.append(PeriodoDeVuelo(
+            numero=periodo.numero, id_periodo_academico=periodo.id_periodo_academico,
+            entrada=datos.letras.get(id_entrada), origen_entrada=origen, nivel_colocado=datos.letras.get(colocado),
+            id_nivel_colocado=colocado,
+            proyeccion=datos.letras.get(decision.id_nivel_proyeccion) if decision else None,
+            nivel_programa=escala.nivel(colocado),
+        ))
+    return salida
+
+
+def _grado_en(registros: list, id_periodo: int) -> Optional[int]:
+    """El grado del alumno en sus filas de ese PA (la más reciente), si tiene alguna."""
+    filas = [r for r in registros if r.id_periodo_academico == id_periodo]
+    return max(filas, key=lambda r: r.fecha_registro).id_grado if filas else None
 
 
 def rubrica(db: Session, id_alumno: int) -> Rubrica:
     anio = anio_de_referencia(db)
     if anio is None:
-        return Rubrica(evaluaciones=[], mensuales=[])
+        return Rubrica(evaluaciones=[])
     fluidez, comprension = aliased(NivelRubrica), aliased(NivelRubrica)
     evaluaciones = db.exec(
         select(EvaluacionRubrica.mes, fluidez, comprension)
@@ -217,22 +189,8 @@ def rubrica(db: Session, id_alumno: int) -> Rubrica:
         .order_by(col(EvaluacionRubrica.mes).desc(), col(EvaluacionRubrica.id).desc())
         .limit(FILAS_RECIENTES)
     ).all()
-    mensuales = db.exec(
-        select(NivelFinalMensual, NivelGeneral.nombre_nivel)
-        .join(NivelGeneral, NivelGeneral.id_nivel_general == NivelFinalMensual.id_nivel_final)
-        .where(NivelFinalMensual.id_alumno == id_alumno, NivelFinalMensual.id_anio_escolar == anio.id_anio_escolar)
-        .order_by(col(NivelFinalMensual.mes).desc())
-        .limit(FILAS_RECIENTES)
-    ).all()
     return Rubrica(
         evaluaciones=[_evaluacion(mes, nivel_f, nivel_c) for mes, nivel_f, nivel_c in evaluaciones],
-        mensuales=[
-            RubricaMensual(
-                mes=nivel.mes, nivel_final=nombre, ajustado=nivel.ajustado_por_docente,
-                justificacion=nivel.justificacion,
-            )
-            for nivel, nombre in mensuales
-        ],
     )
 
 

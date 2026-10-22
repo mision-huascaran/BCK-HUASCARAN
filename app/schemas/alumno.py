@@ -97,7 +97,7 @@ class AsistenciaDelAlumno(BaseModel):
 
 
 class Resumen(BaseModel):
-    # Del Registro de Vuelo más reciente del año que lo tenga; null si ninguno.
+    # El del último PA del año con nivel colocado (Registro de Vuelo); null si ninguno.
     nivel_colocado: Optional[NivelColocado] = None
     # Suma del total de libros (LSN + LSL) de sus filas en las tablas de lectura del año
     # que se realizaron; 0 si no tiene ninguna.
@@ -105,25 +105,22 @@ class Resumen(BaseModel):
     asistencia: AsistenciaDelAlumno = AsistenciaDelAlumno()
 
 
-class RegistroVuelo(BaseModel):
-    corte: int
-    fecha: date
-    ciclo_evaluado: str
-    nivel_entrada: str
-    aciertos: Optional[int] = None
-    total: Optional[int] = None
+class PeriodoDeVuelo(BaseModel):
+    """Un PA del Registro de Vuelo del alumno (CU015, gráfica): su decisión vigente en
+    cualquier grupo (V1)."""
+
+    numero: int
+    id_periodo_academico: int
+    # Letra de entrada; null si viene de un PA anterior sin nivel colocado.
+    entrada: Optional[str] = None
+    origen_entrada: Literal["grado", "periodo_anterior", "pendiente_periodo_anterior"]
+    # null = "Sin registrar".
     nivel_colocado: Optional[str] = None
-    # Nivel descriptivo de la letra colocada (grado actual del alumno); null sin letra.
-    nivel_descriptivo: Optional[str] = None
-    nivel_general: Optional[str] = None
-    observacion: Optional[str] = None
-
-
-class RubricaMensual(BaseModel):
-    mes: int
-    nivel_final: str
-    ajustado: bool
-    justificacion: Optional[str] = None
+    # Para el eje Y de la gráfica (ids ascendentes = niveles ascendentes).
+    id_nivel_colocado: Optional[int] = None
+    proyeccion: Optional[str] = None
+    # Nivel del programa según el grado de la decisión y el nivel colocado.
+    nivel_programa: Optional[str] = None
 
 
 class EvaluacionMensual(BaseModel):
@@ -138,7 +135,6 @@ class EvaluacionMensual(BaseModel):
 
 class Rubrica(BaseModel):
     evaluaciones: list[EvaluacionMensual]
-    mensuales: list[RubricaMensual]
 
 
 class LecturaDeLaSemana(BaseModel):

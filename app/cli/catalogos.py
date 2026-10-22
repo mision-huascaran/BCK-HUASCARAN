@@ -2,7 +2,7 @@
 
 - rol, ciclo_ebr, grado y programa ya existen en las BD actuales con ids SERIAL creados
   por el seed: se buscan por nombre (get-or-create), sin forzar ids.
-- nivel_razkids, nivel_general y nivel_rubrica usan ids explícitos (el id de
+- nivel_razkids y nivel_rubrica usan ids explícitos (el id de
   nivel_razkids ES el orden del nivel); después se ajusta su secuencia.
 - nivel_esperado_por_grado y escala_nivel_descriptivo se identifican por grado (y nivel)
   y apuntan a la letra por su nombre.
@@ -19,7 +19,6 @@ from app.models.evaluacion import (
     DescriptorRubrica,
     EscalaNivelDescriptivo,
     NivelEsperadoPorGrado,
-    NivelGeneral,
     NivelRazkids,
     NivelRubrica,
 )
@@ -172,11 +171,6 @@ def cargar_catalogos(db: Session, datos: Optional[dict] = None, descriptores: Op
 
     niveles_rk = [{"id_nivel_rk": n["id"], "letra": n["letra"]} for n in datos["niveles_razkids"]]
     _cargar_por_id(db, NivelRazkids, niveles_rk, resumen)
-    niveles_generales = [
-        {"id_nivel_general": n["id"], "nombre_nivel": n["nombre"], "orden": n["orden"]}
-        for n in datos["niveles_generales"]
-    ]
-    _cargar_por_id(db, NivelGeneral, niveles_generales, resumen)
     _cargar_por_id(db, NivelRubrica, _filas_rubrica(datos["niveles_rubrica"], programas), resumen)
     _cargar_niveles_esperados(db, datos["niveles_esperados_por_grado"], resumen)
     _cargar_escala_descriptiva(db, datos["escala_nivel_descriptivo"], resumen)

@@ -78,6 +78,7 @@ from app.models.evaluacion import (  # noqa: E402
     ClaseAlumno,
     LecturaSemanal,
     LecturaSemanalAlumno,
+    RegistroVuelo,
     SemanaReporte,
 )
 from app.services import auth_service  # noqa: E402
@@ -748,3 +749,21 @@ def tabla_lectura(db, alumno: Alumno, fecha: date, estado="normal", motivo=None,
     db.add(LecturaSemanalAlumno(id_lectura_semanal=tabla.id, id_alumno=alumno.id_alumno, **campos, **firma))
     db.commit()
     return tabla
+
+
+def decision_de_vuelo(db, alumno: Alumno, periodo: PeriodoAcademico, id_nivel_colocado, fecha=None, **campos):
+    """Fila del Registro de Vuelo del alumno en el PA, en su grupo actual (o el de
+    `campos`), sin validar."""
+    ahora = fecha or tiempo.ahora_utc()
+    contexto = {
+        "id_colegio": alumno.id_colegio, "id_grado": alumno.id_grado, "id_seccion": alumno.id_seccion,
+        "id_programa": alumno.id_programa_actual, **campos,
+    }
+    fila = RegistroVuelo(
+        id_alumno=alumno.id_alumno, id_anio_escolar=periodo.id_anio_escolar,
+        id_periodo_academico=periodo.id_periodo_academico, id_nivel_colocado=id_nivel_colocado, **contexto,
+        id_docente=db.exec(select(Docente)).first().id_docente, fecha_registro=ahora, creado_por=1, creado_en=ahora,
+    )
+    db.add(fila)
+    db.commit()
+    return fila

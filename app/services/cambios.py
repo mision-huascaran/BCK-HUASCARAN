@@ -17,9 +17,8 @@ from sqlmodel import Session, col, select
 from app.core.ciclo import ciclo_sql
 from app.models.evaluacion import (
     Asistencia,
-    EvaluacionDiagnosticaAlumno,
     LecturaSemanalAlumno,
-    NivelFinalMensual,
+    RegistroVuelo,
     RubricaMensual,
 )
 from app.models.organizacion import Alumno, CicloEbr, Colegio, Grado, Programa, Seccion
@@ -41,10 +40,9 @@ OTROS = "otros"
 # Registro de Vuelo; Alumnos y Asistencia también requieren actividad y se cuentan.
 MODULOS = {
     "rubrica_mensual": RUBRICA,
-    "nivel_final_mensual": RUBRICA,
     "lectura_semanal": LECTURA,
     "lectura_semanal_alumno": LECTURA,
-    "evaluacion_diagnostica_alumno": VUELO,
+    "registro_vuelo": VUELO,
     "alumno": ALUMNOS,
     "asistencia": ASISTENCIA,
 }
@@ -68,10 +66,9 @@ CAMPO_POR_ACCION = {CREAR: "creados", EDITAR: "editados", ACTIVAR: "activados", 
 # Cómo llegar del registro auditado a su alumno, para las asignaciones involucradas.
 CON_ID_ALUMNO = {
     "asistencia": Asistencia,
-    "evaluacion_diagnostica_alumno": EvaluacionDiagnosticaAlumno,
+    "registro_vuelo": RegistroVuelo,
     "lectura_semanal_alumno": LecturaSemanalAlumno,
     "rubrica_mensual": RubricaMensual,
-    "nivel_final_mensual": NivelFinalMensual,
 }
 
 _avisadas: set[str] = set()

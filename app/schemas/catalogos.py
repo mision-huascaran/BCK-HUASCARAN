@@ -69,9 +69,3 @@ class NivelRubricaResponse(BaseModel):
     # Código 0-4 con que se evalúa (0 Pre-inicio … 4 Avanzado).
     valor: int
     nombre_nivel: str
-
-
-class NivelGeneralResponse(BaseModel):
-    id: int
-    orden: int
-    nombre_nivel: str

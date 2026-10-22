@@ -1,5 +1,5 @@
 """Grupos 2, 3 y 4 del diseño v4: catálogo de evaluación, clases, asistencia, lectura
-semanal y rúbrica.
+semanal, rúbrica mensual y Registro de Vuelo.
 
 Los catálogos del Grupo 2 (salvo `evaluacion_diagnostica`) no llevan auditoría
 (diseño v3, §1.2). Las tablas de captura guardan en `fecha_registro` el momento real de
@@ -19,7 +19,6 @@ from app.services.reglas_provisionales import UNICA_TABLA_POR_CLASE_Y_SUBPROGRAM
 FK_ALUMNO = "alumno.id_alumno"
 FK_NIVEL_RAZKIDS = "nivel_razkids.id_nivel_rk"
 FK_NIVEL_RUBRICA = "nivel_rubrica.id_nivel_rubrica"
-FK_NIVEL_GENERAL = "nivel_general.id_nivel_general"
 FK_PERIODO = "periodo_academico.id_periodo_academico"
 FK_ACTIVIDAD = "actividad.id_actividad"
 FK_PERMISO = "permiso_correccion.id_permiso"
@@ -70,14 +69,6 @@ class DescriptorRubrica(SQLModel, table=True):
     texto: str = Field(sa_type=Text)
 
 
-class NivelGeneral(SQLModel, table=True):
-    __tablename__ = "nivel_general"
-
-    id_nivel_general: Optional[int] = Field(default=None, primary_key=True)
-    orden: int
-    nombre_nivel: str = Field(sa_type=Text)
-
-
 class NivelEsperadoPorGrado(SQLModel, table=True):
     __tablename__ = "nivel_esperado_por_grado"
 
@@ -111,25 +102,7 @@ class EscalaNivelDescriptivo(SQLModel, table=True):
     id_nivel_rk_desde: int = Field(foreign_key=FK_NIVEL_RAZKIDS)
 
 
-class EvaluacionDiagnostica(SQLModel, table=True):
-    """Cortes del Registro de Vuelo, uno por periodo académico."""
-
-    __tablename__ = "evaluacion_diagnostica"
-    __table_args__ = (
-        UniqueConstraint("id_periodo_academico", name="uq_evaluacion_diagnostica_periodo"),
-    )
-
-    id_evaluacion_diagnostica: Optional[int] = Field(default=None, primary_key=True)
-    id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
-    fecha_realizacion: date
-
-    creado_por: int = Field(foreign_key=FK_USUARIO)
-    creado_en: datetime = Field(sa_type=UTCDateTime)
-    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
-    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
-
-
-# ── Grupo 3: registro semanal y diagnóstico del alumno ──────────────────────────────
+# ── Grupo 3: semanas, clases, asistencia y lectura ──────────────────────────────────
 
 
 class SemanaReporte(SQLModel, table=True):
@@ -272,45 +245,6 @@ class Asistencia(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
-class EvaluacionDiagnosticaAlumno(SQLModel, table=True):
-    """Registro de Vuelo. Los campos de resultado admiten null (registro incompleto)."""
-
-    __tablename__ = "evaluacion_diagnostica_alumno"
-    __table_args__ = (
-        UniqueConstraint(
-            "id_alumno",
-            "id_evaluacion_diagnostica",
-            name="uq_evaluacion_diagnostica_alumno_alumno_evaluacion",
-        ),
-        CheckConstraint(
-            "aciertos_prueba IS NULL OR total_prueba IS NULL OR aciertos_prueba <= total_prueba",
-            name="ck_evaluacion_diagnostica_alumno_aciertos",
-        ),
-    )
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    id_alumno: int = Field(foreign_key=FK_ALUMNO)
-    id_evaluacion_diagnostica: int = Field(
-        foreign_key="evaluacion_diagnostica.id_evaluacion_diagnostica"
-    )
-    # Puede diferir del ciclo calculado del alumno.
-    id_ciclo_evaluado: int = Field(foreign_key="ciclo_ebr.id_ciclo")
-    id_nivel_rk_entrada: int = Field(foreign_key=FK_NIVEL_RAZKIDS)
-    aciertos_prueba: Optional[int] = Field(default=None)
-    total_prueba: Optional[int] = Field(default=None)
-    # Decisión del docente.
-    nivel_colocado: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)
-    id_nivel_general: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_GENERAL)
-    observacion: Optional[str] = Field(default=None, sa_type=Text)
-    id_docente: int = Field(foreign_key=FK_DOCENTE)
-    fecha_registro: datetime = Field(sa_type=UTCDateTime)
-
-    creado_por: int = Field(foreign_key=FK_USUARIO)
-    creado_en: datetime = Field(sa_type=UTCDateTime)
-    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
-    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
-
-
 # Estados de una tabla de lectura semanal (CU023, CU026).
 LECTURA_NORMAL = "normal"
 LECTURA_NO_REALIZADA = "no_realizada"
@@ -403,7 +337,7 @@ class LecturaSemanalAlumno(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
-# ── Grupo 4: rúbrica mensual y nivel final ──────────────────────────────────────────
+# ── Grupo 4: rúbrica mensual y Registro de Vuelo ────────────────────────────────────
 
 
 class RubricaMensual(SQLModel, table=True):
@@ -445,35 +379,45 @@ class RubricaMensual(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
+class RegistroVuelo(SQLModel, table=True):
+    """Decisión del Docente sobre el nivel Raz-Kids del alumno en un PA (CU031, CU032), en
+    el grupo en que pertenecía. La entrada, la sugerencia y el nivel del programa se
+    calculan; al registrar el nivel colocado se guarda con qué se decidió (rúbrica de
+    referencia y su versión, resultado y entrada vigente)."""
 
-class NivelFinalMensual(SQLModel, table=True):
-    """Nivel vigente del alumno cada mes; fuente de "Nivel actual" (CU015)."""
-
-    __tablename__ = "nivel_final_mensual"
+    __tablename__ = "registro_vuelo"
     __table_args__ = (
+        ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_registro_vuelo_seccion"),
         UniqueConstraint(
-            "id_alumno", "id_anio_escolar", "mes", name="uq_nivel_final_mensual_alumno_anio_mes"
+            "id_alumno", "id_anio_escolar", "id_periodo_academico", "id_colegio", "id_grado", "id_seccion",
+            "id_programa", name="uq_registro_vuelo_alumno_periodo_grupo",
         ),
-        CheckConstraint("mes BETWEEN 1 AND 12", name="ck_nivel_final_mensual_mes"),
-        CheckConstraint(
-            "ajustado_por_docente = false OR justificacion IS NOT NULL",
-            name="ck_nivel_final_mensual_justificacion",
-        ),
+        CheckConstraint("resultado_decimas BETWEEN 0 AND 40", name="ck_registro_vuelo_resultado"),
+        Index("ix_registro_vuelo_alumno_periodo", "id_alumno", "id_periodo_academico"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     id_alumno: int = Field(foreign_key=FK_ALUMNO)
     id_anio_escolar: int = Field(foreign_key=FK_ANIO)
     id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
-    mes: int
-    id_nivel_final: int = Field(foreign_key=FK_NIVEL_GENERAL)
-    ajustado_por_docente: bool = Field(
-        default=False, sa_column_kwargs={"server_default": text("false")}
-    )
-    id_docente_ajuste: Optional[int] = Field(default=None, foreign_key=FK_DOCENTE)
-    justificacion: Optional[str] = Field(default=None, sa_type=Text)
-    fecha_calculo: datetime = Field(sa_type=UTCDateTime)
-    fecha_ajuste: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+    id_colegio: int
+    id_grado: int
+    id_seccion: int
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
+    # null = "Sin registrar".
+    id_nivel_colocado: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)
+    # null = "Sin proyección".
+    id_nivel_proyeccion: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)
+    observacion: Optional[str] = Field(default=None, sa_type=Text)
+    id_rubrica_referencia: Optional[int] = Field(default=None, foreign_key="rubrica_mensual.id")
+    rubrica_version: Optional[int] = None
+    resultado_decimas: Optional[int] = None
+    id_nivel_entrada_al_decidir: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)
+    id_docente: int = Field(foreign_key=FK_DOCENTE)
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
+    fecha_registro: datetime = Field(sa_type=UTCDateTime)
+    version: int = Field(default=1, sa_column_kwargs={"server_default": text("1")})
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)

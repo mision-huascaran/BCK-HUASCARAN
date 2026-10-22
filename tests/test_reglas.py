@@ -142,7 +142,8 @@ def test_cu021_productividad_texto(conteos, texto):
 
 
 def test_modulo_de_cada_tabla():
-    assert cambios.modulo_de("nivel_final_mensual") == "rubrica"
+    assert cambios.modulo_de("rubrica_mensual") == "rubrica"
+    assert cambios.modulo_de("registro_vuelo") == "registro_vuelo"
     assert cambios.modulo_de("lectura_semanal") == "seguimiento_lectura"
     assert cambios.modulo_de("lectura_semanal_alumno") == "seguimiento_lectura"
     assert cambios.modulo_de("tabla_sin_modulo") == "otros"

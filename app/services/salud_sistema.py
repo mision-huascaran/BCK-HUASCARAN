@@ -19,6 +19,7 @@ from app.models.evaluacion import Asistencia, Clase
 from app.models.trazabilidad import OperacionPendiente
 from app.services.calendario import PeriodoCalendario, en_pa_de_su_colegio, pa_actual_de_colegios
 from app.services.lectura_service import filas_confirmadas
+from app.services.registro_vuelo import decisiones_confirmadas
 from app.services.rubrica_service import rubricas_completadas
 
 PaPorColegio = dict[int, PeriodoCalendario]
@@ -44,6 +45,7 @@ CONTADORES: dict[str, ContadorModulo] = {
     "asistencias": asistencias_confirmadas,
     "lectura": filas_confirmadas,
     "rubrica": rubricas_completadas,
+    "registro_vuelo": decisiones_confirmadas,
 }
 
 

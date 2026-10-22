@@ -20,7 +20,7 @@ from app.schemas.alumno import (
     CambioEstadoAlumno,
     EventoHistorial,
     LecturaDeLaSemana,
-    RegistroVuelo,
+    PeriodoDeVuelo,
     Resumen,
     Rubrica,
 )
@@ -88,7 +88,7 @@ def resumen(id_alumno: int, db: Db, usuario: ConAcceso):
     return detalle.resumen(db, alumno_service.alumno_visible(db, usuario, id_alumno))
 
 
-@router.get("/alumnos/{id_alumno}/registro-vuelo", response_model=list[RegistroVuelo])
+@router.get("/alumnos/{id_alumno}/registro-vuelo", response_model=list[PeriodoDeVuelo])
 def registro_vuelo(id_alumno: int, db: Db, usuario: ConAcceso):
     return detalle.registro_vuelo(db, alumno_service.alumno_visible(db, usuario, id_alumno))
 

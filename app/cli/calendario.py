@@ -1,5 +1,4 @@
-"""cargar-calendario: año escolar, calendario general, cortes diagnósticos y semanas desde
-un JSON.
+"""cargar-calendario: año escolar, calendario general y semanas desde un JSON.
 
 Desde CU027 el calendario académico lo gestiona el Supervisor en la API. Este comando
 solo lo siembra:
@@ -9,7 +8,6 @@ solo lo siembra:
   (`recesos`; si el archivo no los trae, se derivan como en la migración). Si ya existe y
   difiere del archivo, NO se modifica (un despliegue no debe pisar lo que guardó un
   Supervisor): queda un WARNING;
-- hay una evaluacion_diagnostica (corte) por periodo; el archivo manda su fecha;
 - semana_reporte se genera de lunes a viernes en todo el rango del año escolar (toda
   semana con al menos un día hábil dentro del año), sin depender de los PA, con
   numero_semana correlativo en el año. Si eso deja fuera de rango semanas que ya tienen
@@ -25,7 +23,7 @@ from sqlmodel import Session, col, select
 
 from app.cli.comun import DIR_DATOS, Resumen, id_supervisor_original, leer_json
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import EvaluacionDiagnostica, LecturaSemanal, SemanaReporte
+from app.models.evaluacion import LecturaSemanal, SemanaReporte
 from app.models.organizacion import AnioEscolar, Calendario, PeriodoAcademico
 from app.schemas.calendario import PeriodoEntrada
 from app.services.calendario import NUMEROS_PA, calendario_general, cargar_calendarios
@@ -47,7 +45,6 @@ class PeriodoArchivo:
     numero: int
     inicio: date
     fin: date
-    corte: date
 
 
 @dataclass(frozen=True)
@@ -85,7 +82,7 @@ def leer_calendario(datos: dict) -> tuple[Optional[CalendarioArchivo], list[str]
     try:
         anio = datos["anio"]
         periodos = [
-            PeriodoArchivo(int(p["numero"]), *_rango(p), corte=date.fromisoformat(p["corte_diagnostico"]))
+            PeriodoArchivo(int(p["numero"]), *_rango(p))
             for p in datos["periodos"]
         ]
         recesos = [RecesoArchivo(int(r["numero"]), *_rango(r)) for r in datos.get("recesos", [])]
@@ -111,8 +108,6 @@ def _errores_periodo(p: PeriodoArchivo, cal: CalendarioArchivo) -> list[str]:
         errores.append(f"periodo {p.numero}: {p.fin} no es viernes")
     if p.inicio < cal.inicio or p.fin > cal.fin:
         errores.append(f"periodo {p.numero}: {p.inicio}..{p.fin} sale del año {cal.inicio}..{cal.fin}")
-    if not p.inicio <= p.corte <= p.fin:
-        errores.append(f"periodo {p.numero}: el corte {p.corte} no cae dentro del periodo")
     return errores
 
 
@@ -202,14 +197,13 @@ def _cargar_anio(db: Session, cal: CalendarioArchivo, auditoria: dict, resumen: 
 
 def _cargar_periodos(
     db: Session, cal: CalendarioArchivo, anio: AnioEscolar, auditoria: dict, resumen: Resumen
-) -> dict[int, PeriodoAcademico]:
+) -> None:
     """PA1 a PA4 del año (identidad, sin fechas), creando los que falten."""
     antes = {p.numero for p in db.exec(select(PeriodoAcademico).where(PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar))}
     for numero in sorted(antes - set(NUMEROS_PA)):
         resumen.advertir(f"año {cal.nombre}: el periodo {numero} existe en la BD pero no en el archivo")
     ids = asegurar_periodos_academicos(db, anio.id_anio_escolar, auditoria["creado_por"], auditoria["creado_en"])
     resumen.creados["periodo_academico"] += len(set(ids) - antes)
-    return {numero: db.get(PeriodoAcademico, id_periodo) for numero, id_periodo in ids.items()}
 
 
 def _mismas_fechas(existente: list, propuestos: list[PeriodoEntrada]) -> bool:
@@ -235,27 +229,6 @@ def _cargar_calendario_general(
             f"calendario general {cal.nombre}: difiere del archivo y no se modifica "
             "(desde CU027 lo gestiona el Supervisor en la API)"
         )
-
-
-def _cargar_cortes(
-    db: Session, cal: CalendarioArchivo, periodos: dict[int, PeriodoAcademico], auditoria: dict, resumen: Resumen
-) -> None:
-    for p in cal.periodos:
-        id_periodo = periodos[p.numero].id_periodo_academico
-        corte = db.exec(
-            select(EvaluacionDiagnostica).where(EvaluacionDiagnostica.id_periodo_academico == id_periodo)
-        ).first()
-        if corte is None:
-            db.add(EvaluacionDiagnostica(id_periodo_academico=id_periodo, fecha_realizacion=p.corte, **auditoria))
-            resumen.creados["evaluacion_diagnostica"] += 1
-        elif corte.fecha_realizacion != p.corte:
-            resumen.advertir(
-                f"corte del periodo {cal.nombre}-{p.numero}: {corte.fecha_realizacion} -> {p.corte} "
-                "(el archivo de calendario manda)"
-            )
-            corte.fecha_realizacion = p.corte
-            corte.modificado_por, corte.modificado_en = auditoria["creado_por"], auditoria["creado_en"]
-            resumen.actualizados["evaluacion_diagnostica"] += 1
 
 
 def _sincronizar_semanas(
@@ -307,9 +280,8 @@ def _escribir(
     auditoria: dict, resumen: Resumen,
 ) -> None:
     anio = _cargar_anio(db, cal, auditoria, resumen)
-    periodos = _cargar_periodos(db, cal, anio, auditoria, resumen)
+    _cargar_periodos(db, cal, anio, auditoria, resumen)
     _cargar_calendario_general(db, cal, anio, auditoria, resumen)
-    _cargar_cortes(db, cal, periodos, auditoria, resumen)
     _sincronizar_semanas(db, anio, *semanas, auditoria, resumen)
     db.commit()
 

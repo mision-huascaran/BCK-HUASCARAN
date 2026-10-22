@@ -23,7 +23,7 @@ from app.cli.supervisor import DatosSupervisor, errores_de_validacion, inicializ
 from app.core.config import Settings
 from app.core.security import verify_password
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import EvaluacionDiagnostica, SemanaReporte
+from app.models.evaluacion import SemanaReporte
 from app.models.organizacion import (
     AnioEscolar,
     Calendario,
@@ -78,10 +78,10 @@ def con_original(db):
 
 # PA1 a PA4 de 2030, de lunes a viernes: 2, 2, 1 y 1 semanas.
 PAS_2030 = (
-    {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"},
-    {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05", "corte_diagnostico": "2030-03-27"},
-    {"numero": 3, "fecha_inicio": "2030-05-06", "fecha_fin": "2030-05-10", "corte_diagnostico": "2030-05-07"},
-    {"numero": 4, "fecha_inicio": "2030-06-03", "fecha_fin": "2030-06-07", "corte_diagnostico": "2030-06-04"},
+    {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15"},
+    {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05"},
+    {"numero": 3, "fecha_inicio": "2030-05-06", "fecha_fin": "2030-05-10"},
+    {"numero": 4, "fecha_inicio": "2030-06-03", "fecha_fin": "2030-06-07"},
 )
 
 
@@ -278,14 +278,13 @@ def general_2030(db):
     return cargar_calendarios(db).generales[db.exec(select(AnioEscolar)).one().id_anio_escolar]
 
 
-def test_cargar_calendario_crea_anio_periodos_calendario_cortes_y_semanas(con_original, tmp_path):
+def test_cargar_calendario_crea_anio_periodos_calendario_y_semanas(con_original, tmp_path):
     db = con_original
 
     resumen = cargar_calendario(db, escribir(tmp_path, calendario()))
 
     assert resumen.errores == []
     assert (resumen.creados["año_escolar"], resumen.creados["periodo_academico"], resumen.creados["calendario"]) == (1, 4, 1)
-    assert resumen.creados["evaluacion_diagnostica"] == 4
     # Sin `recesos` en el archivo, cada PR cubre el hueco hasta el PA siguiente y el PR4
     # llega al fin del año.
     assert [(p.nombre, p.fecha_inicio, p.fecha_fin) for p in general_2030(db).periodos] == [
@@ -323,12 +322,12 @@ def test_cargar_calendario_usa_los_recesos_del_archivo(con_original, tmp_path):
 
 def test_cargar_calendario_no_pisa_el_calendario_de_la_api(con_original, tmp_path):
     """Desde CU027 el general lo gestiona el Supervisor: un archivo distinto no lo cambia
-    (WARNING). El año y los cortes sí los manda el archivo."""
+    (WARNING). El año sí lo manda el archivo."""
     db = con_original
     cargar_calendario(db, escribir(tmp_path, calendario()))
     cambiado = calendario(fecha_fin="2030-12-13")
     cambiado["periodos"][0] = {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-08",
-                               "corte_diagnostico": "2030-03-07"}
+                               }
     db.add(PeriodoAcademico(id_anio_escolar=db.exec(select(AnioEscolar)).one().id_anio_escolar, numero=9,
                             creado_por=1, creado_en=ahora_utc()))
     db.commit()
@@ -336,7 +335,7 @@ def test_cargar_calendario_no_pisa_el_calendario_de_la_api(con_original, tmp_pat
     resumen = cargar_calendario(db, escribir(tmp_path, cambiado))
 
     assert resumen.errores == []
-    assert (resumen.actualizados["año_escolar"], resumen.actualizados["evaluacion_diagnostica"]) == (1, 1)
+    assert resumen.actualizados["año_escolar"] == 1
     assert any("calendario general 2030: difiere del archivo y no se modifica" in a for a in resumen.advertencias)
     assert any("el periodo 9 existe en la BD" in a for a in resumen.advertencias)
     assert general_2030(db).pa(1).fecha_fin == date(2030, 3, 15)
@@ -390,7 +389,6 @@ def con_pa1(**cambios) -> list[dict]:
         (con_pa1(fecha_inicio="2030-03-05"), {}, "no es lunes"),
         (con_pa1(fecha_fin="2030-03-14"), {}, "no es viernes"),
         (con_pa1(fecha_inicio="2030-03-15", fecha_fin="2030-03-04"), {}, "después de terminar"),
-        (con_pa1(corte_diagnostico="2030-03-20"), {}, "corte"),
         (con_pa1(), {"fecha_inicio": "2030-03-10"}, "sale del año"),
         ([], {}, "debe tener los periodos 1 a 4"),
         (calendario()["periodos"][:3], {}, "debe tener los periodos 1 a 4"),
@@ -440,7 +438,6 @@ def test_cargar_calendario_sin_supervisor_original(db, tmp_path):
 
 def test_cargar_calendario_real_del_repositorio(con_original):
     assert cargar_calendario(con_original).errores == []
-    assert len(con_original.exec(select(EvaluacionDiagnostica)).all()) == 4
     general = cargar_calendarios(con_original).generales
     assert [p.nombre for p in next(iter(general.values())).periodos] == [
         "PA1", "PR1", "PA2", "PR2", "PA3", "PR3", "PA4", "PR4"
@@ -452,10 +449,10 @@ def test_cargar_calendario_real_del_repositorio(con_original):
 # PA3 del 22/07 al 2/08 (feriados el martes 23 y el lunes 29) y PA4 del 26 al 30/08
 # (Santa Rosa, el viernes 30). El 6/08 cae en el PR3 y los de octubre en adelante, en el PR4.
 PAS_CON_FERIADOS = [
-    {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"},
-    {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05", "corte_diagnostico": "2030-03-27"},
-    {"numero": 3, "fecha_inicio": "2030-07-22", "fecha_fin": "2030-08-02", "corte_diagnostico": "2030-07-24"},
-    {"numero": 4, "fecha_inicio": "2030-08-26", "fecha_fin": "2030-08-30", "corte_diagnostico": "2030-08-27"},
+    {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15"},
+    {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05"},
+    {"numero": 3, "fecha_inicio": "2030-07-22", "fecha_fin": "2030-08-02"},
+    {"numero": 4, "fecha_inicio": "2030-08-26", "fecha_fin": "2030-08-30"},
 ]
 
 

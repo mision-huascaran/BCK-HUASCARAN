@@ -6,19 +6,15 @@ from sqlmodel import col, select
 
 from app.core.paginacion import TAMANO_PAGINA
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import (
-    EvaluacionDiagnostica,
-    EvaluacionDiagnosticaAlumno,
-    NivelFinalMensual,
-    NivelGeneral,
-    NivelRazkids,
-)
-from app.models.organizacion import AlumnoPertenencia, CicloEbr
+from app.models.evaluacion import NivelRazkids, RegistroVuelo
+from app.models.organizacion import AlumnoPertenencia
 from app.models.trazabilidad import Auditoria
 from app.services import alumno_detalle_service
 from tests.conftest import (
     crear_colegio,
+    decision_de_vuelo,
     hoy_iso,
+    seccion_de,
     motivo,
     registrar_asistencia,
     tabla_lectura,
@@ -326,20 +322,9 @@ def registros(db, entorno):
     tabla_lectura(db, alumno, fechas[1])
     # Una tabla no realizada no suma libros.
     tabla_lectura(db, alumno, entorno.hoy - timedelta(days=21), estado="no_realizada", motivo="Paro")
-    claves = {"id_alumno": luis, "id_anio_escolar": anio, "id_periodo_academico": periodo}
-    generales = db.exec(select(NivelGeneral).order_by(NivelGeneral.orden)).all()
-    for mes, nivel in ((4, generales[0]), (5, generales[1])):
-        db.add(NivelFinalMensual(mes=mes, id_nivel_final=nivel.id_nivel_general, ajustado_por_docente=mes == 5,
-                                 justificacion="Ajuste" if mes == 5 else None, fecha_calculo=ahora, **claves, **base))
-    corte = EvaluacionDiagnostica(id_periodo_academico=periodo, fecha_realizacion=entorno.hoy, **base)
-    db.add(corte)
-    db.flush()
-    ciclo = db.exec(select(CicloEbr).where(CicloEbr.nombre == "III")).one()
-    db.add(EvaluacionDiagnosticaAlumno(id_alumno=luis, id_evaluacion_diagnostica=corte.id_evaluacion_diagnostica,
-                                       id_ciclo_evaluado=ciclo.id_ciclo, id_nivel_rk_entrada=2, aciertos_prueba=8,
-                                       total_prueba=10, nivel_colocado=3, **captura))
-    db.commit()
-    return {"luis": luis, "nivel_mayo": generales[1].nombre_nivel}
+    # Registro de Vuelo: B en el PA vigente; el PA1 sin decisión.
+    decision_de_vuelo(db, alumno, entorno.periodos["vigente"], 3)
+    return {"luis": luis}
 
 
 def test_cu015_resumen_con_registros(client, entorno, cabeceras, registros):
@@ -352,50 +337,21 @@ def test_cu015_resumen_con_registros(client, entorno, cabeceras, registros):
     }
 
 
-def registro_de_vuelo(db, entorno, id_alumno, periodo, nivel_colocado) -> None:
-    """Corte del periodo (si no existe) y el Registro de Vuelo del alumno en él."""
-    base = {"creado_por": entorno.supervisor.id_usuario, "creado_en": ahora_utc()}
-    corte = db.exec(
-        select(EvaluacionDiagnostica).where(EvaluacionDiagnostica.id_periodo_academico == periodo.id_periodo_academico)
-    ).first()
-    if corte is None:
-        corte = EvaluacionDiagnostica(
-            id_periodo_academico=periodo.id_periodo_academico,
-            fecha_realizacion=entorno.rangos[f"PA{periodo.numero}"][0], **base,
-        )
-        db.add(corte)
-        db.flush()
-    ciclo = db.exec(select(CicloEbr).where(CicloEbr.nombre == "III")).one()
-    db.add(
-        EvaluacionDiagnosticaAlumno(
-            id_alumno=id_alumno, id_evaluacion_diagnostica=corte.id_evaluacion_diagnostica,
-            id_ciclo_evaluado=ciclo.id_ciclo, id_nivel_rk_entrada=1, nivel_colocado=nivel_colocado,
-            id_docente=entorno.id_docente, fecha_registro=ahora_utc(), **base,
-        )
-    )
-    db.flush()
-
-
 def test_cu015_nivel_colocado_del_periodo_mas_avanzado_con_dato(client, db, entorno, cabeceras):
     """Pasado con J y vigente sin colocar (incompleto): sale la J del pasado. Al
     completarse el vigente, sale el del vigente."""
     luis = entorno.alumnos["luis"].id_alumno
     letra_j = db.exec(select(NivelRazkids).where(NivelRazkids.letra == "J")).one()
-    registro_de_vuelo(db, entorno, luis, entorno.periodos["pasado"], letra_j.id_nivel_rk)
-    registro_de_vuelo(db, entorno, luis, entorno.periodos["vigente"], None)
-    db.commit()
+    decision_de_vuelo(db, entorno.alumnos["luis"], entorno.periodos["pasado"], letra_j.id_nivel_rk)
+    vigente = decision_de_vuelo(db, entorno.alumnos["luis"], entorno.periodos["vigente"], None)
     url = f"/alumnos/{luis}/resumen"
 
     assert client.get(url, headers=cabeceras["Supervisor"]).json()["nivel_colocado"] == {
         "letra": "J", "id_nivel_rk": letra_j.id_nivel_rk, "numero_periodo": 1, "nivel_descriptivo": "Avanzado",
     }
 
-    vigente = db.exec(
-        select(EvaluacionDiagnosticaAlumno)
-        .join(EvaluacionDiagnostica)
-        .where(EvaluacionDiagnostica.id_periodo_academico == entorno.periodos["vigente"].id_periodo_academico)
-    ).one()
-    vigente.nivel_colocado = 12
+    vigente = db.get(RegistroVuelo, vigente.id)
+    vigente.id_nivel_colocado = 12
     db.add(vigente)
     db.commit()
 
@@ -404,54 +360,46 @@ def test_cu015_nivel_colocado_del_periodo_mas_avanzado_con_dato(client, db, ento
 
 def test_cu015_registro_de_vuelo_una_fila_por_pa(client, db, entorno, cabeceras):
     """Una fila por PA del año (como máximo 4: PA1 a PA4), en orden."""
-    luis = entorno.alumnos["luis"].id_alumno
+    luis = entorno.alumnos["luis"]
     for clave in ("cuarto", "pasado", "futuro", "vigente"):
-        registro_de_vuelo(db, entorno, luis, entorno.periodos[clave], 2)
-    db.commit()
+        decision_de_vuelo(db, luis, entorno.periodos[clave], 2)
 
-    vuelo = client.get(f"/alumnos/{luis}/registro-vuelo", headers=cabeceras["Supervisor"]).json()
+    vuelo = client.get(f"/alumnos/{luis.id_alumno}/registro-vuelo", headers=cabeceras["Supervisor"]).json()
 
-    assert [fila["corte"] for fila in vuelo] == [1, 2, 3, 4]
+    assert [fila["numero"] for fila in vuelo] == [1, 2, 3, 4]
+    # PA1: la entrada del grado (1.º: aa); PA2 en adelante, la colocada en el PA anterior.
+    assert [(f["entrada"], f["origen_entrada"], f["nivel_colocado"]) for f in vuelo] == [
+        ("aa", "grado", "A"), ("A", "periodo_anterior", "A"), ("A", "periodo_anterior", "A"),
+        ("A", "periodo_anterior", "A"),
+    ]
 
 
-def test_cu015_nivel_descriptivo_segun_el_grado_actual(client, db, entorno, cabeceras):
-    """La misma letra (G) es Avanzado en 1.º y En proceso en 3.º; sin letra colocada, null."""
+def test_cu015_nivel_del_programa_segun_el_grado_de_la_decision(client, db, entorno, cabeceras):
+    """La misma letra (G) es Avanzado decidida en 1.º y En proceso decidida en 3.º; sin
+    letra colocada, null."""
     luis = entorno.alumnos["luis"]
     letra_g = db.exec(select(NivelRazkids).where(NivelRazkids.letra == "G")).one().id_nivel_rk
-    registro_de_vuelo(db, entorno, luis.id_alumno, entorno.periodos["pasado"], letra_g)
-    registro_de_vuelo(db, entorno, luis.id_alumno, entorno.periodos["vigente"], None)
-    db.commit()
+    tercero = entorno.grados["3.º"]
+    decision_de_vuelo(db, luis, entorno.periodos["pasado"], letra_g)
+    decision_de_vuelo(db, luis, entorno.periodos["vigente"], letra_g, id_grado=tercero,
+                      id_seccion=seccion_de(db, entorno.colegios["Andino"], tercero).id_seccion)
     url, cabecera = f"/alumnos/{luis.id_alumno}", cabeceras["Supervisor"]
 
-    en_primero = client.get(f"{url}/registro-vuelo", headers=cabecera).json()
-    luis.id_grado = entorno.grados["3.º"]
-    db.add(luis)
-    db.commit()
-    en_tercero = client.get(f"{url}/registro-vuelo", headers=cabecera).json()
+    vuelo = client.get(f"{url}/registro-vuelo", headers=cabecera).json()
 
-    assert [f["nivel_descriptivo"] for f in en_primero] == ["Avanzado", None]
-    assert [f["nivel_descriptivo"] for f in en_tercero] == ["En proceso", None]
+    assert [f["nivel_programa"] for f in vuelo] == ["Avanzado", "En proceso", None, None]
     assert client.get(f"{url}/resumen", headers=cabecera).json()["nivel_colocado"]["nivel_descriptivo"] == "En proceso"
 
 
 def test_cu015_rubrica_y_lectura_muestran_los_5_mas_recientes(client, db, entorno, cabeceras):
     luis = entorno.alumnos["luis"].id_alumno
-    anio, periodo = entorno.anio.id_anio_escolar, entorno.periodos["vigente"].id_periodo_academico
-    base = {"creado_por": entorno.supervisor.id_usuario, "creado_en": ahora_utc()}
-    claves = {"id_alumno": luis, "id_anio_escolar": anio, "id_periodo_academico": periodo}
-    nivel_general = db.exec(select(NivelGeneral)).first()
     for numero in range(1, 8):
         tabla_lectura(db, entorno.alumnos["luis"], entorno.hoy - timedelta(days=56 - 7 * numero), cantidad_lsl=numero)
-        db.add(NivelFinalMensual(mes=numero, id_nivel_final=nivel_general.id_nivel_general, ajustado_por_docente=False,
-                                 fecha_calculo=ahora_utc(), **claves, **base))
-    db.commit()
     url = f"/alumnos/{luis}"
     cabecera = cabeceras["Supervisor"]
 
-    rubrica = client.get(f"{url}/rubrica", headers=cabecera).json()
     lectura = client.get(f"{url}/lectura", headers=cabecera).json()
 
-    assert [m["mes"] for m in rubrica["mensuales"]] == [7, 6, 5, 4, 3]
     assert [s["cantidad_lsl"] for s in lectura] == [7, 6, 5, 4, 3]
     # El resumen sí suma todo el año, no solo lo que se ve en la grilla.
     assert client.get(f"{url}/resumen", headers=cabecera).json()["libros_leidos_anio"] == sum(range(1, 8))
@@ -465,9 +413,11 @@ def test_cu015_pestanas_con_registros(client, entorno, cabeceras, registros):
     rubrica = client.get(f"{url}/rubrica", headers=cabecera).json()
     lectura = client.get(f"{url}/lectura", headers=cabecera).json()
 
-    assert (vuelo[0]["nivel_entrada"], vuelo[0]["nivel_colocado"], vuelo[0]["aciertos"]) == ("A", "B", 8)
-    assert vuelo[0]["nivel_descriptivo"] == "En proceso"
-    assert [(m["mes"], m["ajustado"]) for m in rubrica["mensuales"]] == [(5, True), (4, False)]
+    assert (vuelo[1]["entrada"], vuelo[1]["origen_entrada"], vuelo[1]["nivel_colocado"]) == (
+        None, "pendiente_periodo_anterior", "B",
+    )
+    assert vuelo[1]["nivel_programa"] == "En proceso"
+    assert rubrica == {"evaluaciones": []}
     assert [(s["asistencia"], s["estado_fila"], s["total_libros"]) for s in lectura] == [
         ("ausente", "no_aplica", 0), ("presente", "completada", 4), (None, "no_aplica", 0),
     ]
@@ -484,8 +434,10 @@ def test_cu015_pestanas_vacias(client, entorno, cabeceras):
     assert client.get(f"{url}/resumen", headers=cabecera).json() == {
         "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
-    assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
-    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"evaluaciones": [], "mensuales": []}
+    # Sin decisiones, los 4 PA del año salen con su entrada y "Sin registrar".
+    vuelo = client.get(f"{url}/registro-vuelo", headers=cabecera).json()
+    assert [(f["entrada"], f["nivel_colocado"]) for f in vuelo] == [("C", None), (None, None), (None, None), (None, None)]
+    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"evaluaciones": []}
     assert client.get(f"{url}/lectura", headers=cabecera).json() == []
 
 
@@ -498,7 +450,7 @@ def test_cu015_sin_anio_escolar_las_pestanas_salen_vacias(client, entorno, cabec
         "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
     assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
-    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"evaluaciones": [], "mensuales": []}
+    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"evaluaciones": []}
     assert client.get(f"{url}/lectura", headers=cabecera).json() == []
     assert client.get(f"{url}/historial", headers=cabecera).json()["total"] == 0
 

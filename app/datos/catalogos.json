@@ -39,15 +39,7 @@
     {"id": 24, "letra": "W"},
     {"id": 25, "letra": "X"},
     {"id": 26, "letra": "Y"},
-    {"id": 27, "letra": "Z"},
-    {"id": 28, "letra": "Z1"},
-    {"id": 29, "letra": "Z2"}
-  ],
-  "niveles_generales": [
-    {"id": 1, "nombre": "Inicio", "orden": 0},
-    {"id": 2, "nombre": "Proceso", "orden": 1},
-    {"id": 3, "nombre": "Logrado", "orden": 2},
-    {"id": 4, "nombre": "Destacado", "orden": 3}
+    {"id": 27, "letra": "Z"}
   ],
   "niveles_rubrica": [
     {"id": 1, "programa": "Alfabetización", "dimension": "Fluidez", "orden": 0, "nombre": "Pre-inicio", "valor": 0},

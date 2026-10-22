@@ -63,7 +63,7 @@ from app.services.calendario import cargar_calendarios, en_pa_de_su_colegio, ran
 from app.services.clase_service import colegio_existente, grados_visibles
 from app.services.escritura import Destino, MensajesEscritura, escritura
 from app.services.habilitacion import habilitacion_escritura
-from app.services.nivel_academico import nivel_academico
+from app.services.nivel_academico import niveles_academicos
 from app.services.programacion import (
     ClaseProgramada,
     FiltroGrupos,
@@ -360,13 +360,20 @@ def _filas(
     return list(db.exec(consulta).all())
 
 
+def _filas_salida(db: Session, tabla: LecturaSemanal, fecha_clase: date, id_alumno: Optional[int] = None) -> list[FilaLectura]:
+    """Las filas de la tabla (o la de un alumno) con su Nivel Académico, cargado en lote."""
+    filas = _filas(db, tabla, id_alumno)
+    niveles = niveles_academicos(db, [alumno.id_alumno for _, alumno, _ in filas], tabla.id_colegio, fecha_clase)
+    return [_fila_salida(tabla, fila, niveles.get(fila[1].id_alumno)) for fila in filas]
+
+
 def _fila_salida(
-    db: Session, tabla: LecturaSemanal, fecha_clase: date, fila: tuple[LecturaSemanalAlumno, Alumno, Optional[str]]
+    tabla: LecturaSemanal, fila: tuple[LecturaSemanalAlumno, Alumno, Optional[str]], nivel: Optional[str]
 ) -> FilaLectura:
     registro, alumno, asistencia = fila
     return FilaLectura(
         id_alumno=alumno.id_alumno, nombre=f"{alumno.nombres} {alumno.apellidos}", inactivo=not alumno.activo,
-        asistencia=asistencia, nivel_academico=nivel_academico(db, alumno.id_alumno, fecha_clase),
+        asistencia=asistencia, nivel_academico=nivel,
         **{campo: getattr(registro, campo) for campo in CAMPOS_FILA},
         total_libros=total_libros(registro), estado_fila=estado_fila(tabla.estado, asistencia, registro),
         revisar_asistencia=revisar_asistencia(asistencia, registro), version=registro.version,
@@ -379,7 +386,7 @@ def _respuesta(db: Session, usuario: Usuario, tabla: LecturaSemanal) -> TablaLec
     return TablaLectura(
         id=tabla.id, version=tabla.version, estado=tabla.estado, motivo_no_realizada=tabla.motivo_no_realizada,
         **filtro.columnas(), clase_referencia=_referencia(clase),
-        filas=[_fila_salida(db, tabla, clase.fecha, fila) for fila in _filas(db, tabla)],
+        filas=_filas_salida(db, tabla, clase.fecha),
         escritura=_escritura(db, usuario, filtro.grupo, clase.fecha),
     )
 
@@ -748,7 +755,7 @@ def _validar_lsn(valores: dict[str, Any]) -> None:
 
 
 def _registro_fila(db: Session, tabla: LecturaSemanal, fecha_clase: date, id_alumno: int) -> dict[str, Any]:
-    return _fila_salida(db, tabla, fecha_clase, _filas(db, tabla, id_alumno)[0]).model_dump(mode="json")
+    return _filas_salida(db, tabla, fecha_clase, id_alumno)[0].model_dump(mode="json")
 
 
 def _validar_cambios(

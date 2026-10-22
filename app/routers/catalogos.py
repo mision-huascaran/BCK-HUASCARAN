@@ -6,17 +6,16 @@ from datetime import date
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
 from app.core.database import get_db
 from app.core.tiempo import hoy_lima
 from app.dependencies import get_current_user
-from app.models.evaluacion import NivelGeneral, NivelRazkids, NivelRubrica
+from app.models.evaluacion import NivelRazkids, NivelRubrica
 from app.models.organizacion import TIPO_PA, AnioEscolar, Grado, PeriodoAcademico, Programa, Usuario
 from app.schemas.catalogos import (
     AnioEscolarResponse,
     GradoResponse,
-    NivelGeneralResponse,
     NivelRazkidsResponse,
     NivelRubricaResponse,
     PeriodoAcademicoResponse,
@@ -137,12 +136,4 @@ def listar_niveles_rubrica(db: Db, _: Autenticado, id_programa: Optional[int] = 
             orden=n.orden, valor=n.valor, nombre_nivel=n.nombre_nivel,
         )
         for n in db.exec(consulta).all()
-    ]
-
-
-@router.get("/niveles-generales", response_model=list[NivelGeneralResponse])
-def listar_niveles_generales(db: Db, _: Autenticado):
-    return [
-        NivelGeneralResponse(id=n.id_nivel_general, orden=n.orden, nombre_nivel=n.nombre_nivel)
-        for n in db.exec(select(NivelGeneral).order_by(col(NivelGeneral.orden))).all()
     ]

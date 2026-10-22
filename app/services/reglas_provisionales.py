@@ -4,7 +4,7 @@ R1...), para encontrarlas y reemplazarlas cuando se confirmen.
 
 Sin dependencias de la app: se usan desde los modelos y los servicios.
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Callable, Optional, TypeVar
 
 T = TypeVar("T")
@@ -36,3 +36,14 @@ def regla_grupo_del_mes(intervalos: list[tuple[date, Optional[date], G]], dias_l
             if desde <= dia and (hasta is None or hasta > dia):
                 return grupo
     return None
+
+
+# REGLA PROVISIONAL V1 (Registro de Vuelo, CU031): la entrada de un PA es el nivel
+# colocado del PA anterior del mismo alumno y año, en cualquier grupo: la herencia sigue al
+# alumno aunque haya cambiado de colegio, grado, sección o subprograma. Si en el PA
+# anterior tuvo varias filas (cambió de grupo), vale la decisión más reciente.
+def regla_decision_vigente(decisiones: list[tuple[datetime, Optional[T]]]) -> Optional[T]:
+    """De las decisiones (fecha_registro, decisión o None si no tiene nivel colocado) del
+    alumno en un PA, en cualquier grupo, la más reciente con nivel; None si no hay."""
+    con_nivel = [(fecha, decision) for fecha, decision in decisiones if decision is not None]
+    return max(con_nivel, key=lambda par: par[0])[1] if con_nivel else None
