@@ -1,0 +1,269 @@
+{
+ "_nota": "Descriptores pedagógicos de la rúbrica mensual, copiados textualmente de CU029 (casos de uso semana 11). Fuente para la tabla descriptor_rubrica.",
+ "descriptores": [
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 0,
+   "nivel": "Pre-inicio",
+   "descriptor": "No puede leer porque le cuesta reconocer consonantes y vocales."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "Lee palabra por palabra con esfuerzo. No respeta entonación ni signos de puntuación. Se detiene frecuentemente."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Lee frases cortas con cierta dificultad. Empieza a respetar algunos signos de puntuación como puntos y comas. Ritmo irregular."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Lee frases completas con cierta fluidez. Comienza a respetar puntos y entonar preguntas simples."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Lee textos cortos de forma fluida, con entonación y ritmo adecuado. Identifica signos de puntuación con apoyo."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "No comprende lo leído. Solo realiza una lectura simple apoyándose en imágenes. No responde preguntas literales."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Identifica personajes, lugares o hechos, a través de palabras sencillas del texto apoyándose en las imágenes."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Identifica la idea principal del texto. Responde preguntas literales con apoyo."
+  },
+  {
+   "programa": "Alfabetización",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Identifica la idea principal del texto. Responde preguntas literales con autonomía."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "Lee palabra por palabra con esfuerzo. No respeta entonación ni signos de puntuación. Se detiene frecuentemente."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Lee frases completas con cierta dificultad. Empieza a respetar algunos signos de puntuación como puntos y comas haciendo pausas cortas. Ritmo irregular."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Lee frases completas con cierta fluidez. Comienza a respetar puntos y entonar preguntas simples."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Fluidez",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Lee textos cortos de forma fluida, con entonación y ritmo adecuado. Identifica signos de puntuación sin apoyo."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "Identifica la idea principal del texto. Responde preguntas literales con apoyo."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Reconoce ideas básicas. Responde preguntas literales y hace conexiones simples con imágenes o vivencias."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Identifica la idea principal del texto, personajes y hechos. Realiza predicciones sobre lo que podría suceder en la historia."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "III",
+   "dimension": "Comprensión",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Hace inferencias simples. Interpreta el mensaje del texto con cierta autonomía."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Fluidez",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "Lee de forma entrecortada con pausas constantes. Reconoce palabras sencillas pero se detiene con frecuencia."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Fluidez",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Lee frases completas con ritmo irregular. Comienza a usar entonación básica, haciendo pausas correctamente."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Fluidez",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Lee con ritmo y entonación adecuada la mayor parte del texto."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Fluidez",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Lee en forma fluida y expresiva. Entona con naturalidad según el tipo de texto."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Comprensión",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "Reconoce ideas básicas. Responde preguntas literales y hace conexiones simples con imágenes o vivencias."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Comprensión",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Identifica la idea principal del texto, personajes y hechos. Realiza predicciones sobre lo que podría suceder en la historia."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Comprensión",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Identifica ideas principales y secundarias. Hace inferencias simples y justifica sus respuestas."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "IV",
+   "dimension": "Comprensión",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Crea un análisis crítico personal del texto, a partir de sus experiencias personales."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Fluidez",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "Lee con ritmo aceptable, reconociendo el tipo de texto y comienza a variar la entonación."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Fluidez",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Lee con ritmo y entonación adecuada la mayor parte del texto."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Fluidez",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Lee en forma fluida y expresiva. Entona con naturalidad según el tipo de texto."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Fluidez",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Lee con fluidez y naturalidad textos complejos. Adapta entonación según propósito comunicativo."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Comprensión",
+   "valor": 1,
+   "nivel": "Inicio",
+   "descriptor": "Identifica la idea principal del texto, personajes y hechos. Realiza predicciones sobre lo que podría suceder en la historia."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Comprensión",
+   "valor": 2,
+   "nivel": "En proceso",
+   "descriptor": "Identifica ideas principales y secundarias. Hace inferencias simples con apoyo."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Comprensión",
+   "valor": 3,
+   "nivel": "Logrado",
+   "descriptor": "Comprende textos con estructura compleja. Interpreta y reflexiona con apoyo mínimo."
+  },
+  {
+   "programa": "Comprensión Lectora",
+   "ciclo": "V",
+   "dimension": "Comprensión",
+   "valor": 4,
+   "nivel": "Avanzado",
+   "descriptor": "Analiza textos críticamente. Identifica intención, tono y hace inferencias profundas con argumentos claros."
+  }
+ ]
+}

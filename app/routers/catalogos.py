@@ -127,14 +127,14 @@ def listar_niveles_razkids(db: Db, _: Autenticado):
 @router.get("/niveles-rubrica", response_model=list[NivelRubricaResponse])
 def listar_niveles_rubrica(db: Db, _: Autenticado, id_programa: Optional[int] = None):
     consulta = select(NivelRubrica).order_by(
-        NivelRubrica.id_programa, NivelRubrica.dimension, NivelRubrica.orden
+        NivelRubrica.id_programa, NivelRubrica.dimension, NivelRubrica.valor
     )
     if id_programa is not None:
         consulta = consulta.where(NivelRubrica.id_programa == id_programa)
     return [
         NivelRubricaResponse(
             id=n.id_nivel_rubrica, id_programa=n.id_programa, dimension=n.dimension,
-            orden=n.orden, nombre_nivel=n.nombre_nivel,
+            orden=n.orden, valor=n.valor, nombre_nivel=n.nombre_nivel,
         )
         for n in db.exec(consulta).all()
     ]

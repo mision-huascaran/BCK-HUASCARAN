@@ -17,6 +17,7 @@ from app.routers import (
     lectura,
     password,
     permisos,
+    rubricas,
     seguimiento,
     sincronizacion,
     usuarios,
@@ -45,6 +46,7 @@ app.include_router(asignaciones.router)
 app.include_router(actividades.router)
 app.include_router(asistencias.router)
 app.include_router(lectura.router)
+app.include_router(rubricas.router)
 app.include_router(clases.router)
 app.include_router(inicio.router)
 app.include_router(seguimiento.router)

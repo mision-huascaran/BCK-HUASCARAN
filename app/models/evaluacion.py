@@ -38,20 +38,36 @@ class NivelRazkids(SQLModel, table=True):
 
 
 class NivelRubrica(SQLModel, table=True):
-    """Niveles de la rúbrica semanal, por programa y dimensión."""
+    """Niveles de la rúbrica mensual, por programa y dimensión. `valor` es el código 0-4
+    (0 Pre-inicio, 1 Inicio, 2 En proceso, 3 Logrado, 4 Avanzado) con que se evalúa y se
+    calcula el resultado ponderado."""
 
     __tablename__ = "nivel_rubrica"
     __table_args__ = (
         CheckConstraint(
             "dimension IN ('Fluidez', 'Comprensión')", name="ck_nivel_rubrica_dimension"
         ),
+        CheckConstraint("valor BETWEEN 0 AND 4", name="ck_nivel_rubrica_valor"),
+        UniqueConstraint("id_programa", "dimension", "valor", name="uq_nivel_rubrica_programa_dimension_valor"),
     )
 
     id_nivel_rubrica: Optional[int] = Field(default=None, primary_key=True)
     id_programa: int = Field(foreign_key=FK_PROGRAMA)
     dimension: str = Field(sa_type=Text)
     orden: int
+    valor: int
     nombre_nivel: str = Field(sa_type=Text)
+
+
+class DescriptorRubrica(SQLModel, table=True):
+    """Descriptor pedagógico de cada nivel de la rúbrica por ciclo EBR (CU029). Catálogo
+    puro, sin auditoría."""
+
+    __tablename__ = "descriptor_rubrica"
+
+    id_nivel_rubrica: int = Field(foreign_key=FK_NIVEL_RUBRICA, primary_key=True)
+    id_ciclo: int = Field(foreign_key="ciclo_ebr.id_ciclo", primary_key=True)
+    texto: str = Field(sa_type=Text)
 
 
 class NivelGeneral(SQLModel, table=True):
@@ -387,7 +403,47 @@ class LecturaSemanalAlumno(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
-# ── Grupo 4: nivel final ────────────────────────────────────────────────────────────
+# ── Grupo 4: rúbrica mensual y nivel final ──────────────────────────────────────────
+
+
+class RubricaMensual(SQLModel, table=True):
+    """Evaluación mensual de un alumno en su grupo de ese mes (CU029, CU030): Fluidez y
+    Comprensión (null = "Sin evaluar"; se puede guardar incompleta). `id_periodo_academico`
+    es el PA del mes (REGLA PROVISIONAL R1: el de su último día lectivo)."""
+
+    __tablename__ = "rubrica_mensual"
+    __table_args__ = (
+        ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_rubrica_mensual_seccion"),
+        UniqueConstraint(
+            "id_alumno", "id_anio_escolar", "mes", "id_colegio", "id_grado", "id_seccion", "id_programa",
+            name="uq_rubrica_mensual_alumno_mes_grupo",
+        ),
+        CheckConstraint("mes BETWEEN 1 AND 12", name="ck_rubrica_mensual_mes"),
+        Index("ix_rubrica_mensual_colegio_periodo", "id_colegio", "id_periodo_academico"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    id_alumno: int = Field(foreign_key=FK_ALUMNO)
+    id_anio_escolar: int = Field(foreign_key=FK_ANIO)
+    mes: int
+    id_colegio: int
+    id_grado: int
+    id_seccion: int
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
+    id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
+    id_nivel_fluidez: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RUBRICA)
+    id_nivel_comprension: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RUBRICA)
+    id_docente: int = Field(foreign_key=FK_DOCENTE)
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
+    fecha_registro: datetime = Field(sa_type=UTCDateTime)
+    version: int = Field(default=1, sa_column_kwargs={"server_default": text("1")})
+
+    creado_por: int = Field(foreign_key=FK_USUARIO)
+    creado_en: datetime = Field(sa_type=UTCDateTime)
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
+    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
 
 
 class NivelFinalMensual(SQLModel, table=True):

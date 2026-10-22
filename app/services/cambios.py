@@ -20,6 +20,7 @@ from app.models.evaluacion import (
     EvaluacionDiagnosticaAlumno,
     LecturaSemanalAlumno,
     NivelFinalMensual,
+    RubricaMensual,
 )
 from app.models.organizacion import Alumno, CicloEbr, Colegio, Grado, Programa, Seccion
 from app.models.trazabilidad import Auditoria
@@ -39,6 +40,7 @@ OTROS = "otros"
 # Tabla auditada -> módulo operativo. Los CU nombran Rúbrica, Seguimiento de Lectura y
 # Registro de Vuelo; Alumnos y Asistencia también requieren actividad y se cuentan.
 MODULOS = {
+    "rubrica_mensual": RUBRICA,
     "nivel_final_mensual": RUBRICA,
     "lectura_semanal": LECTURA,
     "lectura_semanal_alumno": LECTURA,
@@ -68,6 +70,7 @@ CON_ID_ALUMNO = {
     "asistencia": Asistencia,
     "evaluacion_diagnostica_alumno": EvaluacionDiagnosticaAlumno,
     "lectura_semanal_alumno": LecturaSemanalAlumno,
+    "rubrica_mensual": RubricaMensual,
     "nivel_final_mensual": NivelFinalMensual,
 }
 

@@ -485,7 +485,7 @@ def test_cu015_pestanas_vacias(client, entorno, cabeceras):
         "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
     assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
-    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"mensuales": []}
+    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"evaluaciones": [], "mensuales": []}
     assert client.get(f"{url}/lectura", headers=cabecera).json() == []
 
 
@@ -498,7 +498,7 @@ def test_cu015_sin_anio_escolar_las_pestanas_salen_vacias(client, entorno, cabec
         "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
     assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
-    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"mensuales": []}
+    assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"evaluaciones": [], "mensuales": []}
     assert client.get(f"{url}/lectura", headers=cabecera).json() == []
     assert client.get(f"{url}/historial", headers=cabecera).json()["total"] == 0
 

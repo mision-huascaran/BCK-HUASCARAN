@@ -4,7 +4,7 @@ Supervisor: todos. Docente: los de su alcance (colegio y grado de sus asignacion
 vigentes). El Directivo no tiene acceso.
 """
 from datetime import date, datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -126,7 +126,18 @@ class RubricaMensual(BaseModel):
     justificacion: Optional[str] = None
 
 
+class EvaluacionMensual(BaseModel):
+    """Evaluación de la rúbrica mensual (CU029): nombres de los niveles; null = sin evaluar."""
+
+    mes: int
+    fluidez: Optional[str] = None
+    comprension: Optional[str] = None
+    estado: Literal["pendiente", "incompleta", "completada"]
+    resultado_decimas: Optional[int] = None
+
+
 class Rubrica(BaseModel):
+    evaluaciones: list[EvaluacionMensual]
     mensuales: list[RubricaMensual]
 
 

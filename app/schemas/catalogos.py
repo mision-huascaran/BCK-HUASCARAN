@@ -66,6 +66,8 @@ class NivelRubricaResponse(BaseModel):
     id_programa: int
     dimension: str
     orden: int
+    # Código 0-4 con que se evalúa (0 Pre-inicio … 4 Avanzado).
+    valor: int
     nombre_nivel: str
 
 

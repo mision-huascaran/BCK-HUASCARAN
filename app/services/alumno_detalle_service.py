@@ -31,8 +31,10 @@ from app.models.evaluacion import (
     NivelFinalMensual,
     NivelGeneral,
     NivelRazkids,
+    NivelRubrica,
     SemanaReporte,
 )
+from app.models.evaluacion import RubricaMensual as EvaluacionRubrica
 from app.models.organizacion import (
     Alumno,
     AnioEscolar,
@@ -50,6 +52,7 @@ from app.schemas.alumno import (
     AsistenciaDelAlumno,
     CambioHistorial,
     EventoHistorial,
+    EvaluacionMensual,
     LecturaDeLaSemana,
     NivelColocado,
     RegistroVuelo,
@@ -57,8 +60,9 @@ from app.schemas.alumno import (
     Rubrica,
     RubricaMensual,
 )
-from app.services import lectura_service
+from app.services import lectura_service, rubrica_service
 from app.services.calendario import anio_de_referencia
+from app.services.motor_sugerencias import resultado_decimas
 from app.services.nivel_descriptivo import escala_del_grado
 from app.services.pertenencia import CAMPO_AUDITORIA, fecha_legible
 
@@ -203,7 +207,16 @@ def registro_vuelo(db: Session, alumno: Alumno) -> list[RegistroVuelo]:
 def rubrica(db: Session, id_alumno: int) -> Rubrica:
     anio = anio_de_referencia(db)
     if anio is None:
-        return Rubrica(mensuales=[])
+        return Rubrica(evaluaciones=[], mensuales=[])
+    fluidez, comprension = aliased(NivelRubrica), aliased(NivelRubrica)
+    evaluaciones = db.exec(
+        select(EvaluacionRubrica.mes, fluidez, comprension)
+        .outerjoin(fluidez, fluidez.id_nivel_rubrica == EvaluacionRubrica.id_nivel_fluidez)
+        .outerjoin(comprension, comprension.id_nivel_rubrica == EvaluacionRubrica.id_nivel_comprension)
+        .where(EvaluacionRubrica.id_alumno == id_alumno, EvaluacionRubrica.id_anio_escolar == anio.id_anio_escolar)
+        .order_by(col(EvaluacionRubrica.mes).desc(), col(EvaluacionRubrica.id).desc())
+        .limit(FILAS_RECIENTES)
+    ).all()
     mensuales = db.exec(
         select(NivelFinalMensual, NivelGeneral.nombre_nivel)
         .join(NivelGeneral, NivelGeneral.id_nivel_general == NivelFinalMensual.id_nivel_final)
@@ -212,6 +225,7 @@ def rubrica(db: Session, id_alumno: int) -> Rubrica:
         .limit(FILAS_RECIENTES)
     ).all()
     return Rubrica(
+        evaluaciones=[_evaluacion(mes, nivel_f, nivel_c) for mes, nivel_f, nivel_c in evaluaciones],
         mensuales=[
             RubricaMensual(
                 mes=nivel.mes, nivel_final=nombre, ajustado=nivel.ajustado_por_docente,
@@ -219,6 +233,16 @@ def rubrica(db: Session, id_alumno: int) -> Rubrica:
             )
             for nivel, nombre in mensuales
         ],
+    )
+
+
+def _evaluacion(mes: int, fluidez: Optional[NivelRubrica], comprension: Optional[NivelRubrica]) -> EvaluacionMensual:
+    completa = fluidez is not None and comprension is not None
+    return EvaluacionMensual(
+        mes=mes, fluidez=fluidez.nombre_nivel if fluidez else None,
+        comprension=comprension.nombre_nivel if comprension else None,
+        estado=rubrica_service.estado_de(fluidez, comprension),
+        resultado_decimas=resultado_decimas(fluidez.valor, comprension.valor) if completa else None,
     )
 
 

@@ -18,6 +18,7 @@ Reglas (todas validadas aquí, además de lo que impone la BD):
 """
 import json
 from dataclasses import dataclass
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -28,7 +29,7 @@ from sqlmodel import Session, col, select
 from app.core.errores import ErrorNegocio
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
-from app.models.evaluacion import Asistencia, Clase, LecturaSemanal
+from app.models.evaluacion import Asistencia, Clase, LecturaSemanal, RubricaMensual
 from app.models.organizacion import (
     ORIGEN_MANUAL,
     TIPO_PA,
@@ -66,9 +67,11 @@ from app.services.calendario import (
     anio_de_referencia,
     cargar_calendarios,
     nombre_periodo,
+    rango_del_mes,
     resolver,
 )
 from app.services.habilitacion import ORIGEN_PERMISO, habilitaciones_vigentes, pares_visibles
+from app.services.reglas_provisionales import regla_mes_a_pa
 from app.services.usuario_service import DOCENTE, nombre_rol
 
 TABLA = "calendario"
@@ -76,6 +79,7 @@ CAMPO_PERIODOS = "periodos"
 CAMPO_NO_LECTIVOS = "dias_no_lectivos"
 REGISTRO_ASISTENCIA = "asistencia"
 REGISTRO_LECTURA = "lectura"
+REGISTRO_RUBRICA = "rubrica"
 FORMATO_FECHA = "%d/%m/%Y"
 FIN_ANTES_DE_INICIO = "La fecha de fin no puede ser anterior a la fecha de inicio."
 
@@ -84,9 +88,15 @@ NO_LECTIVA = "no_lectiva"
 FUERA_DE_PA = "fuera_de_pa"
 CAMBIA_DE_PA = "cambia_de_pa"
 _MENSAJES_INCOMPATIBILIDAD = {
-    NO_LECTIVA: "La fecha tiene asistencias registradas y quedaría como no lectiva.",
-    FUERA_DE_PA: "La fecha tiene asistencias registradas y quedaría fuera de su PA.",
-    CAMBIA_DE_PA: "La fecha tiene asistencias registradas y pasaría a otro PA.",
+    NO_LECTIVA: "La fecha tiene {registros} y quedaría como no lectiva.",
+    FUERA_DE_PA: "La fecha tiene {registros} y quedaría fuera de su PA.",
+    CAMBIA_DE_PA: "La fecha tiene {registros} y pasaría a otro PA.",
+}
+_REGISTROS = {
+    REGISTRO_ASISTENCIA: "asistencias registradas",
+    REGISTRO_LECTURA: "una tabla de lectura semanal",
+    # La fecha de una rúbrica es el primer día de su mes: el PA del mes (R1) cambiaría.
+    REGISTRO_RUBRICA: "rúbricas registradas en su mes",
 }
 
 Errores = list[tuple[str, str]]
@@ -328,7 +338,34 @@ def _registros(db: Session, ids_colegio: set[int], id_anio: int) -> list[_Regist
     return [
         *_clases_con(db, ids_colegio, id_anio, select(Asistencia.id_clase), REGISTRO_ASISTENCIA),
         *_clases_con(db, ids_colegio, id_anio, select(LecturaSemanal.id_clase_referencia), REGISTRO_LECTURA),
+        *_meses_con_rubricas(db, ids_colegio, id_anio),
     ]
+
+
+def _meses_con_rubricas(db: Session, ids_colegio: set[int], id_anio: int) -> list[_Registro]:
+    """Los meses con evaluaciones de la rúbrica de esos colegios en el año, con el PA que
+    se les asignó (R1); su fecha es el primer día del mes."""
+    anio = db.get(AnioEscolar, id_anio)
+    filas = db.exec(
+        select(RubricaMensual.id_colegio, RubricaMensual.mes, RubricaMensual.id_periodo_academico)
+        .where(col(RubricaMensual.id_colegio).in_(ids_colegio), RubricaMensual.id_anio_escolar == id_anio)
+        .distinct()
+    ).all()
+    registros = []
+    for id_colegio, mes, id_periodo in filas:
+        rango = rango_del_mes(anio, mes)
+        if rango is not None:
+            registros.append(_Registro(id_colegio, rango[0], id_periodo, REGISTRO_RUBRICA))
+    return sorted(registros, key=lambda r: (r.id_colegio, r.fecha))
+
+
+def _motivo_mes_incompatible(id_periodo: int, propuesta: CalendarioResuelto, primer_dia: date) -> Optional[str]:
+    """Un mes con rúbricas no puede cambiar de PA (R1: el de su último día lectivo)."""
+    ultimo = primer_dia.replace(day=monthrange(primer_dia.year, primer_dia.month)[1])
+    pa = regla_mes_a_pa(propuesta.dias_lectivos(primer_dia, ultimo), propuesta.periodo_de)
+    if pa is None:
+        return FUERA_DE_PA
+    return CAMBIA_DE_PA if pa.id_periodo_academico != id_periodo else None
 
 
 def _motivo_incompatible(id_periodo: int, propuesta: CalendarioResuelto, fecha: date) -> Optional[str]:
@@ -350,14 +387,17 @@ def _incompatibilidades(
     nombres = dict(db.exec(select(Colegio.id_colegio, Colegio.nombre).where(col(Colegio.id_colegio).in_(ids_colegio))).all())
     incompatibles = []
     for registro in _registros(db, ids_colegio, id_anio):
-        motivo = _motivo_incompatible(registro.id_periodo_academico, propuesta, registro.fecha)
+        por_mes = registro.tipo == REGISTRO_RUBRICA
+        motivo = (_motivo_mes_incompatible if por_mes else _motivo_incompatible)(
+            registro.id_periodo_academico, propuesta, registro.fecha
+        )
         if motivo is not None:
             incompatibles.append({
                 "colegio": {"id": registro.id_colegio, "nombre": nombres.get(registro.id_colegio, "")},
                 "fecha": registro.fecha.isoformat(),
                 "tipo_registro": registro.tipo,
                 "motivo": motivo,
-                "mensaje": _MENSAJES_INCOMPATIBILIDAD[motivo],
+                "mensaje": _MENSAJES_INCOMPATIBILIDAD[motivo].format(registros=_REGISTROS[registro.tipo]),
             })
     return incompatibles
 
