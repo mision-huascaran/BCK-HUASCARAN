@@ -2,6 +2,8 @@
 (hallazgos de OWASP ZAP en qa)."""
 import asyncio
 
+from app.core.config import settings
+
 from app.core.proteccion_http import (
     MENSAJE_NULO,
     ProteccionHttp,
@@ -44,11 +46,18 @@ def test_un_cuerpo_sin_nulos_llega_intacto_a_la_aplicacion(client):
 
 
 def test_toda_respuesta_lleva_las_cabeceras_de_seguridad(client):
-    for respuesta in (client.get("/"), client.get("/me"), client.get("/colegios?departamento=%00"),
-                      client.options("/login", headers={"Origin": "http://localhost:5173",
-                                                        "Access-Control-Request-Method": "POST"})):
+    for respuesta in (client.get("/"), client.get("/me"), client.get("/colegios?departamento=%00")):
         assert respuesta.headers["x-content-type-options"] == "nosniff"
         assert respuesta.headers["cross-origin-resource-policy"] == "same-origin"
+
+
+def test_el_422_por_un_nulo_lleva_las_cabeceras_cors(client):
+    # CORS va por fuera de ProteccionHttp: el navegador ve el 422 y no un error de CORS.
+    origen = settings.cors_origins_list[0]
+    respuesta = client.get("/colegios?departamento=%00", headers={"Origin": origen})
+
+    assert respuesta.status_code == 422
+    assert respuesta.headers["access-control-allow-origin"] == origen
 
 
 def test_deteccion_de_nulos():

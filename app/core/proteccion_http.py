@@ -32,22 +32,28 @@ def campo_con_nulo_en_query(query_string: bytes) -> Optional[str]:
     return None
 
 
+def _subruta(ruta: str, clave: Any) -> str:
+    return f"{ruta}.{clave}" if ruta else str(clave)
+
+
+def _primera(rutas) -> Optional[str]:
+    return next((r for r in rutas if r is not None), None)
+
+
+def _rutas_en_objeto(dato: dict, ruta: str):
+    for clave, valor in dato.items():
+        subruta = _subruta(ruta, clave)
+        yield subruta.replace("\x00", "") if "\x00" in str(clave) else _ruta_con_nulo(valor, subruta)
+
+
 def _ruta_con_nulo(dato: Any, ruta: str) -> Optional[str]:
+    """Ruta del primer texto (valor o clave) con un NUL, o None."""
     if isinstance(dato, str):
         return ruta if "\x00" in dato else None
     if isinstance(dato, dict):
-        for clave, valor in dato.items():
-            subruta = f"{ruta}.{clave}" if ruta else str(clave)
-            if "\x00" in str(clave):
-                return subruta.replace("\x00", "")
-            encontrada = _ruta_con_nulo(valor, subruta)
-            if encontrada is not None:
-                return encontrada
+        return _primera(_rutas_en_objeto(dato, ruta))
     if isinstance(dato, list):
-        for i, valor in enumerate(dato):
-            encontrada = _ruta_con_nulo(valor, f"{ruta}.{i}" if ruta else str(i))
-            if encontrada is not None:
-                return encontrada
+        return _primera(_ruta_con_nulo(valor, _subruta(ruta, i)) for i, valor in enumerate(dato))
     return None
 
 
