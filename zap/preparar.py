@@ -13,8 +13,8 @@ recibe ZAP se recorta para que no pueda dañar datos reales de qa ni su propia s
 
 - Se quitan los endpoints que cerrarían la sesión del escaneo (/logout y el cierre de
   sesiones), los que cambian el estado de un registro (activar/desactivar: podrían
-  inactivar cuentas reales o las del seed E2E) y los de contraseña (envían PINs por
-  correo y cuentan intentos).
+  inactivar cuentas reales o las del seed E2E), los de contraseña (envían PINs por
+  correo y cuentan intentos) y las escrituras del calendario académico.
 - Los ids de la ruta y los `id_*` de los cuerpos apuntan a registros que no existen
   (999999), así los PATCH responden 404 y los POST no llegan a crear nada; los demás
   campos siguen recibiendo los ataques de ZAP.
@@ -53,6 +53,8 @@ def _excluido(metodo: str, ruta: str) -> bool:
         or ruta.startswith("/me/sesiones/")
         or ruta.endswith(("/activar", "/desactivar"))
         or ruta.startswith(("/password/", "/me/password"))
+        # El calendario es global: uno mal creado cambiaría el periodo vigente de todo qa.
+        or (ruta.startswith("/calendarios") and metodo != "GET")
     )
 
 
