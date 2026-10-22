@@ -28,6 +28,9 @@ from app.routers import (
 app = FastAPI(title="SICEDU API")
 registrar_manejadores(app)
 
+app.add_middleware(ProteccionHttp)
+# CORS se agrega al final para quedar por fuera de todo: así también sus cabeceras llegan
+# a las respuestas que corta ProteccionHttp (p. ej. el 422 por un NUL).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -35,8 +38,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Después de CORS para quedar por fuera: sus cabeceras también llegan a los preflight.
-app.add_middleware(ProteccionHttp)
 
 app.include_router(auth.router)
 app.include_router(colegios.router)
