@@ -19,3 +19,6 @@ e2e.xml
 e2e.html
 .bruno-home/
 .npm/
+
+# Reportes de OWASP ZAP (Jenkins)
+zap-reports/

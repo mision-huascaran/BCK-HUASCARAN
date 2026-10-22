@@ -2,7 +2,8 @@
 //
 //   development → despliegue
 //   qa, uat     → pruebas (pytest + cobertura), SonarQube, Quality Gate y despliegue
-//   qa          → además, Integration Tests y E2E Tests (Bruno) contra el despliegue
+//   qa          → además, Integration Tests y E2E Tests (Bruno) y OWASP ZAP API Scan
+//                 contra el despliegue
 //   main        → todavía no despliega
 //
 // El .env de cada entorno está en Jenkins como credencial "Secret file":
@@ -14,8 +15,8 @@ pipeline {
     agent any
 
     options {
-        // Los reportes (artifacts) solo se conservan de la última ejecución.
-        buildDiscarder(logRotator(numToKeepStr: '5', artifactNumToKeepStr: '1'))
+        // Solo se conserva el último build y sus artefactos (reportes de pruebas y de ZAP).
+        buildDiscarder(logRotator(numToKeepStr: '1', artifactNumToKeepStr: '1'))
         disableConcurrentBuilds()
     }
 
@@ -229,12 +230,119 @@ pipeline {
                 }
             }
         }
+
+        // OWASP ZAP API Scan (activo) de la API desplegada en qa, a partir de /openapi.json.
+        //
+        // Autenticado como el Supervisor E2E: zap/preparar.py hace el login y le entrega a
+        // ZAP una copia del OpenAPI sin los endpoints que cerrarían su sesión, cambiarían
+        // el estado de registros reales o enviarían PINs, y con ids inexistentes (999999)
+        // para que nada se modifique. El token llega a ZAP por ZAP_AUTH_HEADER_VALUE: no
+        // aparece en la línea de comando ni en el log. Va después de E2E Tests para que los
+        // ataques no interfieran con esas pruebas.
+        //
+        // Como en el frontend, los archivos no se montan desde el workspace (Jenkins corre
+        // en un contenedor y "$WORKSPACE" no existe en el host): van a un volumen de Docker
+        // con nombre y vuelven con `docker cp`.
+        stage('OWASP ZAP - Backend') {
+            when {
+                branch 'qa'
+            }
+            options {
+                timeout(time: 60, unit: 'MINUTES')
+            }
+            environment {
+                ZAP_API_BASE   = "http://${ENTORNO}-bck-huascaran:8000"
+                // Misma versión fija que el frontend.
+                ZAP_IMAGEN     = 'ghcr.io/zaproxy/zaproxy:2.17.0'
+                ZAP_CONTENEDOR = "${PROYECTO}-zap-${BUILD_NUMBER}"
+                ZAP_VOLUMEN    = "${PROYECTO}-zap-${BUILD_NUMBER}-wrk"
+            }
+            steps {
+                withCredentials([file(credentialsId: 'HUASCARAN_BACKEND_QA', variable: 'ENV_FILE')]) {
+                    script {
+                        def status = sh(
+                            returnStatus: true,
+                            script: '''
+                                set +x
+                                rm -rf zap-reports
+                                mkdir -p zap-reports
+                                docker volume create "$ZAP_VOLUMEN" >/dev/null
+                                # El volumen nace de root: el usuario zap (uid 1000) tiene que poder escribir.
+                                docker run --rm -u root -v "$ZAP_VOLUMEN:/zap/wrk" --entrypoint chmod "$ZAP_IMAGEN" 0777 /zap/wrk
+
+                                # Reglas y script de preparación al volumen. Un fallo sale con 3
+                                # (error de ejecución), no con el 1 que se leería como "reglas incumplidas".
+                                if ! { docker create --name "$ZAP_CONTENEDOR-archivos" -v "$ZAP_VOLUMEN:/zap/wrk" "$ZAP_IMAGEN" >/dev/null &&
+                                       docker cp zap/reglas-backend.conf "$ZAP_CONTENEDOR-archivos:/zap/wrk/reglas-backend.conf" &&
+                                       docker cp zap/preparar.py "$ZAP_CONTENEDOR-archivos:/zap/wrk/preparar.py"; }; then
+                                    echo "ERROR: no se pudieron copiar los archivos de zap/ al volumen de ZAP"
+                                    exit 3
+                                fi
+                                docker rm "$ZAP_CONTENEDOR-archivos" >/dev/null
+
+                                if ! . tests/bruno/credenciales-e2e.sh; then exit 3; fi
+                                if ! ZAP_AUTH_HEADER_VALUE=$(docker run --rm --network proxy_net -v "$ZAP_VOLUMEN:/zap/wrk" \
+                                        -e ZAP_API_BASE -e E2E_SUPERVISOR_USER -e E2E_SUPERVISOR_PASS \
+                                        --entrypoint python3 "$ZAP_IMAGEN" /zap/wrk/preparar.py preparar); then
+                                    echo "ERROR: no se pudo preparar el escaneo (OpenAPI o login del Supervisor E2E)"
+                                    exit 3
+                                fi
+                                export ZAP_AUTH_HEADER_VALUE
+
+                                set -- zap-api-scan.py -t openapi-zap.json -f openapi -O "$ZAP_API_BASE"
+                                set -- "$@" -z "-config scanner.maxScanDurationInMins=30"
+                                set -- "$@" -c reglas-backend.conf
+                                set -- "$@" -r backend-zap.html -J backend-zap.json
+                                # Jenkins corre `sh -xe`: sin el `||`, un 1 o un 2 de ZAP cortaría
+                                # el script antes de cerrar la sesión y copiar los reportes.
+                                ESTADO=0
+                                docker run --name "$ZAP_CONTENEDOR" --network proxy_net -v "$ZAP_VOLUMEN:/zap/wrk" \
+                                    -e ZAP_AUTH_HEADER_VALUE "$ZAP_IMAGEN" "$@" || ESTADO=$?
+
+                                docker run --rm --network proxy_net -v "$ZAP_VOLUMEN:/zap/wrk" -e ZAP_API_BASE -e ZAP_AUTH_HEADER_VALUE \
+                                    --entrypoint python3 "$ZAP_IMAGEN" /zap/wrk/preparar.py cerrar || true
+                                docker cp "$ZAP_CONTENEDOR:/zap/wrk/backend-zap.html" zap-reports/ || echo "AVISO: no se pudo copiar backend-zap.html"
+                                docker cp "$ZAP_CONTENEDOR:/zap/wrk/backend-zap.json" zap-reports/ || echo "AVISO: no se pudo copiar backend-zap.json"
+                                exit $ESTADO
+                            '''
+                        )
+
+                        // Código de salida de zap-api-scan.py:
+                        //   0 = sin alertas · 1 = al menos una regla en FAIL ·
+                        //   2 = solo advertencias (WARN) · 3 u otro = el escaneo no terminó.
+                        if (status == 1) {
+                            error('ZAP Backend: reglas de seguridad incumplidas')
+                        } else if (status == 2) {
+                            unstable('ZAP Backend: advertencias detectadas')
+                        } else if (status != 0) {
+                            error("ZAP Backend: error de ejecución (${status})")
+                        }
+                    }
+                }
+            }
+            post {
+                always {
+                    // También si el timeout cortó el escaneo: no quedan contenedores ni volumen.
+                    sh '''
+                        docker rm -f "$ZAP_CONTENEDOR" "$ZAP_CONTENEDOR-archivos" >/dev/null 2>&1 || true
+                        docker volume rm -f "$ZAP_VOLUMEN" >/dev/null 2>&1 || true
+                    '''
+                    archiveArtifacts(
+                        artifacts: 'zap-reports/**',
+                        allowEmptyArchive: true
+                    )
+                }
+            }
+        }
     }
 
     post {
         always {
             // El .env solo hace falta para levantar el contenedor.
             sh 'rm -f .env'
+            // Limpia el workspace (reportes ya archivados, cachés de npm, venv): no
+            // borra los artefactos del último build.
+            deleteDir()
         }
     }
 }

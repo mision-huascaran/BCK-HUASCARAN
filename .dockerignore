@@ -27,3 +27,7 @@ pytest.ini
 # colecciones Bruno (tests/bruno): no van en la imagen
 bruno.json
 environments/
+
+# OWASP ZAP (Jenkins): no va en la imagen
+zap/
+zap-reports/
