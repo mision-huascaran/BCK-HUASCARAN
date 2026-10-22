@@ -1,0 +1,30 @@
+meta {
+  name: ALU crear · sin token
+  type: http
+  seq: 173
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "nombres": "X",
+    "apellidos": "Y",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

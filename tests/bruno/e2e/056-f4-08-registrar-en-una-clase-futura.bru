@@ -1,0 +1,46 @@
+meta {
+  name: F4-08 Registrar en una clase futura
+  type: http
+  seq: 56
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: bru.getVar('fechaFutura'),
+    registros: [{ id_operacion: uuid(), id_alumno: Number(bru.getVar('idAlumnoB')), estado: 'presente' }],
+  });
+}
+
+tests {
+  test("ítem rechazado: fecha_futura", function () {
+    expect(res.status).to.equal(200);
+    const resultados = res.body.resultados || res.body;
+    expect(resultados[0].estado).to.equal('rechazada');
+    expect(['fecha_futura']).to.include(resultados[0].motivo);
+  });
+}
+
+docs {
+  CU022: prohibido registrar asistencias en fechas futuras; el backend es la fuente de verdad de la fecha.
+}

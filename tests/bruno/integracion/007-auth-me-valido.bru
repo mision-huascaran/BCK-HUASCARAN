@@ -14,6 +14,10 @@ auth:bearer {
   token: {{tokenSupervisor}}
 }
 
+script:post-response {
+  bru.setVar('idUsuarioSupervisor', res.body.id_usuario);
+}
+
 tests {
   test("usuario y sesión vigente de 8 h", function () {
     expect(res.status).to.equal(200);

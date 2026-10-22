@@ -1,0 +1,48 @@
+meta {
+  name: F6-14 Marcar la sesión de lectura como no realizada
+  type: http
+  seq: 94
+}
+
+post {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla2}}/no-realizada
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opNoRealizada}}",
+    "version": {{versionTabla2}},
+    "motivo": "Paro de transportistas"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opNoRealizada', uuid());
+}
+
+script:post-response {
+  bru.setVar('versionFilaC', res.body.filas.find((f) => f.id_alumno === Number(bru.getVar('idAlumnoC'))).version);
+}
+
+tests {
+  test("queda no realizada con su motivo y todas las filas no aplican", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.estado).to.equal('no_realizada');
+    expect(res.body.motivo_no_realizada).to.equal('Paro de transportistas');
+    expect(res.body.filas.every((f) => f.estado_fila === 'no_aplica')).to.equal(true);
+  });
+}
+
+docs {
+  CU026: marcar la sesión de lectura como no realizada, con justificación obligatoria.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: F5-05 El Inicio cuenta los pendientes
+  type: http
+  seq: 66
+}
+
+get {
+  url: {{baseUrl}}/inicio/docente
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+tests {
+  test("2 registros offline pendientes más", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.registros_offline_pendientes).to.equal(Number(bru.getVar('pendientesAntes')) + 2);
+  });
+}
+
+docs {
+  CU010: "Tienes N registros offline pendientes de sincronizar."
+}

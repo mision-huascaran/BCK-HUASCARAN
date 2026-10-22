@@ -1,0 +1,26 @@
+meta {
+  name: F2-22 Resumen del alumno A
+  type: http
+  seq: 41
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoA}}/resumen
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("la tardanza cuenta como asistida: 1 de 1", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.asistencia).to.deep.equal({ porcentaje: 100, asistidas: 1, contabilizadas: 1 });
+  });
+}
+
+docs {
+  CU015: % de asistencia = (presentes + tardanzas) / clases contabilizadas del alumno.
+}

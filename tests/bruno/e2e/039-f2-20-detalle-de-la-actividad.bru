@@ -1,0 +1,31 @@
+meta {
+  name: F2-20 Detalle de la actividad
+  type: http
+  seq: 39
+}
+
+get {
+  url: {{baseUrl}}/actividades/{{idActividadF2}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("un cambio de asistencia por alumno y clase, aunque A tuvo dos marcas", function () {
+    expect(res.status).to.equal(200);
+    const modulo = (m) => res.body.cambios_por_modulo.find((x) => x.modulo === m) || {};
+    expect(modulo('asistencia').total).to.equal(3);
+    expect(modulo('alumnos').creados).to.equal(3);
+    expect(modulo('alumnos').editados).to.be.at.least(1);
+    expect(res.body.sincronizacion).to.equal('sincronizada');
+    expect(res.body.registros_pendientes).to.equal(0);
+  });
+}
+
+docs {
+  CU019: el detalle se alimenta de la auditoría de la actividad; un registro de Asistencia = (clase, alumno).
+}

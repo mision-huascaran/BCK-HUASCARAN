@@ -1,0 +1,19 @@
+meta {
+  name: SYN el aviso se limpia al llegar la operación
+  type: http
+  seq: 236
+}
+
+get {
+  url: {{baseUrl}}/sincronizacion/operaciones/{{opPendiente}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("ahora aceptada", function () { expect(res.status).to.equal(200); expect(res.body.estado).to.equal("aceptada"); });
+}

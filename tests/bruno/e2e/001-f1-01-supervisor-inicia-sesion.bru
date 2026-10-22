@@ -27,6 +27,7 @@ script:pre-request {
   if (faltan.length) {
     throw new Error('Faltan E2E_SUPERVISOR_USER / E2E_SUPERVISOR_PASS en el entorno (ver tests/bruno/README.md)');
   }
+  if (!bru.getVar('runId')) bru.setVar('runId', String(Date.now()));
 }
 
 script:post-response {
@@ -46,7 +47,7 @@ tests {
 docs {
   # F1. El Supervisor arma un colegio (CU013, CU016, CU014, CU015)
 
-  El Supervisor crea un colegio con su día de clase por grado, crea un Docente con
-  contraseña temporal y le asigna grados, crea un alumno y lo inactiva. Nada se elimina:
-  el alumno, el docente y el colegio de prueba quedan inactivos al final.
+  El Supervisor crea un colegio con día de clase y secciones por grado, crea un Docente con
+  contraseña temporal y le asigna grados, matricula un alumno en una sección y lo inactiva.
+  Nada se elimina: al final el alumno, el docente y el colegio quedan inactivos.
 }

@@ -1,0 +1,43 @@
+meta {
+  name: ASI registrar · alumno que no es de la clase
+  type: http
+  seq: 221
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opRechazada', uuid());
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: bru.getVar('fechaClase'),
+    registros: [{ id_operacion: bru.getVar('opRechazada'), id_alumno: Number(bru.getVar('idAlumnoSup')), estado: 'presente' }],
+  });
+}
+
+tests {
+  test("ítem rechazado: alumno_fuera_de_la_clase", function () {
+    expect(res.status).to.equal(200);
+    const resultados = res.body.resultados || res.body;
+    expect(resultados[0].estado).to.equal('rechazada');
+    expect(['alumno_fuera_de_la_clase']).to.include(resultados[0].motivo);
+  });
+}

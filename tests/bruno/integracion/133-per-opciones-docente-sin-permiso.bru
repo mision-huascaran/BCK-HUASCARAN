@@ -1,0 +1,22 @@
+meta {
+  name: PER opciones · Docente sin permiso
+  type: http
+  seq: 133
+}
+
+get {
+  url: {{baseUrl}}/permisos/opciones?id_colegio={{idColegioInt}}&id_anio_escolar={{idAnio}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

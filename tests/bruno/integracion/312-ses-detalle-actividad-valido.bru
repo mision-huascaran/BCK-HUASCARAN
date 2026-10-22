@@ -1,0 +1,27 @@
+meta {
+  name: SES detalle actividad · válido
+  type: http
+  seq: 312
+}
+
+get {
+  url: {{baseUrl}}/actividades/{{idActividadInt}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("cambios por módulo de la actividad", function () {
+    expect(res.status).to.equal(200);
+    const m = (x) => res.body.cambios_por_modulo.find((y) => y.modulo === x) || {};
+    expect(m('asistencia').total).to.equal(1);
+    expect(m('alumnos').creados).to.equal(1);
+    expect(m('rubrica').total).to.equal(1);
+    expect(m('registro_vuelo').total).to.equal(1);
+    expect(m('seguimiento_lectura').total).to.be.at.least(1);
+  });
+}

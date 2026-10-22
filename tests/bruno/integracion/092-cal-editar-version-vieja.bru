@@ -1,0 +1,34 @@
+meta {
+  name: CAL editar · versión vieja
+  type: http
+  seq: 92
+}
+
+put {
+  url: {{baseUrl}}/calendarios/{{idCalendarioPart}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "version": 0,
+    "periodos": {{periodosGeneral}},
+    "dias_no_lectivos": []
+  }
+}
+
+tests {
+  test("409 modificacion_concurrente", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('modificacion_concurrente');
+  });
+}
+
+docs {
+  CU027: "El calendario fue modificado por otro Supervisor…"
+}

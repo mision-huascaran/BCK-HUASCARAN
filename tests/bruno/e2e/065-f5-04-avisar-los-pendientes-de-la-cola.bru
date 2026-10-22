@@ -1,0 +1,33 @@
+meta {
+  name: F5-04 Avisar los pendientes de la cola
+  type: http
+  seq: 65
+}
+
+post {
+  url: {{baseUrl}}/sincronizacion/pendientes
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+body:json {
+  [
+    { "id_operacion": "{{opA}}", "id_dispositivo": "tablet-bruno", "id_actividad": "{{idActividadOffline}}", "modulo": "asistencias", "realizado_en": "{{tCaptura}}" },
+    { "id_operacion": "{{opB}}", "id_dispositivo": "tablet-bruno", "id_actividad": "{{idActividadOffline}}", "modulo": "asistencias", "realizado_en": "{{tCaptura}}" }
+  ]
+}
+
+tests {
+  test("recibidos y registrados", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body).to.deep.equal({ recibidos: 2, registrados: 2 });
+  });
+}
+
+docs {
+  P3 §2: al reconectar y antes de enviar, el cliente avisa lo que queda en la cola.
+}

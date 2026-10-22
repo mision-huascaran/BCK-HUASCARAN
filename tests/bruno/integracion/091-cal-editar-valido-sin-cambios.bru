@@ -1,0 +1,34 @@
+meta {
+  name: CAL editar · válido sin cambios
+  type: http
+  seq: 91
+}
+
+put {
+  url: {{baseUrl}}/calendarios/{{idCalendarioPart}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "version": {{versionCalPart}},
+    "periodos": {{periodosGeneral}},
+    "dias_no_lectivos": []
+  }
+}
+
+script:post-response {
+  bru.setVar('versionCalPart', res.body.version);
+}
+
+tests {
+  test("200; sin cambios reales la versión no sube", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.version).to.be.a('number');
+  });
+}

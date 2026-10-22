@@ -1,0 +1,22 @@
+meta {
+  name: COL detalle · válido
+  type: http
+  seq: 60
+}
+
+get {
+  url: {{baseUrl}}/colegios/{{idColegioInt}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("grados con día de clase y secciones", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.grados.every((g) => g.dia_clase >= 1 && g.dia_clase <= 5 && g.secciones.length > 0)).to.equal(true);
+  });
+}

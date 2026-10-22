@@ -1,0 +1,43 @@
+meta {
+  name: LEC crear tabla · ya existe
+  type: http
+  seq: 245
+}
+
+post {
+  url: {{baseUrl}}/lectura/tablas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opTabla}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_programa": {{idPrograma1}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_anio_escolar": {{idAnio}},
+    "mes": {{mesClase}},
+    "id_semana": {{idSemana}}
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opTabla', uuid());
+}
+
+tests {
+  test("409 tabla_existente", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('tabla_existente');
+  });
+}

@@ -1,0 +1,29 @@
+meta {
+  name: F7-07 Inicio del Directivo
+  type: http
+  seq: 109
+}
+
+get {
+  url: {{baseUrl}}/inicio/directivo
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+tests {
+  test("indicadores institucionales sin datos personales de alumnos", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.beneficiarios_activos).to.be.a('number');
+    expect(res.body.colegios_operando).to.be.a('number');
+    expect(res.body.salud_sistema === null || (res.body.salud_sistema >= 0 && res.body.salud_sistema <= 100)).to.equal(true);
+    expect(JSON.stringify(res.body)).to.not.match(/"(nombre|nombres|apellidos|alumnos)"/);
+  });
+}
+
+docs {
+  CU012: el Directivo nunca recibe nombres de alumnos; la Salud del Sistema es un entero 0–100 o null.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: CAL editar · Docente sin permiso
+  type: http
+  seq: 94
+}
+
+put {
+  url: {{baseUrl}}/calendarios/{{idCalendarioPart}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "version": {{versionCalPart}},
+    "periodos": {{periodosGeneral}},
+    "dias_no_lectivos": []
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

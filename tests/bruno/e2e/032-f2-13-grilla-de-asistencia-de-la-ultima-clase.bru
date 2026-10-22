@@ -1,0 +1,34 @@
+meta {
+  name: F2-13 Grilla de asistencia de la última clase
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  bru.setVar('sinMarcar', JSON.stringify(res.body.alumnos.filter((a) => !a.inactivo && a.estado === null).map((a) => a.id_alumno)));
+}
+
+tests {
+  test("clase programada, editable y con los tres alumnos sin marcar", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.clase.etiqueta).to.equal('Clase programada');
+    expect(res.body.escritura.permitida).to.equal(true);
+    const ids = res.body.alumnos.map((a) => a.id_alumno);
+    for (const v of ['idAlumnoA', 'idAlumnoB', 'idAlumnoC']) expect(ids).to.include(Number(bru.getVar(v)));
+    expect(res.body.alumnos.every((a) => a.estado === null)).to.equal(true);
+  });
+}
+
+docs {
+  CU022: la grilla de una clase (colegio, grado, sección y fecha); el subprograma es un filtro visual.
+}

@@ -1,0 +1,22 @@
+meta {
+  name: PER listar · usuario que no es Docente
+  type: http
+  seq: 142
+}
+
+get {
+  url: {{baseUrl}}/usuarios/{{idUsuarioSupervisor}}/permisos
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("404 docente_no_encontrado", function () {
+    expect(res.status).to.equal(404);
+    expect(res.body.motivo).to.equal('docente_no_encontrado');
+  });
+}

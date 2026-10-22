@@ -15,14 +15,14 @@ auth:bearer {
 }
 
 tests {
-  test("sin registros todavía: nivel null, 0 libros y 0 % de asistencia", function () {
+  test("sin registros todavía: nivel null, 0 libros y sin datos de asistencia", function () {
     expect(res.status).to.equal(200);
     expect(res.body.nivel_colocado).to.equal(null);
     expect(res.body.libros_leidos_anio).to.equal(0);
-    expect(res.body.asistencia_porcentaje).to.equal(0);
+    expect(res.body.asistencia).to.deep.equal({ porcentaje: null, asistidas: 0, contabilizadas: 0 });
   });
 }
 
 docs {
-  CU015: el detalle muestra 0 y 0 % cuando aún no hay datos.
+  CU015: sin clases contabilizadas el porcentaje es null ("Sin datos de asistencia").
 }

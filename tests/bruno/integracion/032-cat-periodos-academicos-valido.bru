@@ -15,9 +15,9 @@ auth:bearer {
 }
 
 tests {
-  test("periodos del año, a lo más uno vigente", function () {
+  test("PA1 a PA4 del calendario general, a lo más uno vigente", function () {
     expect(res.status).to.equal(200);
-    expect(res.body.length).to.be.greaterThan(0);
+    expect(res.body.map((p) => p.tipo)).to.deep.equal(['PA', 'PA', 'PA', 'PA']);
     expect(res.body.filter((p) => p.vigente).length).to.be.at.most(1);
   });
 }

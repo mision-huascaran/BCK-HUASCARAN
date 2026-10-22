@@ -1,0 +1,25 @@
+meta {
+  name: AULA Inicio del docente
+  type: http
+  seq: 166
+}
+
+get {
+  url: {{baseUrl}}/inicio/docente
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  const asignacion = res.body.asignaciones[0];
+  bru.setVar('idColegioDoc', asignacion.id_colegio);
+  bru.setVar('gradosDoc', JSON.stringify(asignacion.grados.map((g) => g.id_grado)));
+}
+
+tests {
+  test("200", function () { expect(res.status).to.equal(200); });
+}

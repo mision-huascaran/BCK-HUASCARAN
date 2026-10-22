@@ -1,0 +1,19 @@
+meta {
+  name: RUB pestaña del alumno · válido
+  type: http
+  seq: 281
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}/rubrica
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("la evaluación del mes con nombres de nivel", function () { expect(res.status).to.equal(200); expect(res.body.evaluaciones[0].fluidez).to.equal("En proceso"); });
+}

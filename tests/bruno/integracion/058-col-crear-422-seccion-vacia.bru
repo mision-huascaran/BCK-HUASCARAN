@@ -1,0 +1,33 @@
+meta {
+  name: COL crear · 422 sección vacía
+  type: http
+  seq: 58
+}
+
+post {
+  url: {{baseUrl}}/colegios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombre": "I.E. Bruno inválido",
+    "departamento": "Áncash",
+    "provincia": "Huaraz",
+    "grados": [{ "id_grado": {{idGrado1}}, "dia_clase": 1, "secciones": ["  "] }],
+    "programas": {{idProgramas}}
+  }
+}
+
+tests {
+  test("422 sección vacía", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('secciones');
+  });
+}

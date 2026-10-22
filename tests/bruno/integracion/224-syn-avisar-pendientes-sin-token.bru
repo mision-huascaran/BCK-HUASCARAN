@@ -1,0 +1,22 @@
+meta {
+  name: SYN avisar pendientes · sin token
+  type: http
+  seq: 224
+}
+
+post {
+  url: {{baseUrl}}/sincronizacion/pendientes
+  body: json
+  auth: none
+}
+
+body:json {
+  []
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

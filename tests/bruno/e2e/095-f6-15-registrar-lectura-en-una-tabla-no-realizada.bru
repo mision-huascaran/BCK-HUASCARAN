@@ -1,0 +1,36 @@
+meta {
+  name: F6-15 Registrar lectura en una tabla no realizada
+  type: http
+  seq: 95
+}
+
+put {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla2}}/filas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([{ id_operacion: uuid(), version: Number(bru.getVar('versionFilaC')), id_alumno: Number(bru.getVar('idAlumnoC')), cantidad_lsl: 1 }]);
+}
+
+tests {
+  test("ítem rechazado: lectura_no_realizada", function () {
+    expect(res.status).to.equal(200);
+    const resultados = res.body.resultados || res.body;
+    expect(resultados[0].estado).to.equal('rechazada');
+    expect(['lectura_no_realizada']).to.include(resultados[0].motivo);
+  });
+}

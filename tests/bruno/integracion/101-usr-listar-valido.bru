@@ -1,0 +1,29 @@
+meta {
+  name: USR listar · válido
+  type: http
+  seq: 101
+}
+
+get {
+  url: {{baseUrl}}/usuarios?rol=Docente
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("solo Docentes activos", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.items.every((u) => u.rol === 'Docente' && u.activo)).to.equal(true);
+  });
+}
+
+docs {
+  # Usuarios (CU016)
+
+  El Supervisor crea todos los usuarios con contraseña temporal. El Docente lleva una
+  asignación obligatoria; un aula no puede tener dos docentes en el mismo PA.
+}

@@ -1,0 +1,38 @@
+meta {
+  name: AULA El Supervisor agrega una sección para la corrida
+  type: http
+  seq: 169
+}
+
+patch {
+  url: {{baseUrl}}/colegios/{{idColegioDoc}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {{bodySecciones}}
+}
+
+script:post-response {
+  const grado = res.body.grados.find((g) => g.id === Number(bru.getVar('idGradoClase')));
+  bru.setVar('idSeccion', grado.secciones.find((s) => s.nombre === bru.getVar('nombreSeccion')).id);
+}
+
+tests {
+  test("la sección nueva se agrega y las existentes se conservan", function () {
+    expect(res.status).to.equal(200);
+    const grado = res.body.grados.find((g) => g.id === Number(bru.getVar('idGradoClase')));
+    const nombres = grado.secciones.map((s) => s.nombre);
+    expect(nombres).to.include(bru.getVar('nombreSeccion'));
+    expect(nombres[0]).to.equal('Única');
+  });
+}
+
+docs {
+  CU013: las secciones de un grado solo se agregan; las que no vienen en el request se conservan.
+}

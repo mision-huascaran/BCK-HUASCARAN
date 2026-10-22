@@ -1,0 +1,28 @@
+meta {
+  name: CAT niveles de rúbrica · válido
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/niveles-rubrica
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("valores 0 a 4 con los nombres nuevos", function () {
+    expect(res.status).to.equal(200);
+    const nombres = new Set(res.body.map((n) => n.nombre_nivel));
+    for (const n of ['Pre-inicio', 'Inicio', 'En proceso', 'Logrado', 'Avanzado']) expect(nombres.has(n)).to.equal(true);
+    expect(res.body.every((n) => n.valor >= 0 && n.valor <= 4)).to.equal(true);
+  });
+}
+
+docs {
+  CU029: niveles 0 Pre-inicio, 1 Inicio, 2 En proceso, 3 Logrado, 4 Avanzado.
+}

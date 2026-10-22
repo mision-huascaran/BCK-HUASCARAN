@@ -1,0 +1,40 @@
+meta {
+  name: F4-06 Iniciar una segunda actividad
+  type: http
+  seq: 54
+}
+
+post {
+  url: {{baseUrl}}/actividades
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_actividad": "{{idOtraActividad}}"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('idOtraActividad', uuid());
+}
+
+tests {
+  test("409 actividad_activa_existente", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('actividad_activa_existente');
+  });
+}
+
+docs {
+  CU009: "Debes finalizar la actividad actual antes de iniciar una nueva."
+}

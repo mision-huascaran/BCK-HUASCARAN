@@ -15,10 +15,11 @@ auth:bearer {
 }
 
 tests {
-  test("la creación quedó en la auditoría con su autor", function () {
+  test("la creación quedó en la auditoría con su autor y la fecha efectiva", function () {
     expect(res.status).to.equal(200);
     const creacion = res.body.items.find((e) => e.accion === 'crear');
     expect(creacion).to.not.equal(undefined);
     expect(creacion.rol).to.equal('Supervisor');
+    expect(creacion.cambios.map((x) => x.campo)).to.include('Fecha efectiva');
   });
 }

@@ -1,0 +1,34 @@
+meta {
+  name: ALU crear · 422 sin fecha de pertenencia
+  type: http
+  seq: 175
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "X",
+    "apellidos": "Y",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}}
+  }
+}
+
+tests {
+  test("422 sin fecha de pertenencia", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('pertenece_desde');
+  });
+}

@@ -1,0 +1,44 @@
+meta {
+  name: F2-16 Reintento de la misma operación
+  type: http
+  seq: 35
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: bru.getVar('fechaClase'),
+    registros: [{ id_operacion: bru.getVar('opTardanza'), id_alumno: Number(bru.getVar('idAlumnoA')), estado: 'tardanza', observacion: 'Llegó tarde por el transporte' }],
+  });
+}
+
+tests {
+  test("devuelve la misma respuesta sin aplicar nada (idempotente por id_operacion)", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.resultados).to.deep.equal(JSON.parse(bru.getVar('resultadoTardanza')));
+  });
+}
+
+docs {
+  P3 §1: el mismo id_operacion en cada reintento; repetido, se devuelve la respuesta guardada.
+}

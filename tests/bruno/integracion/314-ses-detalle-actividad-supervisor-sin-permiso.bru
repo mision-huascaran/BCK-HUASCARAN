@@ -1,0 +1,22 @@
+meta {
+  name: SES detalle actividad · Supervisor sin permiso
+  type: http
+  seq: 314
+}
+
+get {
+  url: {{baseUrl}}/actividades/{{idActividadInt}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}
