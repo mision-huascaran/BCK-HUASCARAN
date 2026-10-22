@@ -1,0 +1,24 @@
+meta {
+  name: F6-18 Pestaña de lectura del alumno B
+  type: http
+  seq: 98
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoB}}/lectura
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("la semana más reciente, completada", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body[0].estado_fila).to.equal('completada');
+    expect(res.body[0].lsn_titulo).to.equal('El zorro');
+    expect(res.body[0].total_libros).to.equal(3);
+  });
+}

@@ -1,0 +1,23 @@
+meta {
+  name: CAL calendario · Docente de su colegio
+  type: http
+  seq: 74
+}
+
+get {
+  url: {{baseUrl}}/calendarios?id_colegio={{idColegioDocCal}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  bru.setVar('idColegioDocCal', JSON.parse(bru.getVar('colegiosDoc'))[0]);
+}
+
+tests {
+  test("200", function () { expect(res.status).to.equal(200); });
+}

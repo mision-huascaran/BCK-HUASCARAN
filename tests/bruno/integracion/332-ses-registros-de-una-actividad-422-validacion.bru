@@ -1,0 +1,23 @@
+meta {
+  name: SES registros de una actividad · 422 validacion
+  type: http
+  seq: 332
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes/{{idDocente}}/actividades/{{idActividadInt}}/registros?modulo=otro
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("422 validacion", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('modulo');
+  });
+}

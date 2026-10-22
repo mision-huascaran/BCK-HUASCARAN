@@ -1,0 +1,18 @@
+meta {
+  name: CLA historial de reprogramaciones · sin token
+  type: http
+  seq: 207
+}
+
+get {
+  url: {{baseUrl}}/clases/{{idClaseReprogramada}}/reprogramaciones
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

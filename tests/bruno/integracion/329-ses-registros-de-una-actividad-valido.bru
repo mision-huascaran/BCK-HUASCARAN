@@ -1,0 +1,27 @@
+meta {
+  name: SES registros de una actividad · válido
+  type: http
+  seq: 329
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes/{{idDocente}}/actividades/{{idActividadInt}}/registros?modulo=rubrica
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("la rúbrica del alumno en el mes", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.items[0].alumno.id).to.equal(Number(bru.getVar('idAlumnoInt')));
+    expect(res.body.items[0].mes).to.equal(Number(bru.getVar('mesHoy')));
+  });
+}
+
+docs {
+  CU021: atajos "Ver Rúbricas", "Ver Asistencias"… según la auditoría de la actividad.
+}

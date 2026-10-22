@@ -1,0 +1,25 @@
+meta {
+  name: ALU editar · Docente cambia el colegio
+  type: http
+  seq: 189
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_colegio": {{idColegioInt}}
+  }
+}
+
+tests {
+  test("403: solo el Supervisor rota alumnos entre colegios", function () { expect(res.status).to.equal(403); });
+}

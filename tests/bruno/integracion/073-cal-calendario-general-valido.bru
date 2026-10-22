@@ -1,0 +1,36 @@
+meta {
+  name: CAL calendario general · válido
+  type: http
+  seq: 73
+}
+
+get {
+  url: {{baseUrl}}/calendarios?id_anio_escolar={{idAnio}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  bru.setVar('idCalendarioGeneral', res.body.id_calendario);
+  bru.setVar('periodosGeneral', JSON.stringify(res.body.periodos.map((p) => ({ tipo: p.tipo, numero: p.numero, fecha_inicio: p.fecha_inicio, fecha_fin: p.fecha_fin }))));
+}
+
+tests {
+  test("los 8 periodos (PA y PR) en orden", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.origen).to.equal('general');
+    expect(res.body.periodos.map((p) => p.tipo + p.numero)).to.deep.equal(['PA1', 'PR1', 'PA2', 'PR2', 'PA3', 'PR3', 'PA4', 'PR4']);
+  });
+}
+
+docs {
+  # Calendario académico (CU027)
+
+  Escribe solo el Supervisor; el Docente lee el calendario de sus colegios. Para no tocar el
+  calendario general del ambiente, las escrituras válidas usan un calendario particular del
+  colegio que crea esta corrida y al final vuelven al general.
+}

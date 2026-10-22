@@ -1,0 +1,39 @@
+meta {
+  name: F2-10 Matricular alumno B
+  type: http
+  seq: 29
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "Alumno B",
+    "apellidos": "Bruno {{runId}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{inicioPA}}"
+  }
+}
+
+script:post-response {
+  bru.setVar('idAlumnoB', res.body.id);
+}
+
+tests {
+  test("201 en la sección de la corrida", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.seccion.id).to.equal(Number(bru.getVar('idSeccion')));
+    expect(res.body.activo).to.equal(true);
+  });
+}

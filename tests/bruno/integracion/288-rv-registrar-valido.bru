@@ -1,0 +1,36 @@
+meta {
+  name: RV registrar · válido
+  type: http
+  seq: 288
+}
+
+put {
+  url: {{baseUrl}}/registro-vuelo
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([{ id_operacion: uuid(), version: null, id_alumno: Number(bru.getVar('idAlumnoInt')), id_periodo_academico: Number(bru.getVar('idPeriodoActual')), id_colegio: Number(bru.getVar('idColegioDoc')), id_grado: Number(bru.getVar('idGradoClase')), id_seccion: Number(bru.getVar('idSeccion')), id_programa: Number(bru.getVar('idPrograma1')), id_nivel_colocado: JSON.parse(bru.getVar('nivelesRk')).F, observacion: 'Prueba Bruno' }]);
+}
+
+tests {
+  test("aceptado con el nivel colocado y su nivel del programa", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body[0].estado).to.equal('aceptada');
+    expect(res.body[0].registro.nivel_colocado.letra).to.equal('F');
+    expect(res.body[0].registro.nivel_programa).to.be.a('string');
+  });
+}

@@ -1,0 +1,30 @@
+meta {
+  name: F3-01 Seguimiento del docente
+  type: http
+  seq: 43
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes/{{idDocente}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("cabecera del docente al día", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.id_docente).to.equal(Number(bru.getVar('idDocente')));
+    expect(res.body.ultima_conexion).to.not.equal(null);
+  });
+}
+
+docs {
+  # F3. El Supervisor audita la jornada del Docente (CU020, CU021, CU022)
+
+  Después de F2 (con la sesión del Supervisor de F2): ve la actividad con su productividad,
+  los registros de asistencia que tocó y la clase en solo lectura; no puede modificarla.
+}

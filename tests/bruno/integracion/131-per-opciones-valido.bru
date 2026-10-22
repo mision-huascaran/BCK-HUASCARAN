@@ -1,0 +1,34 @@
+meta {
+  name: PER opciones · válido
+  type: http
+  seq: 131
+}
+
+get {
+  url: {{baseUrl}}/permisos/opciones?id_colegio={{idColegioInt}}&id_anio_escolar={{idAnio}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  bru.setVar('idPeriodoVencido', res.body.periodos.length ? res.body.periodos[0].id : null);
+}
+
+tests {
+  test("periodos con plazo ordinario vencido y grados del colegio", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.periodos.length).to.be.greaterThan(0);
+    expect(res.body.grados.length).to.be.greaterThan(0);
+  });
+}
+
+docs {
+  # Permisos de corrección (CU028)
+
+  Solo el Supervisor. Se otorgan sobre un PA cuyo plazo ordinario ya terminó, se revocan y
+  no se editan ni se borran. El Docente consulta los suyos y sus habilitaciones.
+}

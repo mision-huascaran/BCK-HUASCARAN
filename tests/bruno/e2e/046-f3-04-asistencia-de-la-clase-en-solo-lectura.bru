@@ -1,0 +1,25 @@
+meta {
+  name: F3-04 Asistencia de la clase en solo lectura
+  type: http
+  seq: 46
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("ve lo que registró el Docente, sin poder escribir", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.escritura.permitida).to.equal(false);
+    expect(res.body.escritura.motivo).to.equal('El Supervisor consulta las asistencias en solo lectura.');
+    const a = res.body.alumnos.find((x) => x.id_alumno === Number(bru.getVar('idAlumnoA')));
+    expect(a.estado).to.equal('tardanza');
+  });
+}

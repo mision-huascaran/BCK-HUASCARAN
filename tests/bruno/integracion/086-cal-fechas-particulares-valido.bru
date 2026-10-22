@@ -1,0 +1,36 @@
+meta {
+  name: CAL fechas particulares · válido
+  type: http
+  seq: 86
+}
+
+post {
+  url: {{baseUrl}}/calendarios/particulares
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_colegio": {{idColegioInt}},
+    "id_anio_escolar": {{idAnio}},
+    "periodos": {{periodosGeneral}}
+  }
+}
+
+script:post-response {
+  bru.setVar('idCalendarioPart', res.body.id_calendario);
+  bru.setVar('versionCalPart', res.body.version);
+}
+
+tests {
+  test("201 particular del colegio", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.origen).to.equal('particular');
+    expect(res.body.colegio.id).to.equal(Number(bru.getVar('idColegioInt')));
+  });
+}

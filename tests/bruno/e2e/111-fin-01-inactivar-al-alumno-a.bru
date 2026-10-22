@@ -1,0 +1,35 @@
+meta {
+  name: FIN-01 Inactivar al alumno A
+  type: http
+  seq: 111
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoA}}/desactivar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "aplicar_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("queda inactivo (o su clase de hoy ya lo tiene en la lista congelada)", function () {
+    expect([200, 409]).to.include(res.status);
+    if (res.status === 200) expect(res.body.activo).to.equal(false);
+    else expect(res.body.motivo).to.equal('conflicto_listas_historicas');
+  });
+}
+
+docs {
+  # Cierre
+
+  Nada se elimina: los alumnos de la corrida quedan inactivos. Si la clase de la corrida es de hoy, su lista congelada impide inactivarlos hoy (409 conflicto_listas_historicas).
+}

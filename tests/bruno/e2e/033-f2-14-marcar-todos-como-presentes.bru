@@ -1,0 +1,49 @@
+meta {
+  name: F2-14 Marcar todos como presentes
+  type: http
+  seq: 33
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: bru.getVar('fechaClase'),
+    registros: JSON.parse(bru.getVar('sinMarcar')).map((id) => ({ id_operacion: uuid(), id_alumno: id, estado: 'presente' })),
+  });
+}
+
+tests {
+  test("todas las operaciones aceptadas como presente", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.clase.id_clase).to.be.a('number');
+    expect(res.body.resultados.length).to.equal(JSON.parse(bru.getVar('sinMarcar')).length);
+    for (const r of res.body.resultados) {
+      expect(r.estado).to.equal('aceptada');
+      expect(r.registro.estado).to.equal('presente');
+    }
+  });
+}
+
+docs {
+  CU022: la primera escritura crea la clase y congela su lista de alumnos.
+}

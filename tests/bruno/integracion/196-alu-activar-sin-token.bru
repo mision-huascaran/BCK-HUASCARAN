@@ -1,0 +1,24 @@
+meta {
+  name: ALU activar · sin token
+  type: http
+  seq: 196
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}/activar
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "aplicar_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

@@ -1,0 +1,24 @@
+meta {
+  name: F6-04 Año escolar
+  type: http
+  seq: 84
+}
+
+get {
+  url: {{baseUrl}}/anios-escolares
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  bru.setVar('idAnio', (res.body.find((a) => a.vigente) || res.body[res.body.length - 1]).id);
+  bru.setVar('mesClase', Number(bru.getVar('fechaClase').slice(5, 7)));
+}
+
+tests {
+  test("200", function () { expect(res.status).to.equal(200); });
+}

@@ -1,0 +1,42 @@
+meta {
+  name: LEC cambiar clase de referencia · tabla con datos
+  type: http
+  seq: 256
+}
+
+patch {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/clase-referencia
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opRef}}",
+    "version": {{versionTabla}},
+    "fecha": "{{fechaClase}}"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opRef', uuid());
+}
+
+tests {
+  test("409 tabla_con_datos", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('tabla_con_datos');
+  });
+}
+
+docs {
+  CU024: solo se cambia la clase de referencia si todavía no hay datos de lectura.
+}

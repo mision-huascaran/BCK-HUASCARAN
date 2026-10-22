@@ -1,0 +1,30 @@
+meta {
+  name: COL listar · válido Supervisor
+  type: http
+  seq: 39
+}
+
+get {
+  url: {{baseUrl}}/colegios
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("paginado de 40 y solo activos por defecto", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.page_size).to.equal(40);
+    expect(res.body.items.every((x) => x.activo)).to.equal(true);
+  });
+}
+
+docs {
+  # Colegios (CU013)
+
+  Solo el Supervisor crea, edita e inactiva. El Docente lee los colegios de su alcance.
+  El Directivo no tiene acceso. Nada se elimina; las secciones solo se agregan.
+}

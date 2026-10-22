@@ -1,0 +1,23 @@
+meta {
+  name: SES seguimiento docentes · válido
+  type: http
+  seq: 316
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("cada docente con uno de los 4 estados de sincronización", function () {
+    expect(res.status).to.equal(200);
+    const estados = ['error', 'pendiente', 'sin_informacion', 'al_dia'];
+    expect(res.body.items.every((d) => estados.includes(d.sincronizacion))).to.equal(true);
+  });
+}

@@ -27,6 +27,7 @@ script:pre-request {
   if (faltan.length) {
     throw new Error('Faltan E2E_SUPERVISOR_USER / E2E_SUPERVISOR_PASS en el entorno (ver tests/bruno/README.md)');
   }
+  if (!bru.getVar('runId')) bru.setVar('runId', String(Date.now()));
 }
 
 script:post-response {

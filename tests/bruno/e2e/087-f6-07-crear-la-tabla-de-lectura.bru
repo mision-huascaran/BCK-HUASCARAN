@@ -1,0 +1,60 @@
+meta {
+  name: F6-07 Crear la tabla de lectura
+  type: http
+  seq: 87
+}
+
+post {
+  url: {{baseUrl}}/lectura/tablas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opTabla}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_programa": {{idPrograma1}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_anio_escolar": {{idAnio}},
+    "mes": {{mesClase}},
+    "id_semana": {{idSemana}}
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opTabla', uuid());
+}
+
+script:post-response {
+  bru.setVar('idTabla', res.body.id);
+  bru.setVar('versionTabla', res.body.version);
+  bru.setVar('filasTabla', JSON.stringify(Object.fromEntries(res.body.filas.map((f) => [f.id_alumno, f.version]))));
+}
+
+tests {
+  test("201 con una fila por alumno del subprograma, según su asistencia", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.clase_referencia.fecha).to.equal(bru.getVar('fechaClase'));
+    const fila = (v) => res.body.filas.find((x) => x.id_alumno === Number(bru.getVar(v)));
+    expect(fila('idAlumnoA').asistencia).to.equal('ausente');
+    expect(fila('idAlumnoA').estado_fila).to.equal('no_aplica');
+    expect(fila('idAlumnoB').asistencia).to.equal('presente');
+    expect(fila('idAlumnoB').estado_fila).to.equal('pendiente');
+    // C es de otro subprograma: no está en esta tabla.
+    expect(fila('idAlumnoC')).to.equal(undefined);
+  });
+}
+
+docs {
+  CU024: una tabla por grupo, subprograma y semana; las filas son la lista de la clase de referencia.
+}

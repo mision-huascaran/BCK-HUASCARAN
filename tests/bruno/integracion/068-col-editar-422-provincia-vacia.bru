@@ -1,0 +1,29 @@
+meta {
+  name: COL editar · 422 provincia vacía
+  type: http
+  seq: 68
+}
+
+patch {
+  url: {{baseUrl}}/colegios/{{idColegioInt}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "provincia": null
+  }
+}
+
+tests {
+  test("422 provincia vacía", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('provincia');
+  });
+}

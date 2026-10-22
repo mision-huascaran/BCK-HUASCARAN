@@ -1,0 +1,27 @@
+meta {
+  name: ALU inactivar · 422 sin fecha desde la que aplica
+  type: http
+  seq: 193
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoSup}}/desactivar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("422 sin fecha desde la que aplica", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('aplicar_desde');
+  });
+}

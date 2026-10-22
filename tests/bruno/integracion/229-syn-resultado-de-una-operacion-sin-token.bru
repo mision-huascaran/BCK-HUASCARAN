@@ -1,0 +1,18 @@
+meta {
+  name: SYN resultado de una operación · sin token
+  type: http
+  seq: 229
+}
+
+get {
+  url: {{baseUrl}}/sincronizacion/operaciones/{{opAsistencia}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

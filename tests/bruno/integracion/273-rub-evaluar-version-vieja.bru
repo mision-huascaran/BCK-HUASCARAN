@@ -1,0 +1,36 @@
+meta {
+  name: RUB evaluar · versión vieja
+  type: http
+  seq: 273
+}
+
+put {
+  url: {{baseUrl}}/rubricas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([{ id_operacion: uuid(), version: null, id_alumno: Number(bru.getVar('idAlumnoInt')), id_colegio: Number(bru.getVar('idColegioDoc')), id_grado: Number(bru.getVar('idGradoClase')), id_seccion: Number(bru.getVar('idSeccion')), id_programa: Number(bru.getVar('idPrograma1')), id_anio_escolar: Number(bru.getVar('idAnio')), mes: Number(bru.getVar('mesHoy')), fluidez: 1 }]);
+}
+
+tests {
+  test("ítem rechazado: modificacion_concurrente", function () {
+    expect(res.status).to.equal(200);
+    const resultados = res.body.resultados || res.body;
+    expect(resultados[0].estado).to.equal('rechazada');
+    expect(['modificacion_concurrente']).to.include(resultados[0].motivo);
+  });
+}

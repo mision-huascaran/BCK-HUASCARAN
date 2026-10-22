@@ -1,0 +1,38 @@
+meta {
+  name: F6-12 Marcar "No realizada" una tabla con datos
+  type: http
+  seq: 92
+}
+
+post {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/no-realizada
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opNoRealizada}}",
+    "version": {{versionTabla}},
+    "motivo": "Paro de transportistas"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opNoRealizada', uuid());
+}
+
+tests {
+  test("409 tabla_con_datos", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('tabla_con_datos');
+  });
+}

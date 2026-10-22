@@ -16,7 +16,7 @@ auth:bearer {
 
 script:post-response {
   bru.setVar('idProgramas', JSON.stringify(res.body.map((p) => p.id)));
-  bru.setVar('idPrograma1', res.body[0].id);
+  bru.setVar('idProgramaF1', res.body[0].id);
 }
 
 tests {

@@ -1,0 +1,28 @@
+meta {
+  name: ALU activar · Directivo sin permiso
+  type: http
+  seq: 197
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}/activar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+body:json {
+  {
+    "aplicar_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

@@ -1,0 +1,35 @@
+meta {
+  name: PER otorgar · Docente sin permiso
+  type: http
+  seq: 140
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_anio_escolar": {{idAnio}},
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_periodo_academico": {{idPeriodoVencido}},
+    "modulo": "lectura",
+    "desde_ahora": true,
+    "fin": "{{finPermiso}}",
+    "motivo": "Faltó registrar la lectura (prueba Bruno)."
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

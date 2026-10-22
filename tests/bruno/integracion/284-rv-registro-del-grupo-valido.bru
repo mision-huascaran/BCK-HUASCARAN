@@ -1,0 +1,31 @@
+meta {
+  name: RV registro del grupo · válido
+  type: http
+  seq: 284
+}
+
+get {
+  url: {{baseUrl}}/registro-vuelo?id_colegio={{idColegioDoc}}&id_programa={{idPrograma1}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&id_anio_escolar={{idAnio}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("los 4 PA del colegio y el vigente editable", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.periodos.length).to.equal(4);
+    const actual = res.body.periodos.find((p) => p.id_periodo_academico === Number(bru.getVar('idPeriodoActual')));
+    expect(actual.escritura.permitida).to.equal(true);
+  });
+}
+
+docs {
+  # Registro de Vuelo (CU031, CU032)
+
+  El backend calcula entrada, sugerencia y nivel del programa; el Docente registra el nivel
+  colocado, la proyección y la observación por PA. Regla V1 provisional.
+}

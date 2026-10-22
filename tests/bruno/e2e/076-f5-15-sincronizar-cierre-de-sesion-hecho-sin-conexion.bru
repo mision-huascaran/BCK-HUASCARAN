@@ -1,0 +1,35 @@
+meta {
+  name: F5-15 Sincronizar: cierre de sesión hecho sin conexión
+  type: http
+  seq: 76
+}
+
+post {
+  url: {{baseUrl}}/me/sesiones/{{idSesionA}}/cerrar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+body:json {
+  {
+    "fin": "{{tCierreOffline}}"
+  }
+}
+
+tests {
+  test("la sesión anterior queda cerrada como Manual a la hora real", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.sesion.tipo_cierre).to.equal('Manual');
+    expect(res.body.sesion.fin_verificado).to.equal(true);
+    expect(Date.parse(res.body.sesion.fin)).to.equal(Date.parse(bru.getVar('tCierreOffline')));
+    expect(res.body.actividad.tipo_cierre).to.equal('Forzado por cierre de sesión');
+  });
+}
+
+docs {
+  CU008: el cierre sin conexión se registra después del nuevo login, con su hora real.
+}

@@ -1,0 +1,36 @@
+meta {
+  name: PER otorgar · 422 PA que aún admite regularización ordinaria
+  type: http
+  seq: 137
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_anio_escolar": {{idAnio}},
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_periodo_academico": {{idPeriodoActual}},
+    "modulo": "lectura",
+    "desde_ahora": true,
+    "fin": "{{finPermiso}}",
+    "motivo": "Faltó registrar la lectura (prueba Bruno)."
+  }
+}
+
+tests {
+  test("422 PA que aún admite regularización ordinaria", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('id_periodo_academico');
+  });
+}

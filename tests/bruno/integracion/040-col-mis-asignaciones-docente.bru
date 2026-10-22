@@ -1,0 +1,26 @@
+meta {
+  name: COL mis asignaciones (Docente)
+  type: http
+  seq: 40
+}
+
+get {
+  url: {{baseUrl}}/me/asignaciones
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  bru.setVar('colegiosDoc', JSON.stringify(res.body.map((a) => a.id_colegio)));
+}
+
+tests {
+  test("cada grado trae sus secciones", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body[0].grados.every((g) => Array.isArray(g.secciones) && g.secciones.length > 0)).to.equal(true);
+  });
+}

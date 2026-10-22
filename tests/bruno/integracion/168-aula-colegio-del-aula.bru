@@ -1,0 +1,51 @@
+meta {
+  name: AULA Colegio del aula
+  type: http
+  seq: 168
+}
+
+get {
+  url: {{baseUrl}}/colegios/{{idColegioDoc}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  const hoy = bru.getVar('hoy');
+  const inicioPA = bru.getVar('inicioPA');
+  const propios = JSON.parse(bru.getVar('gradosDoc'));
+  const diaSemana = (f) => { const d = new Date(f + 'T12:00:00Z').getUTCDay(); return d === 0 ? 7 : d; };
+  // El grado del Docente cuyo día de clase (1 = lunes … 5 = viernes) fue más recientemente,
+  // sin salir del PA vigente.
+  let elegido = null;
+  for (const g of res.body.grados.filter((x) => propios.includes(x.id) && x.dia_clase)) {
+    const atras = (diaSemana(hoy) - g.dia_clase + 7) % 7;
+    const fecha = new Date(Date.parse(hoy + 'T12:00:00Z') - atras * 86400e3).toISOString().slice(0, 10);
+    if (fecha >= inicioPA && (!elegido || fecha > elegido.fecha)) elegido = { id: g.id, fecha };
+  }
+  if (!elegido) throw new Error('Ningún grado del Docente tuvo clase desde el inicio del PA vigente.');
+  bru.setVar('idGradoClase', elegido.id);
+  bru.setVar('nombreSeccion', 'Bruno ' + bru.getVar('runId') + ' int');
+  const grados = res.body.grados.map((g) => ({
+    id_grado: g.id,
+    dia_clase: g.dia_clase,
+    secciones: g.secciones.map((s) => s.nombre).concat(g.id === elegido.id ? [bru.getVar('nombreSeccion')] : []),
+  }));
+  bru.setVar('bodySecciones', JSON.stringify({ grados }));
+  const ajeno = res.body.grados.find((g) => !propios.includes(g.id));
+  bru.setVar('idGradoAjeno', ajeno ? ajeno.id : null);
+  bru.setVar('idSeccionAjena', ajeno ? ajeno.secciones[0].id : null);
+  bru.setVar('idPrograma1', res.body.programas[0].id);
+  bru.setVar('idPrograma2', (res.body.programas[1] || res.body.programas[0]).id);
+}
+
+tests {
+  test("grados con día de clase y secciones", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.grados.every((g) => Array.isArray(g.secciones) && g.secciones.length > 0)).to.equal(true);
+  });
+}

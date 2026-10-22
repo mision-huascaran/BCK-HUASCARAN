@@ -1,0 +1,34 @@
+meta {
+  name: F2-12 Clases de la sección
+  type: http
+  seq: 31
+}
+
+get {
+  url: {{baseUrl}}/colegios/{{idColegioDoc}}/clases?id_grado={{idGradoClase}}&id_seccion={{idSeccion}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  const hoy = bru.getVar('hoy');
+  const pasadas = res.body.filter((x) => x.fecha <= hoy).map((x) => x.fecha).sort();
+  const futuras = res.body.filter((x) => x.fecha > hoy).map((x) => x.fecha).sort();
+  bru.setVar('fechaClase', pasadas[pasadas.length - 1] || null);
+  bru.setVar('fechaFutura', futuras[0] || null);
+}
+
+tests {
+  test("la sección tiene una clase programada hasta hoy en el PA", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.some((x) => x.fecha <= bru.getVar('hoy') && x.fecha >= bru.getVar('inicioPA'))).to.equal(true);
+  });
+}
+
+docs {
+  CU013: la clase es colegio × grado × sección, en el día de clase del grado; existe desde que el grupo tiene alumnos.
+}

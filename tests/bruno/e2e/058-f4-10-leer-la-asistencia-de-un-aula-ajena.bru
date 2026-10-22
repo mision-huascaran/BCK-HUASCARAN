@@ -1,0 +1,26 @@
+meta {
+  name: F4-10 Leer la asistencia de un aula ajena
+  type: http
+  seq: 58
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoAjeno}}&id_seccion={{idSeccionAjena}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 aula_fuera_de_alcance", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('aula_fuera_de_alcance');
+  });
+}
+
+docs {
+  CU022: el Docente solo ve y registra en los colegios, grados y secciones que tiene asignados.
+}

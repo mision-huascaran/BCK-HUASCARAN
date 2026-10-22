@@ -1,0 +1,46 @@
+meta {
+  name: ALU crear · válido Docente
+  type: http
+  seq: 170
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "Alumno Bruno",
+    "apellidos": "Bruno {{runId}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{inicioPA}}"
+  }
+}
+
+script:post-response {
+  bru.setVar('idAlumnoInt', res.body.id);
+}
+
+tests {
+  test("201 en la sección de la corrida", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.seccion.id).to.equal(Number(bru.getVar('idSeccion')));
+    expect(res.body.activo).to.equal(true);
+  });
+}
+
+docs {
+  # Alumnos (CU014, CU015)
+
+  Supervisor: todos los alumnos, sin actividad. Docente: solo sus aulas y con una actividad
+  iniciada para escribir. Directivo: sin acceso. La pertenencia al grupo tiene fecha.
+}

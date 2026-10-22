@@ -1,0 +1,35 @@
+meta {
+  name: LEC registrar filas · 422 cantidad de LSL negativa
+  type: http
+  seq: 255
+}
+
+put {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/filas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([{ id_operacion: uuid(), version: Number(bru.getVar('versionFila')), id_alumno: Number(bru.getVar('idAlumnoInt')), cantidad_lsl: -1 }]);
+}
+
+tests {
+  test("422 cantidad de LSL negativa", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('cantidad_lsl');
+  });
+}

@@ -1,0 +1,43 @@
+meta {
+  name: F2-09 Matricular alumno A
+  type: http
+  seq: 28
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "Alumno A",
+    "apellidos": "Bruno {{runId}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{inicioPA}}"
+  }
+}
+
+script:post-response {
+  bru.setVar('idAlumnoA', res.body.id);
+}
+
+tests {
+  test("201 en la sección de la corrida", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.seccion.id).to.equal(Number(bru.getVar('idSeccion')));
+    expect(res.body.activo).to.equal(true);
+  });
+}
+
+docs {
+  CU014: el Docente matricula solo en sus aulas y con una actividad iniciada; pertenece desde el inicio del PA.
+}

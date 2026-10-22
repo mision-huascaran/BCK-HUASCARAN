@@ -1,0 +1,33 @@
+meta {
+  name: F4-05 Iniciar actividad
+  type: http
+  seq: 53
+}
+
+post {
+  url: {{baseUrl}}/actividades
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_actividad": "{{idActividadF4}}"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('idActividadF4', uuid());
+}
+
+tests {
+  test("201", function () { expect(res.status).to.equal(201); });
+}

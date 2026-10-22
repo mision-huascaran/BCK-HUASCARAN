@@ -1,0 +1,34 @@
+meta {
+  name: F7-02 Intenta matricular un alumno
+  type: http
+  seq: 104
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+body:json {
+  {
+    "nombres": "No debe crearse",
+    "apellidos": "Bruno F7",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

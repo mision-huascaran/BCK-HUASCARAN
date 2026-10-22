@@ -1,0 +1,35 @@
+meta {
+  name: PER otorgar · 422 sin motivo
+  type: http
+  seq: 138
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_anio_escolar": {{idAnio}},
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_periodo_academico": {{idPeriodoVencido}},
+    "modulo": "lectura",
+    "desde_ahora": true,
+    "fin": "{{finPermiso}}"
+  }
+}
+
+tests {
+  test("422 sin motivo", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('motivo');
+  });
+}

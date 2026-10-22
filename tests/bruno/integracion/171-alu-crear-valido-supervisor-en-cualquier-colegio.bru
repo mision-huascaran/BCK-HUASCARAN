@@ -1,0 +1,35 @@
+meta {
+  name: ALU crear · válido Supervisor en cualquier colegio
+  type: http
+  seq: 171
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "Alumno Bruno",
+    "apellidos": "Supervisor {{runId}}",
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_seccion": {{idSeccionIntA}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{hoy}}"
+  }
+}
+
+script:post-response {
+  bru.setVar('idAlumnoSup', res.body.id);
+}
+
+tests {
+  test("201", function () { expect(res.status).to.equal(201); expect(res.body.seccion.nombre).to.equal("A"); });
+}

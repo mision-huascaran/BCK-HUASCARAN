@@ -1,0 +1,27 @@
+meta {
+  name: PER mis habilitaciones · válido
+  type: http
+  seq: 155
+}
+
+get {
+  url: {{baseUrl}}/me/habilitaciones
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("asignaciones, permisos y calendarios de sus colegios", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.asignaciones.length).to.be.greaterThan(0);
+    expect(res.body.calendarios.length).to.be.greaterThan(0);
+  });
+}
+
+docs {
+  P3 §4: lo que el Docente guarda en IndexedDB para validar sin conexión.
+}

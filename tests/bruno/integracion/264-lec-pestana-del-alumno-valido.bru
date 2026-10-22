@@ -1,0 +1,19 @@
+meta {
+  name: LEC pestaña del alumno · válido
+  type: http
+  seq: 264
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}/lectura
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("la semana registrada", function () { expect(res.status).to.equal(200); expect(res.body[0].estado_fila).to.equal("completada"); });
+}

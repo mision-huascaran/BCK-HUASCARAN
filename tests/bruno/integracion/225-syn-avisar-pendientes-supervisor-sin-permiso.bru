@@ -1,0 +1,38 @@
+meta {
+  name: SYN avisar pendientes · Supervisor sin permiso
+  type: http
+  seq: 225
+}
+
+post {
+  url: {{baseUrl}}/sincronizacion/pendientes
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  [
+    { "id_operacion": "{{opPendiente}}", "id_dispositivo": "tablet-bruno", "id_actividad": "{{idActividadInt}}",
+      "modulo": "asistencias", "realizado_en": "{{ahora}}" }
+  ]
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opPendiente', uuid());
+  bru.setVar('ahora', new Date().toISOString());
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}
