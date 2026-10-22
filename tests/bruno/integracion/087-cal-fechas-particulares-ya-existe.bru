@@ -1,0 +1,30 @@
+meta {
+  name: CAL fechas particulares · ya existe
+  type: http
+  seq: 87
+}
+
+post {
+  url: {{baseUrl}}/calendarios/particulares
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_colegio": {{idColegioInt}},
+    "id_anio_escolar": {{idAnio}},
+    "periodos": {{periodosGeneral}}
+  }
+}
+
+tests {
+  test("409 calendario_particular_existente", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('calendario_particular_existente');
+  });
+}

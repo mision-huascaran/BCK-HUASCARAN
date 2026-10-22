@@ -4,12 +4,22 @@ from datetime import timedelta
 import pytest
 from sqlmodel import select
 
+from app.core.paginacion import TAMANO_PAGINA
 from app.core.politica_contrasena import cumple_politica_contrasena
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import AnioEscolar, Docente, DocenteColegioGrado, PeriodoAcademico, Usuario
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Auditoria
-from tests.conftest import CORREOS, cabecera_de, crear_colegio, crear_docente, motivo, releer
+from tests.conftest import (
+    CORREOS,
+    cabecera_de,
+    crear_calendario,
+    crear_colegio,
+    crear_docente,
+    motivo,
+    rangos_relativos,
+    releer,
+)
 
 
 def nuevo(id_rol, n=1, **extra):
@@ -55,7 +65,7 @@ def test_cu016_crear_docente_con_asignacion_desde_el_periodo_vigente(client, db,
     assert cuerpo["usuario"]["colegios_asignados"] == ["Colegio Lejano"]
     usuario = db.exec(select(Usuario).where(Usuario.correo == "nuevo1@sicedu.test")).one()
     periodos = {fila.id_periodo_academico for fila in asignaciones_de(db, usuario.id_docente)}
-    assert periodos == {entorno.periodos["vigente"].id_periodo_academico, entorno.periodos["futuro"].id_periodo_academico}
+    assert periodos == {entorno.periodos[c].id_periodo_academico for c in ("vigente", "futuro", "cuarto")}
     temporal = correos.temporal("nuevo1@sicedu.test")
     assert cumple_politica_contrasena(temporal)
     # Credenciales correctas, pero primero debe cambiar la temporal (CU016).
@@ -123,8 +133,8 @@ def test_cu016_un_aula_solo_tiene_un_docente(client, entorno, sup):
     assert respuesta.status_code == 409
     assert motivo(respuesta) == "grado_asignado"
     assert respuesta.json()["detail"] == (
-        "Error: Uno o más grados seleccionados para este colegio ya se encuentran asignados a "
-        "otro docente en el periodo vigente."
+        "No se puede guardar la asignación. El colegio Colegio Andino, grado 1.º, ya tiene un "
+        f"Docente asignado en PA2 del año escolar {entorno.anio.nombre}."
     )
 
 
@@ -137,6 +147,7 @@ def test_cu016_un_aula_solo_tiene_un_docente(client, entorno, sup):
         ("grado_no_ofrecido", "grado_no_ofrecido"),
         ("anio_inexistente", "anio_inexistente"),
         ("anio_sin_periodos", "anio_sin_periodos"),
+        ("anio_sin_calendario", "calendario_no_configurado"),
         ("anio_terminado", "sin_periodos_asignables"),
     ],
 )
@@ -166,8 +177,9 @@ def test_cu016_asignacion_invalida(client, db, entorno, sup, preparar, esperado)
         db.add(anio)
         db.flush()
         if preparar == "anio_terminado":
-            db.add(PeriodoAcademico(id_anio_escolar=anio.id_anio_escolar, numero=1, fecha_inicio=inicio,
-                                    fecha_fin=fin, creado_por=1, creado_en=ahora_utc()))
+            crear_calendario(db, anio.id_anio_escolar, rangos_relativos(inicio + timedelta(days=150)), 1)
+        elif preparar == "anio_sin_calendario":
+            db.add(PeriodoAcademico(id_anio_escolar=anio.id_anio_escolar, numero=1, creado_por=1, creado_en=ahora_utc()))
         datos["id_anio_escolar"] = anio.id_anio_escolar
     db.commit()
 
@@ -198,7 +210,7 @@ def test_cu016_listado_ordenado_por_rol_y_nombre(client, entorno, sup):
     assert [u["rol"] for u in cuerpo["items"]] == ["Docente", "Supervisor", "Supervisor", "Directivo"]
     assert cuerpo["items"][0]["colegios_asignados"] == ["Colegio Andino"]
     assert [u["es_supervisor_original"] for u in cuerpo["items"]].count(True) == 1
-    assert (cuerpo["total"], cuerpo["page"], cuerpo["page_size"], cuerpo["total_pages"]) == (4, 1, 10, 1)
+    assert (cuerpo["total"], cuerpo["page"], cuerpo["page_size"], cuerpo["total_pages"]) == (4, 1, 40, 1)
 
 
 @pytest.mark.parametrize(
@@ -216,14 +228,16 @@ def test_cu016_filtros_del_listado(client, entorno, sup, params, correos):
     assert [u["correo"] for u in cuerpo["items"]] == correos
 
 
-def test_cu016_paginacion_de_10_en_10(client, db, entorno, sup):
-    for n in range(10):
-        crear_docente(db, entorno, f"Extra{n:02d}", f"extra{n}@sicedu.test", f"6000000{n}")
+def test_cu016_paginacion_de_40_en_40(client, db, entorno, sup):
+    for n in range(TAMANO_PAGINA):
+        crear_docente(db, entorno, f"Extra{n:02d}", f"extra{n}@sicedu.test", f"600000{n:02d}")
     db.commit()
 
+    primera = client.get("/usuarios", headers=sup).json()
     segunda = client.get("/usuarios", params={"page": 2}, headers=sup).json()
 
-    assert (segunda["total"], segunda["total_pages"], len(segunda["items"])) == (14, 2, 4)
+    assert (primera["page_size"], len(primera["items"])) == (40, 40)
+    assert (segunda["total"], segunda["total_pages"], len(segunda["items"])) == (44, 2, 4)
     assert client.get("/usuarios", params={"page": 0}, headers=sup).status_code == 422
 
 
@@ -381,10 +395,11 @@ def test_cu016_renovar_para_otro_anio(client, db, entorno, sup):
                        fecha_fin=hoy + timedelta(days=400), creado_por=1, creado_en=ahora_utc())
     db.add(otro)
     db.flush()
-    periodo = PeriodoAcademico(id_anio_escolar=otro.id_anio_escolar, numero=1, fecha_inicio=otro.fecha_inicio,
-                               fecha_fin=otro.fecha_fin, creado_por=1, creado_en=ahora_utc())
-    db.add(periodo)
+    crear_calendario(db, otro.id_anio_escolar, rangos_relativos(otro.fecha_inicio + timedelta(days=150)), 1)
     db.commit()
+    periodo = db.exec(
+        select(PeriodoAcademico).where(PeriodoAcademico.id_anio_escolar == otro.id_anio_escolar, PeriodoAcademico.numero == 1)
+    ).one()
 
     respuesta = client.patch(
         f"/usuarios/{entorno.docente.id_usuario}",
@@ -403,8 +418,7 @@ def test_cu016_desde_periodo_invalido(client, db, entorno, sup, periodo, esperad
         otro = AnioEscolar(nombre="X", fecha_inicio=entorno.hoy, fecha_fin=entorno.hoy, creado_por=1, creado_en=ahora_utc())
         db.add(otro)
         db.flush()
-        fila = PeriodoAcademico(id_anio_escolar=otro.id_anio_escolar, numero=9, fecha_inicio=entorno.hoy,
-                                fecha_fin=entorno.hoy, creado_por=1, creado_en=ahora_utc())
+        fila = PeriodoAcademico(id_anio_escolar=otro.id_anio_escolar, numero=1, creado_por=1, creado_en=ahora_utc())
         db.add(fila)
         db.commit()
         id_periodo = fila.id_periodo_academico
@@ -432,7 +446,7 @@ def test_cu016_docente_sin_asignaciones_necesita_colegio_y_anio(client, db, ento
     assert motivo(incompleta) == "asignacion_incompleta"
     assert completa.status_code == 200
     assert {f.id_periodo_academico for f in asignaciones_de(db, otro.id_docente)} == {
-        entorno.periodos["futuro"].id_periodo_academico
+        entorno.periodos["futuro"].id_periodo_academico, entorno.periodos["cuarto"].id_periodo_academico
     }
 
 

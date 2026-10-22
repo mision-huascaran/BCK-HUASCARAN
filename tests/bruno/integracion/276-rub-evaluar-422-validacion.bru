@@ -1,0 +1,35 @@
+meta {
+  name: RUB evaluar · 422 validacion
+  type: http
+  seq: 276
+}
+
+put {
+  url: {{baseUrl}}/rubricas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([{ id_operacion: uuid(), id_alumno: Number(bru.getVar('idAlumnoInt')) }]);
+}
+
+tests {
+  test("422 validacion", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('mes');
+  });
+}

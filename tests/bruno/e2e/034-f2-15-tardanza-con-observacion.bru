@@ -1,0 +1,48 @@
+meta {
+  name: F2-15 Tardanza con observación
+  type: http
+  seq: 34
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opTardanza', uuid());
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: bru.getVar('fechaClase'),
+    registros: [{ id_operacion: bru.getVar('opTardanza'), id_alumno: Number(bru.getVar('idAlumnoA')), estado: 'tardanza', observacion: 'Llegó tarde por el transporte' }],
+  });
+}
+
+script:post-response {
+  bru.setVar('resultadoTardanza', JSON.stringify(res.body.resultados));
+}
+
+tests {
+  test("aceptada", function () {
+    expect(res.status).to.equal(200);
+    const r = res.body.resultados[0];
+    expect(r.estado).to.equal('aceptada');
+    expect(r.registro.estado).to.equal('tardanza');
+    expect(r.registro.observacion).to.equal('Llegó tarde por el transporte');
+  });
+}

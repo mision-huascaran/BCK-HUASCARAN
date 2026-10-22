@@ -1,0 +1,26 @@
+meta {
+  name: RUB rúbricas de un mes futuro
+  type: http
+  seq: 270
+}
+
+get {
+  url: {{baseUrl}}/rubricas?id_colegio={{idColegioDoc}}&id_programa={{idPrograma1}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&id_anio_escolar={{idAnio}}&mes={{mesFuturo}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  bru.setVar('mesFuturo', Math.min(12, Number(bru.getVar('mesHoy')) + 1));
+}
+
+tests {
+  test("422 mes_futuro", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('mes_futuro');
+  });
+}

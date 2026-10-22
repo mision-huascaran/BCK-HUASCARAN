@@ -1,0 +1,44 @@
+meta {
+  name: PER otorgar · válido
+  type: http
+  seq: 135
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_anio_escolar": {{idAnio}},
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_periodo_academico": {{idPeriodoVencido}},
+    "modulo": "lectura",
+    "desde_ahora": true,
+    "fin": "{{finPermiso}}",
+    "motivo": "Faltó registrar la lectura (prueba Bruno)."
+  }
+}
+
+script:pre-request {
+  bru.setVar('finPermiso', new Date(Date.now() + 2 * 3600e3).toISOString());
+}
+
+script:post-response {
+  bru.setVar('idPermiso', res.body.id);
+}
+
+tests {
+  test("201 vigente desde ahora", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.estado).to.equal('vigente');
+    expect(res.body.modulo).to.equal('lectura');
+  });
+}

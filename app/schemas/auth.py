@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
 
 from app.core.correo import CorreoNormalizado
 from app.schemas.actividad import ActividadItem
@@ -70,8 +70,19 @@ class MeResponse(BaseModel):
 # ── Cierre diferido de una sesión anterior (CU008) ──────────────────────────────────
 
 class CerrarSesionRequest(BaseModel):
+    """`fin` o `fin_minimo`, nunca los dos."""
+
     # Hora real (con zona) en que el usuario pulsó "Cerrar sesión" sin conexión.
-    fin: AwareDatetime
+    fin: Optional[AwareDatetime] = None
+    # Sin continuidad del reloj: la última hora verificada (latido). El cierre queda en
+    # max(fin_minimo, última petición recibida), sin pasar del vencimiento, y no verificado.
+    fin_minimo: Optional[AwareDatetime] = None
+
+    @model_validator(mode="after")
+    def _uno_de_los_dos(self) -> "CerrarSesionRequest":
+        if (self.fin is None) == (self.fin_minimo is None):
+            raise ValueError("Indica la hora de cierre (fin) o la mínima (fin_minimo), pero no ambas.")
+        return self
 
 
 class SesionCerrada(BaseModel):
@@ -80,6 +91,8 @@ class SesionCerrada(BaseModel):
     expira: datetime
     fin: datetime
     tipo_cierre: TipoCierreSesion
+    # False si `fin` se estimó a partir de `fin_minimo`.
+    fin_verificado: bool
 
 
 class CierreSesionResponse(BaseModel):

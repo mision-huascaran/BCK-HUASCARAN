@@ -1,0 +1,25 @@
+meta {
+  name: ALU editar · válido
+  type: http
+  seq: 188
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "Alumno Bruno Editado"
+  }
+}
+
+tests {
+  test("200", function () { expect(res.body.nombres).to.equal("Alumno Bruno Editado"); });
+}

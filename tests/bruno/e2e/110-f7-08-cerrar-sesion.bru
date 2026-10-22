@@ -1,0 +1,19 @@
+meta {
+  name: F7-08 Cerrar sesión
+  type: http
+  seq: 110
+}
+
+post {
+  url: {{baseUrl}}/logout
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+tests {
+  test("204", function () { expect(res.status).to.equal(204); });
+}

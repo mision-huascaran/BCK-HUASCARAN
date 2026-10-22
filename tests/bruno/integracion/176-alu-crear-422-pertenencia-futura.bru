@@ -1,0 +1,39 @@
+meta {
+  name: ALU crear · 422 pertenencia futura
+  type: http
+  seq: 176
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "X",
+    "apellidos": "Y",
+    "id_colegio": {{idColegioDoc}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{manana}}"
+  }
+}
+
+script:pre-request {
+  bru.setVar('manana', new Date(Date.now() - 5 * 3600e3 + 86400e3).toISOString().slice(0, 10));
+}
+
+tests {
+  test("422 pertenencia futura", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('pertenece_desde');
+  });
+}

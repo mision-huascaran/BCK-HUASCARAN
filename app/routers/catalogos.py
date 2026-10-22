@@ -5,24 +5,27 @@ Sin paginación: son listas cortas y estables.
 from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends
-from sqlmodel import Session, col, select
+from fastapi import APIRouter, Depends, Query
+from sqlmodel import Session, select
 
 from app.core.database import get_db
 from app.core.tiempo import hoy_lima
-from app.dependencies import get_current_user
-from app.models.evaluacion import NivelGeneral, NivelRazkids, NivelRubrica, SemanaReporte
-from app.models.organizacion import AnioEscolar, Grado, PeriodoAcademico, Programa, Usuario
+from app.dependencies import get_current_user, require_role
+from app.models.evaluacion import NivelRazkids, NivelRubrica
+from app.models.organizacion import TIPO_PA, AnioEscolar, Grado, PeriodoAcademico, Programa, Usuario
 from app.schemas.catalogos import (
     AnioEscolarResponse,
     GradoResponse,
-    NivelGeneralResponse,
     NivelRazkidsResponse,
     NivelRubricaResponse,
     PeriodoAcademicoResponse,
     ProgramaResponse,
     SemanaResponse,
 )
+from app.services import lectura_service
+from app.services.calendario import PeriodoCalendario, cargar_calendarios
+from app.services.programacion import FiltroGrupos
+from app.services.usuario_service import DOCENTE, SUPERVISOR
 
 router = APIRouter(tags=["catalogos"])
 
@@ -62,8 +65,22 @@ def listar_anios_escolares(db: Db, _: Autenticado):
     ]
 
 
+def _periodo_academico(p: PeriodoAcademico, pa: Optional[PeriodoCalendario], hoy: date) -> PeriodoAcademicoResponse:
+    return PeriodoAcademicoResponse(
+        id=p.id_periodo_academico, id_anio_escolar=p.id_anio_escolar, numero=p.numero, tipo=TIPO_PA,
+        fecha_inicio=pa.fecha_inicio if pa else None, fecha_fin=pa.fecha_fin if pa else None,
+        vigente=pa is not None and pa.contiene(hoy),
+    )
+
+
 @router.get("/periodos-academicos", response_model=list[PeriodoAcademicoResponse])
-def listar_periodos_academicos(db: Db, _: Autenticado, id_anio_escolar: Optional[int] = None):
+def listar_periodos_academicos(
+    db: Db, _: Autenticado, id_anio_escolar: Optional[int] = None, id_colegio: Optional[int] = None
+):
+    """PA1 a PA4 de cada año con las fechas del calendario general (CU027) o, con
+    `id_colegio`, del calendario que aplica a ese colegio (su particular activo si lo
+    tiene). Fechas null si el año no tiene calendario. Los recesos (PR) y los días no
+    lectivos están en GET /calendarios."""
     hoy = hoy_lima()
     consulta = (
         select(PeriodoAcademico, AnioEscolar.fecha_inicio)
@@ -72,30 +89,31 @@ def listar_periodos_academicos(db: Db, _: Autenticado, id_anio_escolar: Optional
     )
     if id_anio_escolar is not None:
         consulta = consulta.where(PeriodoAcademico.id_anio_escolar == id_anio_escolar)
-    return [
-        PeriodoAcademicoResponse(
-            id=p.id_periodo_academico, id_anio_escolar=p.id_anio_escolar, numero=p.numero,
-            fecha_inicio=p.fecha_inicio, fecha_fin=p.fecha_fin,
-            vigente=_vigente(p.fecha_inicio, p.fecha_fin, hoy),
-        )
-        for p, _ in db.exec(consulta).all()
-    ]
+    calendarios = cargar_calendarios(db, id_anio_escolar, ids_colegio=[] if id_colegio is None else [id_colegio])
+    respuesta = []
+    for p, _ in db.exec(consulta).all():
+        calendario = calendarios.aplicable(id_colegio, p.id_anio_escolar)
+        respuesta.append(_periodo_academico(p, calendario.pa(p.numero) if calendario else None, hoy))
+    return respuesta
 
 
 @router.get("/semanas", response_model=list[SemanaResponse])
-def listar_semanas(db: Db, _: Autenticado, id_periodo_academico: Optional[int] = None):
-    hoy = hoy_lima()
-    # Por fecha y número: la numeración es correlativa dentro de cada año escolar.
-    consulta = select(SemanaReporte).order_by(SemanaReporte.fecha_inicio, SemanaReporte.numero_semana)
-    if id_periodo_academico is not None:
-        consulta = consulta.where(SemanaReporte.id_periodo_academico == id_periodo_academico)
-    return [
-        SemanaResponse(
-            id=s.id_semana, id_periodo_academico=s.id_periodo_academico, numero_semana=s.numero_semana,
-            fecha_inicio=s.fecha_inicio, fecha_fin=s.fecha_fin, cerrada=s.fecha_fin < hoy,
-        )
-        for s in db.exec(consulta).all()
-    ]
+def listar_semanas(
+    db: Db,
+    # Es parte de Seguimiento de Lectura (CU023): el Directivo no tiene acceso.
+    usuario: Annotated[Usuario, Depends(require_role(SUPERVISOR, DOCENTE))],
+    id_anio_escolar: int,
+    mes: Annotated[int, Query(ge=1, le=12)],
+    id_colegio: int,
+    id_grado: int,
+    id_seccion: int,
+):
+    """Semanas (lunes a viernes) del año con alguna clase del grupo (programada o
+    guardada) en ese mes, para elegir la tabla de lectura (CU023). Una semana que cae en
+    dos meses aparece en el mes de su clase. Errores: 403 `sin_permiso` (Directivo), 403
+    `aula_fuera_de_alcance` (Docente), 404 `colegio_no_encontrado` y `anio_no_encontrado`, 422 `seccion_inexistente`."""
+    grupo = FiltroGrupos(id_colegio, id_grado, id_seccion)
+    return lectura_service.semanas_con_clase(db, usuario, grupo, id_anio_escolar, mes)
 
 
 @router.get("/niveles-razkids", response_model=list[NivelRazkidsResponse])
@@ -110,22 +128,14 @@ def listar_niveles_razkids(db: Db, _: Autenticado):
 @router.get("/niveles-rubrica", response_model=list[NivelRubricaResponse])
 def listar_niveles_rubrica(db: Db, _: Autenticado, id_programa: Optional[int] = None):
     consulta = select(NivelRubrica).order_by(
-        NivelRubrica.id_programa, NivelRubrica.dimension, NivelRubrica.orden
+        NivelRubrica.id_programa, NivelRubrica.dimension, NivelRubrica.valor
     )
     if id_programa is not None:
         consulta = consulta.where(NivelRubrica.id_programa == id_programa)
     return [
         NivelRubricaResponse(
             id=n.id_nivel_rubrica, id_programa=n.id_programa, dimension=n.dimension,
-            orden=n.orden, nombre_nivel=n.nombre_nivel,
+            orden=n.orden, valor=n.valor, nombre_nivel=n.nombre_nivel,
         )
         for n in db.exec(consulta).all()
-    ]
-
-
-@router.get("/niveles-generales", response_model=list[NivelGeneralResponse])
-def listar_niveles_generales(db: Db, _: Autenticado):
-    return [
-        NivelGeneralResponse(id=n.id_nivel_general, orden=n.orden, nombre_nivel=n.nombre_nivel)
-        for n in db.exec(select(NivelGeneral).order_by(col(NivelGeneral.orden))).all()
     ]

@@ -1,0 +1,32 @@
+meta {
+  name: CLA reprogramar · Docente sin permiso
+  type: http
+  seq: 204
+}
+
+post {
+  url: {{baseUrl}}/colegios/{{idColegioDoc}}/clases/reprogramaciones
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "fecha_original": "{{fechaFutura}}",
+    "fecha_nueva": "{{fechaReprogramada}}",
+    "motivo": "Actuación del colegio (prueba Bruno)"
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

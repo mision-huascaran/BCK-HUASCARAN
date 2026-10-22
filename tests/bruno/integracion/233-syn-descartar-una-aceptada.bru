@@ -1,0 +1,22 @@
+meta {
+  name: SYN descartar una aceptada
+  type: http
+  seq: 233
+}
+
+post {
+  url: {{baseUrl}}/sincronizacion/operaciones/{{opAsistencia}}/descartar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("409 operacion_no_rechazada", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('operacion_no_rechazada');
+  });
+}

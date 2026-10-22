@@ -1,0 +1,22 @@
+meta {
+  name: CLA clases · rango de fechas invertido
+  type: http
+  seq: 201
+}
+
+get {
+  url: {{baseUrl}}/colegios/{{idColegioDoc}}/clases?desde={{hoy}}&hasta=2020-01-01
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("422 rango_fechas_invalido", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('rango_fechas_invalido');
+  });
+}

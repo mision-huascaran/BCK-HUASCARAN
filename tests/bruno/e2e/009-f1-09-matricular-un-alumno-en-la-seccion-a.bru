@@ -1,0 +1,44 @@
+meta {
+  name: F1-09 Matricular un alumno en la sección A
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "Alumno Bruno",
+    "apellidos": "F1 {{runId}}",
+    "id_colegio": {{idColegioF1}},
+    "id_grado": {{idGrado1}},
+    "id_seccion": {{idSeccionA}},
+    "id_programa": {{idProgramaF1}},
+    "pertenece_desde": "{{hoy}}"
+  }
+}
+
+script:post-response {
+  bru.setVar('idAlumnoF1', res.body.id);
+}
+
+tests {
+  test("201 activo en su colegio, grado y sección", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.activo).to.equal(true);
+    expect(res.body.colegio.id).to.equal(Number(bru.getVar('idColegioF1')));
+    expect(res.body.seccion).to.deep.equal({ id: Number(bru.getVar('idSeccionA')), nombre: 'A' });
+  });
+}
+
+docs {
+  CU014: el Supervisor matricula en cualquier colegio (sin actividad); con varias secciones, la sección es obligatoria.
+}

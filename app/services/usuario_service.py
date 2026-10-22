@@ -220,7 +220,8 @@ def crear_usuario(db: Session, data: UsuarioCrear, actor: Usuario) -> UsuarioCre
     plan = None
     if data.asignacion is not None:
         plan = asignaciones.planificar_asignacion_nueva(
-            db, data.asignacion.id_colegio, data.asignacion.id_anio_escolar, data.asignacion.grados
+            db, data.asignacion.id_colegio, data.asignacion.id_anio_escolar, data.asignacion.grados,
+            inicio_asignacion=data.asignacion.inicio_asignacion,
         )
 
     ahora = ahora_utc()
@@ -328,7 +329,7 @@ def _aplicar_asignacion(
     """Aplica el cambio de asignación y devuelve (antes, después) para la auditoría."""
     plan = asignaciones.planificar_cambio(
         db, usuario.id_docente, cambio.id_colegio, cambio.grados,
-        cambio.id_anio_escolar, cambio.desde_periodo,
+        cambio.id_anio_escolar, cambio.desde_periodo, cambio.inicio_asignacion,
     )
     antes = asignaciones.resumen_actual(db, usuario.id_docente, plan.periodos, plan.anio)
     asignaciones.reemplazar_asignaciones(db, usuario.id_docente, plan, actor.id_usuario, ahora)

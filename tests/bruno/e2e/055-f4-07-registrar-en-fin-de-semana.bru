@@ -1,0 +1,46 @@
+meta {
+  name: F4-07 Registrar en fin de semana
+  type: http
+  seq: 55
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  // El sábado más reciente (hora de Lima). Si cae en receso, el motivo es el del receso.
+  const d = new Date(Date.now() - 5 * 3600e3);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 1) % 7));
+  const sabado = d.toISOString().slice(0, 10);
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: sabado,
+    registros: [{ id_operacion: uuid(), id_alumno: Number(bru.getVar('idAlumnoB')), estado: 'presente' }],
+  });
+}
+
+tests {
+  test("ítem rechazado: fecha_no_lectiva o fecha_en_receso", function () {
+    expect(res.status).to.equal(200);
+    const resultados = res.body.resultados || res.body;
+    expect(resultados[0].estado).to.equal('rechazada');
+    expect(['fecha_no_lectiva', 'fecha_en_receso']).to.include(resultados[0].motivo);
+  });
+}

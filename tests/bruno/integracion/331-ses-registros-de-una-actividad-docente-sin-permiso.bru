@@ -1,0 +1,22 @@
+meta {
+  name: SES registros de una actividad · Docente sin permiso
+  type: http
+  seq: 331
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes/{{idDocente}}/actividades/{{idActividadInt}}/registros?modulo=rubrica
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

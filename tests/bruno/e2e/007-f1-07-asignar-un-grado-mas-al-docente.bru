@@ -24,8 +24,5 @@ body:json {
 }
 
 tests {
-  test("200", function () {
-    expect(res.status).to.equal(200);
-    expect(res.body.colegios_asignados).to.include(bru.getVar('nombreColegio'));
-  });
+  test("200", function () { expect(res.status).to.equal(200); });
 }

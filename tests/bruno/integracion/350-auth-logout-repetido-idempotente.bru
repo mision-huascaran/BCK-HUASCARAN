@@ -1,0 +1,19 @@
+meta {
+  name: AUTH logout repetido · idempotente
+  type: http
+  seq: 350
+}
+
+post {
+  url: {{baseUrl}}/logout
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("204 aunque ya estaba cerrada", function () { expect(res.status).to.equal(204); });
+}

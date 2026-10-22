@@ -1,0 +1,23 @@
+meta {
+  name: SYN descartar una operación rechazada · válido
+  type: http
+  seq: 232
+}
+
+post {
+  url: {{baseUrl}}/sincronizacion/operaciones/{{opRechazada}}/descartar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("descartada", function () { expect(res.status).to.equal(200); expect(res.body.estado).to.equal("descartada"); });
+}
+
+docs {
+  P4 §1: "Descartar" saca la operación rechazada de los errores de la actividad y del docente.
+}

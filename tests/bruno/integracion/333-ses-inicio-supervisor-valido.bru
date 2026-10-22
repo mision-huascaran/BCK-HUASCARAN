@@ -1,0 +1,35 @@
+meta {
+  name: SES inicio Supervisor · válido
+  type: http
+  seq: 333
+}
+
+get {
+  url: {{baseUrl}}/inicio/supervisor
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("forma de los contadores por módulo y de las alertas (los valores dependen de la fecha)", function () {
+    expect(res.status).to.equal(200);
+    const modulos = ['asistencias', 'lectura', 'rubrica', 'registro_vuelo'];
+    expect(Object.keys(res.body.vencidos_por_modulo)).to.have.members(modulos);
+    expect(Object.keys(res.body.incompletos_por_modulo)).to.have.members(modulos);
+    const suma = (o) => modulos.reduce((s, m) => s + o[m], 0);
+    expect(res.body.registros_vencidos).to.equal(suma(res.body.vencidos_por_modulo));
+    expect(res.body.registros_incompletos).to.equal(suma(res.body.incompletos_por_modulo));
+    for (const a of res.body.alertas) {
+      expect(['sincronizacion_olvidada', 'inactividad_operativa', 'incumplimiento_sede']).to.include(a.tipo);
+      expect(a.critica).to.equal(a.tipo === 'incumplimiento_sede');
+    }
+  });
+}
+
+docs {
+  CU011: se valida la forma, no los números (dependen del día real).
+}

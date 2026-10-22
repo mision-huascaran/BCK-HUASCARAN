@@ -1,0 +1,35 @@
+meta {
+  name: LEC registrar filas · válido
+  type: http
+  seq: 252
+}
+
+put {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/filas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([{ id_operacion: uuid(), version: Number(bru.getVar('versionFila')), id_alumno: Number(bru.getVar('idAlumnoInt')), lsn_titulo: 'El zorro', lsn_nota: 4, lsn_maximo: 5, cantidad_lsl: 2 }]);
+}
+
+tests {
+  test("aceptada y completada", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body[0].estado).to.equal('aceptada');
+    expect(res.body[0].registro.total_libros).to.equal(3);
+  });
+}

@@ -1,0 +1,62 @@
+meta {
+  name: F5-11 Sincronizar: capturas de la cola
+  type: http
+  seq: 72
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: bru.getVar('fechaClase'),
+    registros: [
+      { id_operacion: bru.getVar('opA'), realizado_en: bru.getVar('tCaptura'), id_actividad: bru.getVar('idActividadOffline'),
+        id_alumno: Number(bru.getVar('idAlumnoA')), estado: 'tardanza' },
+      { id_operacion: bru.getVar('opB'), realizado_en: bru.getVar('tCaptura'), id_actividad: bru.getVar('idActividadOffline'),
+        id_alumno: Number(bru.getVar('idAlumnoB')), observacion: 'Registrado sin conexión' },
+    ],
+  });
+}
+
+script:post-response {
+  bru.setVar('resultadoSync', JSON.stringify(res.body.resultados));
+}
+
+tests {
+  test("la captura vieja de A no pisa la más reciente de B", function () {
+    expect(res.status).to.equal(200);
+    const a = res.body.resultados[0];
+    expect(a.estado).to.equal('aceptada');
+    expect(a.motivo).to.equal('registro_mas_reciente');
+    expect(a.registro.estado).to.equal('ausente');
+  });
+  test("la observación de B se aplica", function () {
+    const b = res.body.resultados[1];
+    expect(b.estado).to.equal('aceptada');
+    expect(b.motivo).to.equal(null);
+    expect(b.registro.observacion).to.equal('Registrado sin conexión');
+  });
+}
+
+docs {
+  CU022, paso 10: con dos dispositivos prevalece la marca de tiempo más reciente.
+}

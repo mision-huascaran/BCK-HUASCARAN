@@ -1,0 +1,27 @@
+meta {
+  name: CAL periodo en una fecha · válido
+  type: http
+  seq: 78
+}
+
+get {
+  url: {{baseUrl}}/calendarios/periodo?id_colegio={{idColegioInt}}&fecha={{hoy}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+script:post-response {
+  bru.setVar('idPeriodoActual', res.body.id_periodo_academico);
+}
+
+tests {
+  test("periodo y si la fecha es lectiva", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.fecha).to.equal(bru.getVar('hoy'));
+    expect(res.body.es_lectivo).to.be.a('boolean');
+  });
+}

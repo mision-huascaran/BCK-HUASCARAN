@@ -1,0 +1,22 @@
+meta {
+  name: CAL calendario · Docente de un colegio ajeno
+  type: http
+  seq: 75
+}
+
+get {
+  url: {{baseUrl}}/calendarios?id_colegio={{idColegioInt}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 colegio_fuera_de_alcance", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('colegio_fuera_de_alcance');
+  });
+}

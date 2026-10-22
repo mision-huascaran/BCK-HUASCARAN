@@ -1,0 +1,18 @@
+meta {
+  name: CAL periodo en una fecha · sin token
+  type: http
+  seq: 79
+}
+
+get {
+  url: {{baseUrl}}/calendarios/periodo?id_colegio={{idColegioInt}}&fecha={{hoy}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

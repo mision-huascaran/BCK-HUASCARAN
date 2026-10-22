@@ -82,10 +82,15 @@ def cerrar_otra_sesion(
 
     Errores 422: `id_sesion_invalido` (inexistente o de otro usuario), `sesion_actual`
     (es la del token: usar POST /logout), `fin_invalido` (fuera de la sesión o en el
-    futuro), `validacion` (`fin` ausente o sin zona horaria).
+    futuro), `validacion` (`fin` y `fin_minimo` ausentes o los dos a la vez, o sin zona
+    horaria).
+
+    Con `fin_minimo` (sin continuidad del reloj) el cierre queda en max(fin_minimo,
+    última petición recibida de esa sesión), sin pasar de su vencimiento, con
+    `fin_verificado: false`.
     """
     sesion, actividad = cerrar_sesion_anterior(
-        db, actual.usuario.id_usuario, actual.sesion.id_sesion, id_sesion, data.fin
+        db, actual.usuario.id_usuario, actual.sesion.id_sesion, id_sesion, data.fin, data.fin_minimo
     )
     return CierreSesionResponse(
         sesion=SesionCerrada(
@@ -94,6 +99,7 @@ def cerrar_otra_sesion(
             expira=sesion.expira,
             fin=sesion.fin,
             tipo_cierre=sesion.tipo_cierre,
+            fin_verificado=sesion.fin_verificado,
         ),
         actividad=a_item(actividad) if actividad is not None else None,
     )

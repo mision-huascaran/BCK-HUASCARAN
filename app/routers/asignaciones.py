@@ -31,7 +31,5 @@ def listar_asignaciones(
 
 @router.get("/me/asignaciones", response_model=list[MiAsignacion])
 def mis_asignaciones(db: Db, docente: Annotated[Usuario, Depends(require_role("Docente"))]):
-    """Colegios y grados que el Docente tiene a cargo en el periodo vigente."""
-    if docente.id_docente is None:
-        return []
-    return asignacion_service.mis_asignaciones(db, docente.id_docente)
+    """Colegios y grados que el Docente tiene a cargo hoy (asignaciones habilitadas)."""
+    return asignacion_service.mis_asignaciones(db, docente)

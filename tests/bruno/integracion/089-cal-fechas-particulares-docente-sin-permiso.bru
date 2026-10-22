@@ -1,0 +1,30 @@
+meta {
+  name: CAL fechas particulares · Docente sin permiso
+  type: http
+  seq: 89
+}
+
+post {
+  url: {{baseUrl}}/calendarios/particulares
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_colegio": {{idColegioInt}},
+    "id_anio_escolar": {{idAnio}},
+    "periodos": {{periodosGeneral}}
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

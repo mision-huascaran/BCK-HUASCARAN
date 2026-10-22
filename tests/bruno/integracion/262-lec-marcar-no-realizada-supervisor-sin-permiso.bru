@@ -1,0 +1,38 @@
+meta {
+  name: LEC marcar no realizada · Supervisor sin permiso
+  type: http
+  seq: 262
+}
+
+post {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/no-realizada
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opNr}}",
+    "version": {{versionTabla}},
+    "motivo": "Paro de transportistas"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opNr', uuid());
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

@@ -1,0 +1,35 @@
+meta {
+  name: ALU crear · 422 sección de otro grado
+  type: http
+  seq: 177
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "X",
+    "apellidos": "Y",
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_seccion": {{idSeccion}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("422 sección de otro grado", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('id_seccion');
+  });
+}

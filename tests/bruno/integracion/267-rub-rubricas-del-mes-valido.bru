@@ -1,0 +1,35 @@
+meta {
+  name: RUB rúbricas del mes · válido
+  type: http
+  seq: 267
+}
+
+get {
+  url: {{baseUrl}}/rubricas?id_colegio={{idColegioDoc}}&id_programa={{idPrograma1}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&id_anio_escolar={{idAnio}}&mes={{mesHoy}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  bru.setVar('mesHoy', Number(bru.getVar('hoy').slice(5, 7)));
+}
+
+tests {
+  test("el alumno pendiente de evaluar, editable", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.escritura.permitida).to.equal(true);
+    const it = res.body.items.find((x) => x.id_alumno === Number(bru.getVar('idAlumnoInt')));
+    expect(it.estado).to.equal('pendiente');
+  });
+}
+
+docs {
+  # Rúbrica mensual (CU029, CU030)
+
+  Una evaluación por alumno y mes, con Fluidez y Comprensión en códigos 0–4. Resultado en
+  décimas = 4·F + 6·C. Reglas R1/R2 provisionales (aún sin definir por análisis).
+}

@@ -1,0 +1,48 @@
+meta {
+  name: F6-13 Crear la tabla del otro subprograma
+  type: http
+  seq: 93
+}
+
+post {
+  url: {{baseUrl}}/lectura/tablas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opTabla}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_programa": {{idPrograma2}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_anio_escolar": {{idAnio}},
+    "mes": {{mesClase}},
+    "id_semana": {{idSemana}}
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opTabla', uuid());
+}
+
+script:post-response {
+  bru.setVar('idTabla2', res.body.id);
+  bru.setVar('versionTabla2', res.body.version);
+}
+
+tests {
+  test("201 con C", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.filas.map((f) => f.id_alumno)).to.include(Number(bru.getVar('idAlumnoC')));
+  });
+}

@@ -1,0 +1,19 @@
+meta {
+  name: COL inactivar de nuevo
+  type: http
+  seq: 346
+}
+
+patch {
+  url: {{baseUrl}}/colegios/{{idColegioInt}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("activo = false", function () { expect(res.status).to.equal(200); expect(res.body.activo).to.equal(false); });
+}

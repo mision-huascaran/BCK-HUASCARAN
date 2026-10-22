@@ -1,0 +1,26 @@
+meta {
+  name: CAL volver al general · ya lo usa
+  type: http
+  seq: 97
+}
+
+post {
+  url: {{baseUrl}}/calendarios/{{idCalendarioPart}}/usar-general
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("409 calendario_inactivo", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('calendario_inactivo');
+  });
+}

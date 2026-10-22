@@ -1,0 +1,27 @@
+meta {
+  name: COL estado del calendario · válido
+  type: http
+  seq: 48
+}
+
+get {
+  url: {{baseUrl}}/colegios/estado-calendario?id_anio_escolar={{idAnio}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("cada colegio activo con su periodo de hoy", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.length).to.be.greaterThan(0);
+    for (const x of res.body) if (x.estado_calendario) expect(['PA', 'PR']).to.include(x.estado_calendario.tipo);
+  });
+}
+
+docs {
+  CU016: bloque Retroactivo/Próximo cuando el colegio está en receso.
+}

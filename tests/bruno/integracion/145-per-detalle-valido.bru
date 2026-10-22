@@ -1,0 +1,19 @@
+meta {
+  name: PER detalle · válido
+  type: http
+  seq: 145
+}
+
+get {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos/{{idPermiso}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("con quién lo otorgó", function () { expect(res.status).to.equal(200); expect(res.body.otorgado_por.id).to.be.a("number"); });
+}

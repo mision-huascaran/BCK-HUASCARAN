@@ -1,0 +1,22 @@
+meta {
+  name: RUB criterios · Directivo sin permiso
+  type: http
+  seq: 279
+}
+
+get {
+  url: {{baseUrl}}/rubricas/criterios?id_programa={{idPrograma1}}&id_ciclo=1
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

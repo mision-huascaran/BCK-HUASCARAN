@@ -1,0 +1,26 @@
+meta {
+  name: F6-17 Resumen del alumno B
+  type: http
+  seq: 97
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoB}}/resumen
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("suma los libros de sus tablas realizadas", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.libros_leidos_anio).to.equal(3);
+  });
+}
+
+docs {
+  CU015: libros leídos del año = suma del total de libros de sus filas en tablas realizadas.
+}

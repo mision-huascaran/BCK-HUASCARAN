@@ -1,0 +1,37 @@
+meta {
+  name: USR crear · aula ya asignada a otro docente
+  type: http
+  seq: 111
+}
+
+post {
+  url: {{baseUrl}}/usuarios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombres": "Docente Bruno",
+    "apellidos": "Aula ocupada",
+    "dni": "{{dniUsr2}}",
+    "correo": "{{correoUsr2}}",
+    "id_rol": {{idRolDocente}},
+    "asignacion": { "id_colegio": {{idColegioInt}}, "id_anio_escolar": {{idAnio}}, "grados": [{{idGrado1}}] }
+  }
+}
+
+tests {
+  test("409 grado_asignado", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('grado_asignado');
+  });
+}
+
+docs {
+  CU016: el colegio y grado ya tienen un Docente asignado en el PA.
+}

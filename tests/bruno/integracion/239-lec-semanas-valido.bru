@@ -1,0 +1,35 @@
+meta {
+  name: LEC semanas · válido
+  type: http
+  seq: 239
+}
+
+get {
+  url: {{baseUrl}}/semanas?id_anio_escolar={{idAnio}}&mes={{mesClase}}&id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  bru.setVar('mesClase', Number(bru.getVar('fechaClase').slice(5, 7)));
+}
+
+script:post-response {
+  const f = bru.getVar('fechaClase');
+  bru.setVar('idSemana', (res.body.find((s) => s.fecha_inicio <= f && f <= s.fecha_fin) || {}).id_semana);
+}
+
+tests {
+  test("incluye la semana de la clase", function () { expect(res.status).to.equal(200); expect(bru.getVar("idSemana")).to.be.a("number"); });
+}
+
+docs {
+  # Seguimiento de Lectura (CU023 a CU026)
+
+  Una tabla por grupo, subprograma y semana, atada a una clase de referencia. Escribe el
+  Docente con actividad y habilitación; el Supervisor lee; el Directivo no tiene acceso.
+}

@@ -122,7 +122,8 @@ class ActividadDetalle(BaseModel):
     sincronizacion: EstadoSincronizacionActividad
     # Última vez que el servidor recibió datos de la actividad.
     sincronizado_en: datetime
-    registros_pendientes: int
+    # Pendientes que el servidor conoce; null si no puede determinarlos (nunca 0 en su lugar).
+    registros_pendientes: Optional[int] = None
     cambios: int
     cambios_por_modulo: list[CambiosModulo]
     asignaciones: list[AsignacionInvolucrada]

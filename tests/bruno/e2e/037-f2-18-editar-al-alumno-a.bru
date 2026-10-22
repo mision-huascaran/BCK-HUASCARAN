@@ -1,0 +1,32 @@
+meta {
+  name: F2-18 Editar al alumno A
+  type: http
+  seq: 37
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoA}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "apellidos": "Bruno {{runId}} editado"
+  }
+}
+
+tests {
+  test("200 con el apellido nuevo", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.apellidos).to.equal('Bruno ' + bru.getVar('runId') + ' editado');
+  });
+}
+
+docs {
+  Corregir nombres o apellidos no pide fecha ni toca la pertenencia.
+}

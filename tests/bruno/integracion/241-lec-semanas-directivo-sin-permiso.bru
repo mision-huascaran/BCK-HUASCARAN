@@ -1,0 +1,22 @@
+meta {
+  name: LEC semanas · Directivo sin permiso
+  type: http
+  seq: 241
+}
+
+get {
+  url: {{baseUrl}}/semanas?id_anio_escolar={{idAnio}}&mes={{mesClase}}&id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

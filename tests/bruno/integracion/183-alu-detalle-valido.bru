@@ -1,0 +1,19 @@
+meta {
+  name: ALU detalle · válido
+  type: http
+  seq: 183
+}
+
+get {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("pertenece desde el inicio del PA", function () { expect(res.status).to.equal(200); expect(res.body.pertenece_desde).to.equal(bru.getVar("inicioPA")); });
+}

@@ -1,0 +1,35 @@
+meta {
+  name: PER otorgar · superpuesto
+  type: http
+  seq: 136
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_anio_escolar": {{idAnio}},
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_periodo_academico": {{idPeriodoVencido}},
+    "modulo": "lectura",
+    "desde_ahora": true,
+    "fin": "{{finPermiso}}",
+    "motivo": "Faltó registrar la lectura (prueba Bruno)."
+  }
+}
+
+tests {
+  test("409 permiso_superpuesto", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('permiso_superpuesto');
+  });
+}

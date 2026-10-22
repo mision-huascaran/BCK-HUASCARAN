@@ -1,0 +1,22 @@
+meta {
+  name: ALU listar · filtro por sección
+  type: http
+  seq: 179
+}
+
+get {
+  url: {{baseUrl}}/alumnos?id_seccion={{idSeccion}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("solo el alumno de la sección de la corrida", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.items.map((a) => a.id)).to.deep.equal([Number(bru.getVar('idAlumnoInt'))]);
+  });
+}

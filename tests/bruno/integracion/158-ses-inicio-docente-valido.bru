@@ -1,0 +1,44 @@
+meta {
+  name: SES inicio Docente · válido
+  type: http
+  seq: 158
+}
+
+get {
+  url: {{baseUrl}}/inicio/docente
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  // Una actividad que quedó abierta por una corrida anterior interrumpida impediría
+  // iniciar otra (una sola en curso por docente): se finaliza antes de empezar.
+  const base = bru.getEnvVar('baseUrl');
+  const headers = { Authorization: 'Bearer ' + bru.getVar('tokenDocente') };
+  const inicio = await bru.sendRequest({ method: 'GET', url: base + '/inicio/docente', headers });
+  const abierta = inicio.data.actividad_activa;
+  if (abierta) {
+    await bru.sendRequest({ method: 'POST', url: `${base}/actividades/${abierta.id}/finalizar`, headers, data: {} });
+    console.log('Se finalizó una actividad que había quedado abierta: ' + abierta.id);
+  }
+}
+
+tests {
+  test("puede iniciar una actividad", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.puede_iniciar_actividad).to.equal(true);
+    expect(res.body.motivo_no_puede_iniciar).to.equal(null);
+    expect(res.body.registros_offline_pendientes).to.be.a('number');
+  });
+}
+
+docs {
+  # Sesiones de trabajo (CU009, CU010, CU017 a CU021)
+
+  Lo que los CU llaman "sesión" de trabajo es una actividad: solo el Docente la inicia y la
+  finaliza; el Supervisor la consulta en Seguimiento.
+}

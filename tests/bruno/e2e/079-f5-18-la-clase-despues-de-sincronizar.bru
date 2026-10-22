@@ -1,0 +1,25 @@
+meta {
+  name: F5-18 La clase después de sincronizar
+  type: http
+  seq: 79
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+tests {
+  test("A queda ausente y B presente con la observación", function () {
+    expect(res.status).to.equal(200);
+    const fila = (v) => res.body.alumnos.find((x) => x.id_alumno === Number(bru.getVar(v)));
+    expect(fila('idAlumnoA').estado).to.equal('ausente');
+    expect(fila('idAlumnoB').estado).to.equal('presente');
+    expect(fila('idAlumnoB').observacion).to.equal('Registrado sin conexión');
+  });
+}

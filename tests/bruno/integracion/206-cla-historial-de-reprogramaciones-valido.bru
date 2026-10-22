@@ -1,0 +1,24 @@
+meta {
+  name: CLA historial de reprogramaciones · válido
+  type: http
+  seq: 206
+}
+
+get {
+  url: {{baseUrl}}/clases/{{idClaseReprogramada}}/reprogramaciones
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("registra la fecha anterior, la nueva y quién la cambió", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body[0].fecha_anterior).to.equal(bru.getVar('fechaFutura'));
+    expect(res.body[0].fecha_nueva).to.equal(bru.getVar('fechaReprogramada'));
+    expect(res.body[0].usuario.id).to.be.a('number');
+  });
+}

@@ -1,56 +1,78 @@
 """Asistencia por clase de los alumnos (CU022).
 
-Una clase es fecha + colegio + grado + subprograma. Una fila de `asistencia` es lo
-registrado para un alumno en una clase; sin fila (o con `estado` null), el alumno aún no
-está marcado.
+La clase es colegio × grado × sección en una fecha; el subprograma es del alumno (el
+filtro de subprograma es solo visual: cada alumno trae su `id_programa`). Una fila de
+`asistencia` es lo registrado para un alumno de la lista de la clase; sin fila (o con
+`estado` null), el alumno aún no está marcado.
 """
 from datetime import date
 from typing import Literal, Optional
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.clase import TipoClase
 from app.schemas.comun import ParcheSinNulos
+from app.schemas.sincronizacion import ItemOperacion, ResultadoOperacion
 
 EstadoAsistencia = Literal["presente", "tardanza", "ausente"]
+EtiquetaClase = Literal["Clase programada", "Clase reprogramada", "Clase adicional"]
 
 
-# ── Consulta de la clase ────────────────────────────────────────────────────────────
+class ClaseAsistencia(BaseModel):
+    # null si la clase todavía no tiene fila.
+    id_clase: Optional[int] = None
+    # null si no hay clase en la fecha.
+    tipo: Optional[TipoClase] = None
+    etiqueta: Optional[EtiquetaClase] = None
+    fecha_original: date
+    fecha: date
+    aviso: Optional[str] = None
+
 
 class AlumnoAsistencia(BaseModel):
     id_alumno: int
-    nombres: str
-    apellidos: str
-    # False: hoy inactivo, pero con registro en la clase consultada.
-    activo: bool
-    # False: tiene registro en esta clase, pero hoy pertenece a otra aula (colegio, grado o
-    # subprograma distintos); el registro sigue siendo de esta clase.
-    en_aula: bool
+    nombre: str
+    # Subprograma del alumno en la fecha de la clase.
+    id_programa: int
+    # Hoy inactivo, pero en la lista de la clase.
+    inactivo: bool
     # null: aún sin marcar.
     estado: Optional[EstadoAsistencia] = None
     observacion: Optional[str] = None
+    # null si todavía no tiene fila.
+    version: Optional[int] = None
+
+
+class Escritura(BaseModel):
+    permitida: bool
+    # Por qué no (null si se permite).
+    motivo: Optional[str] = None
+    # El permiso de corrección con que se escribiría (CU028).
+    id_permiso: Optional[int] = None
+    aviso_permiso: Optional[str] = None
 
 
 class AsistenciaClase(BaseModel):
-    fecha: date
-    # El usuario es Docente y la fecha es un día lectivo del periodo vigente.
-    editable: bool
-    # Los que tienen registro en la clase, más los activos del aula aún sin registro esa
-    # fecha; por apellidos y nombres.
+    clase: ClaseAsistencia
+    # La lista congelada de la clase si ya existe; si no, los alumnos que pertenecían
+    # al grupo en la fecha. Por apellidos y nombres.
     alumnos: list[AlumnoAsistencia]
+    escritura: Escritura
 
 
 # ── Registro ────────────────────────────────────────────────────────────────────────
 
-class RegistroAsistencia(ParcheSinNulos):
+class RegistroAsistencia(ItemOperacion, ParcheSinNulos):
     """Lo que cambia de un alumno: el clic manda `estado`; el modal, `observacion`. Un
     campo omitido no se cambia; `observacion` vacía o null la borra. `estado` no admite
-    null (no se "desmarca")."""
+    null (no se "desmarca"). Una observación sin estado se acepta, pero no completa la
+    fila."""
 
-    CAMPOS_NULABLES = frozenset({"observacion"})
+    CAMPOS_NULABLES = frozenset({"observacion", "version", "realizado_en", "id_actividad"})
 
     id_alumno: int
     estado: Optional[EstadoAsistencia] = None
-    observacion: Optional[str] = None
+    observacion: Optional[str] = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
     def _algo_que_cambiar(self) -> "RegistroAsistencia":
@@ -62,24 +84,25 @@ class RegistroAsistencia(ParcheSinNulos):
 
 
 class AsistenciaGuardar(BaseModel):
-    """Un registro (clic o modal) o varios ("Marcar todos como presentes")."""
+    """`id_clase`, o la clave de la clase (`id_colegio`, `id_grado`, `id_seccion`,
+    `fecha`). `adicional: true` registra una clase adicional si ese día no hay clase."""
 
-    fecha: date
-    registros: list[RegistroAsistencia] = Field(min_length=1)
-    # Momento real de la captura (modo sin conexión); por defecto, ahora. Con dos
-    # dispositivos, gana el más reciente.
-    fecha_registro: Optional[AwareDatetime] = None
+    id_clase: Optional[int] = None
+    id_colegio: Optional[int] = None
+    id_grado: Optional[int] = None
+    id_seccion: Optional[int] = None
+    fecha: Optional[date] = None
+    adicional: bool = False
+    registros: list[RegistroAsistencia] = Field(min_length=1, max_length=200)
 
-
-class RegistroGuardado(BaseModel):
-    id_alumno: int
-    # False: ya había un registro capturado después (otro dispositivo); no se aplicó y
-    # `estado` y `observacion` son los vigentes.
-    aplicado: bool
-    estado: Optional[EstadoAsistencia] = None
-    observacion: Optional[str] = None
+    @model_validator(mode="after")
+    def _clase_identificada(self) -> "AsistenciaGuardar":
+        clave = (self.id_colegio, self.id_grado, self.id_seccion, self.fecha)
+        if self.id_clase is None and any(v is None for v in clave):
+            raise ValueError("Indica id_clase o id_colegio, id_grado, id_seccion y fecha.")
+        return self
 
 
 class AsistenciaGuardada(BaseModel):
-    fecha: date
-    registros: list[RegistroGuardado]
+    clase: ClaseAsistencia
+    resultados: list[ResultadoOperacion]

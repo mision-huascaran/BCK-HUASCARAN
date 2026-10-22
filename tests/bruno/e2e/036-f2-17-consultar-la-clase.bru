@@ -1,0 +1,27 @@
+meta {
+  name: F2-17 Consultar la clase
+  type: http
+  seq: 36
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("refleja la tardanza con su observación y los presentes", function () {
+    expect(res.status).to.equal(200);
+    const fila = (v) => res.body.alumnos.find((x) => x.id_alumno === Number(bru.getVar(v)));
+    expect(fila('idAlumnoA').estado).to.equal('tardanza');
+    expect(fila('idAlumnoA').observacion).to.equal('Llegó tarde por el transporte');
+    expect(fila('idAlumnoB').estado).to.equal('presente');
+    expect(fila('idAlumnoC').estado).to.equal('presente');
+    expect(res.body.clase.id_clase).to.be.a('number');
+  });
+}

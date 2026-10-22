@@ -24,10 +24,11 @@ from app.models.organizacion import (
     Grado,
     PeriodoAcademico,
     Rol,
+    Seccion,
     Usuario,
 )
 from app.models.seguridad import ControlAccesoCorreo
-from tests.conftest import asignar, crear_colegio
+from tests.conftest import asignar, crear_calendario, crear_colegio
 from tests.test_cli import datos_supervisor
 
 CONTRASENAS = {
@@ -53,11 +54,10 @@ def base(db):
                        fecha_fin=hoy + timedelta(days=150), **auditoria)
     db.add(anio)
     db.flush()
-    rangos = [(-180, -120), (-110, -40), (-30, 30), (31, 120)]
-    for numero, (desde, hasta) in enumerate(rangos, start=1):
-        db.add(PeriodoAcademico(id_anio_escolar=anio.id_anio_escolar, numero=numero,
-                                fecha_inicio=hoy + timedelta(days=desde), fecha_fin=hoy + timedelta(days=hasta),
-                                **auditoria))
+    dias = {"PA1": (-180, -120), "PR1": (-119, -111), "PA2": (-110, -40), "PR2": (-39, -31),
+            "PA3": (-30, 30), "PR3": (31, 31), "PA4": (32, 120), "PR4": (121, 150)}
+    rangos = {nombre: (hoy + timedelta(days=d), hoy + timedelta(days=h)) for nombre, (d, h) in dias.items()}
+    crear_calendario(db, anio.id_anio_escolar, rangos, id_original)
     db.commit()
     return id_original
 
@@ -127,9 +127,11 @@ def test_colegio_y_cuentas_con_los_datos_pedidos(db, base):
     sembrar_e2e(db, VARIABLES)
 
     colegio = colegio_e2e(db)
-    assert (colegio.departamento, colegio.provincia, colegio.nivel_educativo, colegio.seccion, colegio.activo) == (
-        "Áncash", "Huaraz", "Primaria", "Única", True
+    assert (colegio.departamento, colegio.provincia, colegio.nivel_educativo, colegio.activo) == (
+        "Áncash", "Huaraz", "Primaria", True
     )
+    secciones = db.exec(select(Seccion.nombre).where(Seccion.id_colegio == colegio.id_colegio)).all()
+    assert secciones == ["Única"] * 6
     oferta = db.exec(select(Grado.nombre).join(ColegioGrado, ColegioGrado.id_grado == Grado.id_grado)
                      .where(ColegioGrado.id_colegio == colegio.id_colegio)).all()
     assert sorted(oferta) == ["1.º", "2.º", "3.º", "4.º", "5.º", "6.º"]

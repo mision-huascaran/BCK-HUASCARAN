@@ -1,0 +1,23 @@
+meta {
+  name: LEC semanas · 422 validacion
+  type: http
+  seq: 242
+}
+
+get {
+  url: {{baseUrl}}/semanas?id_anio_escolar={{idAnio}}&mes={{mesClase}}&id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("422 validacion", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('id_seccion');
+  });
+}

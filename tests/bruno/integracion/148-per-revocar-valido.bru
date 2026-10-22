@@ -1,0 +1,25 @@
+meta {
+  name: PER revocar · válido
+  type: http
+  seq: 148
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos/{{idPermiso}}/revocar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "motivo": "Fin de la prueba Bruno"
+  }
+}
+
+tests {
+  test("revocado", function () { expect(res.status).to.equal(200); expect(res.body.estado).to.equal("revocado"); });
+}

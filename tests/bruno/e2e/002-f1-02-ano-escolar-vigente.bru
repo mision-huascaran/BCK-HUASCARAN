@@ -14,11 +14,13 @@ auth:bearer {
   token: {{tokenSupervisor}}
 }
 
+script:pre-request {
+  const hoyLima = () => new Date(Date.now() - 5 * 3600e3).toISOString().slice(0, 10);
+  bru.setVar('hoy', hoyLima());
+}
+
 script:post-response {
-  const anio = res.body.find((a) => a.vigente) || res.body[res.body.length - 1];
-  bru.setVar('idAnio', anio.id);
-  // Identificador de la corrida: hace únicos el nombre del colegio, el DNI y el correo.
-  bru.setVar('runId', String(Date.now()));
+  bru.setVar('idAnio', (res.body.find((a) => a.vigente) || res.body[res.body.length - 1]).id);
 }
 
 tests {
