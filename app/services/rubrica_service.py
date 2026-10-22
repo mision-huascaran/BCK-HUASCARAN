@@ -174,9 +174,11 @@ def _pertenece(db: Session, id_alumno: int, grupo: GrupoMes, mes: MesEvaluado) -
     return regla_grupo_del_mes(_intervalos(db, [id_alumno], mes)[id_alumno], mes.dias_lectivos) == grupo.clave_grupo
 
 
-def ciclo_de(db: Session, programa: Programa, id_grado: int) -> str:
+def ciclo_de(db: Session, programa: Programa, id_grado: int) -> CicloEbr:
+    """El ciclo del grupo en el catálogo: en Alfabetización no es el del grado (III)."""
     grado = db.get(Grado, id_grado)
-    return calcular_ciclo(programa.nombre, db.get(CicloEbr, grado.id_ciclo).nombre)
+    nombre = calcular_ciclo(programa.nombre, db.get(CicloEbr, grado.id_ciclo).nombre)
+    return db.exec(select(CicloEbr).where(CicloEbr.nombre == nombre)).one()
 
 
 # ── Valores y estado ────────────────────────────────────────────────────────────────
@@ -234,8 +236,9 @@ def listar(db: Session, usuario: Usuario, grupo: GrupoMes, page: int) -> Rubrica
     valores = _valores(db)
     base = pagina([_item(a, filas.get(a.id_alumno), valores) for a in en_pagina], len(alumnos), page)
     destino = Destino(MODULO, grupo.id_colegio, grupo.id_grado, mes.periodo)
+    ciclo = ciclo_de(db, programa, grupo.id_grado)
     return RubricasDelMes(
-        **base.model_dump(), ciclo=ciclo_de(db, programa, grupo.id_grado),
+        **base.model_dump(), ciclo=ciclo.nombre, id_ciclo=ciclo.id_ciclo,
         id_periodo_academico=mes.periodo.id_periodo_academico,
         escritura=escritura(db, usuario, destino, MENSAJES_ESCRITURA),
         detail=None if alumnos else MENSAJE_SIN_ALUMNOS,

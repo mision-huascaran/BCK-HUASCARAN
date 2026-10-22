@@ -315,6 +315,16 @@ def test_criterios_por_programa_y_ciclo(client, db, entorno, cabeceras):
     assert (motivo(sin_programa), motivo(sin_ciclo)) == ("programa_inexistente", "ciclo_inexistente")
 
 
+@pytest.mark.parametrize("programa, grado, ciclo, descriptores", [(ALFA, "2.º", "III", 9), (CL, "3.º", "IV", 8)])
+def test_listado_id_ciclo_sirve_para_criterios(client, db, entorno, cabeceras, programa, grado, ciclo, descriptores):
+    cuerpo = listar(client, cabeceras["Supervisor"], entorno, programa=programa, grado=grado).json()
+    params = {"id_programa": entorno.programas[programa], "id_ciclo": cuerpo["id_ciclo"]}
+    criterios = client.get("/rubricas/criterios", params=params, headers=cabeceras["Supervisor"])
+
+    assert (cuerpo["ciclo"], cuerpo["id_ciclo"]) == (ciclo, ids_ciclo(db)[ciclo])
+    assert len(criterios.json()) == descriptores
+
+
 def test_catalogo_niveles_rubrica_con_valor_y_nombres_nuevos(client, entorno, cabeceras):
     cuerpo = client.get("/niveles-rubrica", headers=cabeceras["Docente"]).json()
 
