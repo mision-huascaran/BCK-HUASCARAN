@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.errores import registrar_manejadores
+from app.core.proteccion_http import ProteccionHttp
 from app.routers import (
     actividades,
     alumnos,
@@ -34,6 +35,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Después de CORS para quedar por fuera: sus cabeceras también llegan a los preflight.
+app.add_middleware(ProteccionHttp)
 
 app.include_router(auth.router)
 app.include_router(colegios.router)

@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.core.database import get_db
 from app.core.tiempo import hoy_lima
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_role
 from app.models.evaluacion import NivelRazkids, NivelRubrica
 from app.models.organizacion import TIPO_PA, AnioEscolar, Grado, PeriodoAcademico, Programa, Usuario
 from app.schemas.catalogos import (
@@ -25,6 +25,7 @@ from app.schemas.catalogos import (
 from app.services import lectura_service
 from app.services.calendario import PeriodoCalendario, cargar_calendarios
 from app.services.programacion import FiltroGrupos
+from app.services.usuario_service import DOCENTE, SUPERVISOR
 
 router = APIRouter(tags=["catalogos"])
 
@@ -99,7 +100,8 @@ def listar_periodos_academicos(
 @router.get("/semanas", response_model=list[SemanaResponse])
 def listar_semanas(
     db: Db,
-    usuario: Autenticado,
+    # Es parte de Seguimiento de Lectura (CU023): el Directivo no tiene acceso.
+    usuario: Annotated[Usuario, Depends(require_role(SUPERVISOR, DOCENTE))],
     id_anio_escolar: int,
     mes: Annotated[int, Query(ge=1, le=12)],
     id_colegio: int,
@@ -108,8 +110,8 @@ def listar_semanas(
 ):
     """Semanas (lunes a viernes) del año con alguna clase del grupo (programada o
     guardada) en ese mes, para elegir la tabla de lectura (CU023). Una semana que cae en
-    dos meses aparece en el mes de su clase. Errores: 403 `aula_fuera_de_alcance`
-    (Docente), 404 `colegio_no_encontrado` y `anio_no_encontrado`, 422 `seccion_inexistente`."""
+    dos meses aparece en el mes de su clase. Errores: 403 `sin_permiso` (Directivo), 403
+    `aula_fuera_de_alcance` (Docente), 404 `colegio_no_encontrado` y `anio_no_encontrado`, 422 `seccion_inexistente`."""
     grupo = FiltroGrupos(id_colegio, id_grado, id_seccion)
     return lectura_service.semanas_con_clase(db, usuario, grupo, id_anio_escolar, mes)
 
