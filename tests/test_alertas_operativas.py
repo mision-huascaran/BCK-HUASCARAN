@@ -5,6 +5,7 @@ import pytest
 from sqlmodel import select
 
 from app.models.organizacion import ColegioGrado, DocenteColegioGrado
+from app.services import registros_vencidos
 from app.services.registros_vencidos import estado_de_registros
 from tests.conftest import (
     a_las,
@@ -35,6 +36,13 @@ def miercoles(reloj):
     """Fija el reloj antes de armar el entorno: el calendario es relativo a hoy."""
     reloj.fijar(a_las(HOY, 9))
     return reloj
+
+
+@pytest.fixture(autouse=True)
+def solo_asistencias(monkeypatch):
+    """Estos casos son de Asistencias (y de las alertas que dependen de sus vencidos):
+    los demás módulos se prueban en test_integracion_cu011.py."""
+    monkeypatch.setattr(registros_vencidos, "EVALUADORES", {"asistencias": registros_vencidos.asistencias})
 
 
 @pytest.fixture
@@ -202,8 +210,8 @@ def test_cu011_una_clase_reprogramada_se_exige_en_su_fecha_nueva(client, db, ent
 
     estado = estado_de_registros(db)
 
-    assert sorted(c.fecha for c in estado.vencidas)[-1] == MARTES
-    assert LUNES not in {c.fecha for c in estado.vencidas}
+    assert sorted(date.fromisoformat(c.referencia) for c in estado.vencidas)[-1] == MARTES
+    assert LUNES not in {date.fromisoformat(c.referencia) for c in estado.vencidas}
 
 
 def test_cu011_los_vencidos_miran_el_aula_guardada_en_el_registro(client, db, entorno, sup):

@@ -411,14 +411,23 @@ def ultima_rubrica_completa(db: Session, id_alumno: int, id_periodo_academico: i
     ).first()
 
 
+def _completadas_del_pa_vigente(pa_por_colegio: dict) -> tuple:
+    return (
+        col(RubricaMensual.id_nivel_fluidez).is_not(None),
+        col(RubricaMensual.id_nivel_comprension).is_not(None),
+        en_pa_de_su_colegio(RubricaMensual.id_colegio, RubricaMensual.id_periodo_academico, pa_por_colegio),
+    )
+
+
 def rubricas_completadas(db: Session, pa_por_colegio: dict) -> int:
     """Salud del Sistema (CU012): evaluaciones completadas del PA vigente de su colegio."""
     return db.exec(
-        select(func.count())
-        .select_from(RubricaMensual)
-        .where(
-            col(RubricaMensual.id_nivel_fluidez).is_not(None),
-            col(RubricaMensual.id_nivel_comprension).is_not(None),
-            en_pa_de_su_colegio(RubricaMensual.id_colegio, RubricaMensual.id_periodo_academico, pa_por_colegio),
-        )
+        select(func.count()).select_from(RubricaMensual).where(*_completadas_del_pa_vigente(pa_por_colegio))
     ).one()
+
+
+def colegios_con_rubricas(db: Session, pa_por_colegio: dict) -> set[int]:
+    """CU011 (Incumplimiento de Sede): colegios con alguna evaluación completada en su PA vigente."""
+    return set(db.exec(
+        select(RubricaMensual.id_colegio).where(*_completadas_del_pa_vigente(pa_por_colegio)).distinct()
+    ).all())

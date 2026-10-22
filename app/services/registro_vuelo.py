@@ -575,15 +575,26 @@ def _id_entidad(item: RegistroVueloGuardar) -> str:
 
 # ── Para otros módulos ──────────────────────────────────────────────────────────────
 
+def _decididas_del_pa_vigente(pa_por_colegio: dict) -> tuple:
+    return (
+        col(RegistroVuelo.id_nivel_colocado).is_not(None),
+        en_pa_de_su_colegio(RegistroVuelo.id_colegio, RegistroVuelo.id_periodo_academico, pa_por_colegio),
+    )
+
+
 def decisiones_confirmadas(db: Session, pa_por_colegio: dict) -> int:
     """Salud del Sistema (CU012): alumnos × PA vigente de su colegio con nivel colocado."""
     unidades = (
         select(RegistroVuelo.id_alumno, RegistroVuelo.id_periodo_academico)
-        .where(
-            col(RegistroVuelo.id_nivel_colocado).is_not(None),
-            en_pa_de_su_colegio(RegistroVuelo.id_colegio, RegistroVuelo.id_periodo_academico, pa_por_colegio),
-        )
+        .where(*_decididas_del_pa_vigente(pa_por_colegio))
         .distinct()
         .subquery()
     )
     return db.exec(select(func.count()).select_from(unidades)).one()
+
+
+def colegios_con_decisiones(db: Session, pa_por_colegio: dict) -> set[int]:
+    """CU011 (Incumplimiento de Sede): colegios con algún nivel colocado en su PA vigente."""
+    return set(db.exec(
+        select(RegistroVuelo.id_colegio).where(*_decididas_del_pa_vigente(pa_por_colegio)).distinct()
+    ).all())

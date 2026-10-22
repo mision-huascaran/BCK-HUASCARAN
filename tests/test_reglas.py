@@ -129,12 +129,13 @@ def test_pin_hmac_depende_del_usuario():
     "conteos, texto",
     [
         ({}, "Sin registros"),
-        ({"rubrica": 1}, "1 Rúbricas"),
+        ({"rubrica": 1}, "1 Rúbrica"),
         ({"asistencia": 15, "rubrica": 5}, "15 Asistencias, 5 Rúbricas"),
+        ({"asistencia": 1, "rubrica": 0, "alumnos": 0}, "1 Asistencia"),
         ({"registro_vuelo": 2, "rubrica": 15}, "15 Rúbricas, 2 Registros de Vuelo"),
-        ({"alumnos": 1, "asistencia": 3, "otros": 0}, "3 Asistencias, 1 Alumnos"),
+        ({"alumnos": 1, "asistencia": 3, "otros": 0}, "3 Asistencias, 1 Alumno"),
         ({"seguimiento_lectura": 1, "registro_vuelo": 1, "otros": 2},
-         "1 Registros de Vuelo, 1 Seguimientos de Lectura, 2 Otros registros"),
+         "1 Registro de Vuelo, 1 Seguimiento de Lectura, 2 Otros registros"),
     ],
 )
 def test_cu021_productividad_texto(conteos, texto):

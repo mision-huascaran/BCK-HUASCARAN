@@ -109,7 +109,7 @@ def _no_encontrado() -> ErrorNegocio:
     return ErrorNegocio(status.HTTP_404_NOT_FOUND, "El docente no existe.", motivo="docente_no_encontrado")
 
 
-def _usuario_del_docente(db: Session, id_docente: int) -> Usuario:
+def usuario_del_docente(db: Session, id_docente: int) -> Usuario:
     usuario = db.exec(
         select(Usuario)
         .join(Rol, Rol.id_rol == Usuario.id_rol)
@@ -133,6 +133,6 @@ def actividades_del_docente(
     db: Session, id_docente: int, filtros: FiltrosActividad, page: int
 ) -> Paginado[ActividadResumen]:
     """Historial de CU021, de la más reciente a la más antigua, con su productividad."""
-    usuario = _usuario_del_docente(db, id_docente)
+    usuario = usuario_del_docente(db, id_docente)
     cerrar_vencidas_y_confirmar(db, usuario.id_usuario)
     return listar_actividades(db, id_docente, filtros, page)

@@ -41,15 +41,25 @@ class AlertaOperativa(BaseModel):
     critica: bool
 
 
+class RegistrosPorModulo(BaseModel):
+    asistencias: int = 0
+    lectura: int = 0
+    rubrica: int = 0
+    registro_vuelo: int = 0
+
+
 class InicioSupervisor(BaseModel):
     colegios_registrados: int
-    # Con asignación en el periodo vigente (0 sin periodo vigente).
+    # Con alguna asignación habilitada hoy según el calendario de su colegio (en un PA, la
+    # de ese PA; en un PR, las retroactivas habilitadas y las del PA siguiente).
     docentes_activos: int
     docentes_con_actividad_activa: int
-    # Clases de Asistencias del periodo vigente (un grado en una fecha): vencidas sin
-    # ningún registro e iniciadas con algún alumno activo sin marcar.
+    # Obligaciones de los cuatro módulos: vencidas sin ningún registro e incompletas.
     registros_vencidos: int
     registros_incompletos: int
+    # El mismo total desglosado por módulo.
+    vencidos_por_modulo: RegistrosPorModulo = RegistrosPorModulo()
+    incompletos_por_modulo: RegistrosPorModulo = RegistrosPorModulo()
     # Primero las de sincronización, luego las de inactividad y al final las de sede.
     alertas: list[AlertaOperativa]
 

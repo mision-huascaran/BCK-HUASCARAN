@@ -217,23 +217,55 @@ def _asistencia_de_la_referencia():
     )
 
 
-def filas_confirmadas(db: Session, pa_por_colegio: dict) -> int:
-    """Salud del Sistema (CU012): filas `completada` o `no_aplica` de las tablas cuya
-    clase de referencia es del PA vigente de su colegio."""
-    asistio = col(Asistencia.estado).in_(ESTADOS_ASISTIO)
-    confirmada = or_(
+def _fila_confirmada() -> ColumnElement[bool]:
+    """La fila está `completada` o `no_aplica` (la misma regla que `estado_fila`, en SQL).
+    Sin asistencia la condición es falsa, no NULL, para poder negarla."""
+    asistencia = func.coalesce(Asistencia.estado, "")
+    return or_(
         LecturaSemanal.estado == LECTURA_NO_REALIZADA,
-        Asistencia.estado == AUSENTE,
-        and_(asistio, col(LecturaSemanalAlumno.cantidad_lsl).is_not(None)),
+        asistencia == AUSENTE,
+        and_(asistencia.in_(ESTADOS_ASISTIO), col(LecturaSemanalAlumno.cantidad_lsl).is_not(None)),
     )
-    return db.exec(
-        select(func.count())
+
+
+def _filas_con_referencia(*columnas):
+    return (
+        select(*columnas)
         .select_from(LecturaSemanalAlumno)
         .join(LecturaSemanal, LecturaSemanal.id == LecturaSemanalAlumno.id_lectura_semanal)
         .join(Clase, Clase.id_clase == LecturaSemanal.id_clase_referencia)
         .outerjoin(Asistencia, _asistencia_de_la_referencia())
-        .where(confirmada, en_pa_de_su_colegio(Clase.id_colegio, Clase.id_periodo_academico, pa_por_colegio))
+    )
+
+
+def filas_confirmadas(db: Session, pa_por_colegio: dict) -> int:
+    """Salud del Sistema (CU012): filas `completada` o `no_aplica` de las tablas cuya
+    clase de referencia es del PA vigente de su colegio."""
+    return db.exec(
+        _filas_con_referencia(func.count()).where(
+            _fila_confirmada(), en_pa_de_su_colegio(Clase.id_colegio, Clase.id_periodo_academico, pa_por_colegio)
+        )
     ).one()
+
+
+def colegios_con_filas_confirmadas(db: Session, pa_por_colegio: dict) -> set[int]:
+    """CU011 (Incumplimiento de Sede): colegios con alguna fila confirmada en su PA vigente."""
+    return set(db.exec(
+        _filas_con_referencia(Clase.id_colegio).where(
+            _fila_confirmada(), en_pa_de_su_colegio(Clase.id_colegio, Clase.id_periodo_academico, pa_por_colegio)
+        ).distinct()
+    ).all())
+
+
+def tablas_con_pendientes(db: Session, ids_tabla: list[int]) -> set[int]:
+    """CU011: de esas tablas, las que tienen alguna fila `pendiente`."""
+    if not ids_tabla:
+        return set()
+    return set(db.exec(
+        _filas_con_referencia(LecturaSemanal.id)
+        .where(col(LecturaSemanal.id).in_(ids_tabla), ~_fila_confirmada())
+        .distinct()
+    ).all())
 
 
 # ── Filtros, semana y clase de referencia ───────────────────────────────────────────

@@ -6,8 +6,8 @@ import pytest
 from sqlmodel import select
 
 from app.models.organizacion import Calendario, CalendarioPeriodo, DocenteColegioGrado
+from app.services import registros_vencidos
 from app.services.calendario import cargar_calendarios
-from app.services.inicio_service import pa_de_referencia_por_colegio
 from tests.conftest import (
     a_las,
     agregar_no_lectivo,
@@ -119,6 +119,13 @@ def test_cu010_solo_con_colegio_inactivo_es_sin_asignaciones(client, db, entorno
     )
 
 
+@pytest.fixture(autouse=True)
+def solo_asistencias(monkeypatch):
+    """Los vencidos de Lectura, Rúbrica y Registro de Vuelo (y las alertas que generan)
+    se prueban en test_integracion_cu011.py: aquí solo cuentan los de Asistencias."""
+    monkeypatch.setattr(registros_vencidos, "EVALUADORES", {"asistencias": registros_vencidos.asistencias})
+
+
 @pytest.mark.parametrize("ruta, rol", [("/inicio/docente", "Supervisor"), ("/inicio/supervisor", "Directivo"), ("/inicio/directivo", "Docente")])
 def test_cu010_cada_inicio_es_solo_de_su_rol(client, entorno, cabeceras, ruta, rol):
     assert client.get(ruta, headers=cabeceras[rol]).status_code == 403
@@ -160,13 +167,21 @@ def test_cu011_docentes_activos_solo_con_asignacion_vigente_en_colegio_activo(cl
     assert (cuerpo["docentes_activos"], cuerpo["colegios_registrados"]) == (1, 1)
 
 
-def test_cu011_en_un_receso_no_hay_docentes_activos(client, db, entorno, cabeceras, reloj):
-    """Entre el periodo pasado y el vigente no hay periodo vigente: 0, aunque el docente
-    tenga asignaciones en ambos (el Periodo de Receso del CU no se implementa)."""
+def test_cu011_en_un_receso_cuentan_las_del_pa_siguiente_y_las_retroactivas(client, db, entorno, reloj):
+    """En el PR1 cuenta quien tiene asignación del PA siguiente (Rosa, PA2) o una
+    retroactiva habilitada del PA anterior; una del PA1 sin retroactiva, no."""
+    solo_pasado = crear_docente(db, entorno, "Pasado", "pasado@sicedu.test", "70000011")
+    asignar(db, solo_pasado.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["pasado"], 1)
+    db.commit()
     reloj.fijar(a_las(entorno.fin("pasado") + timedelta(days=10)))
     cabecera = cabecera_de(db, entorno.supervisor)
+    assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 1
 
-    assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 0
+    retro = db.exec(select(DocenteColegioGrado).where(DocenteColegioGrado.id_docente == solo_pasado.id_docente)).one()
+    retro.retroactiva = True
+    db.add(retro)
+    db.commit()
+    assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 2
 
 
 def test_cu011_solo_cuenta_asignaciones_del_periodo_vigente(client, db, entorno, cabeceras):
@@ -226,14 +241,15 @@ def test_cu011_la_ultima_actividad_finalizada_reinicia_la_cuenta(miercoles, clie
     assert alertas(client, cabeceras) == []
 
 
-def test_cu011_iniciar_sin_finalizar_no_reinicia_la_cuenta(miercoles, client, db, entorno, cabeceras):
-    """Una actividad en curso no es una actividad finalizada: sigue contando desde la
-    asignación."""
+def test_cu011_con_una_actividad_en_curso_no_alerta(miercoles, client, db, entorno, cabeceras):
+    """Con una actividad en curso la alerta no se muestra."""
     asignado_desde(db, entorno, date(2026, 6, 1))
     db.commit()
+    assert [a["tipo"] for a in alertas(client, cabeceras)] == ["inactividad_operativa"]
+
     iniciar_actividad(client, cabeceras["Docente"])
 
-    assert [a["tipo"] for a in alertas(client, cabeceras)] == ["inactividad_operativa"]
+    assert alertas(client, cabeceras) == []
 
 
 def test_cu011_varias_alertas_ordenadas_por_nombre(miercoles, client, db, entorno, cabeceras):
@@ -293,9 +309,8 @@ def test_cu012_con_el_anio_terminado_usa_el_ultimo_periodo(client, db, entorno, 
     # La sesión se abre después de mover el reloj: una de antes ya habría vencido.
     cabecera = cabecera_de(db, entorno.usuarios["Directivo"])
 
+    # Solo Lejano tiene asignación del PA4 (el último del año).
     assert client.get("/inicio/directivo", headers=cabecera).json()["colegios_operando"] == 1
-    referencia = pa_de_referencia_por_colegio(db)
-    assert referencia[lejano.id_colegio].id_periodo_academico == entorno.periodos["cuarto"].id_periodo_academico
 
 
 def test_cu012_entre_periodos_sin_asignaciones_en_el_proximo_no_opera_ninguno(client, db, entorno, cabeceras):
