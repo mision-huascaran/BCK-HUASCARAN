@@ -290,7 +290,8 @@ pipeline {
                                 export ZAP_AUTH_HEADER_VALUE
 
                                 set -- zap-api-scan.py -t openapi-zap.json -f openapi -O "$ZAP_API_BASE"
-                                set -- "$@" -z "-config scanner.maxScanDurationInMins=30"
+                                # 5 hilos por host (por defecto 2): acorta el escaneo sin quitar reglas.
+                                set -- "$@" -z "-config scanner.maxScanDurationInMins=30 -config scanner.threadPerHost=5"
                                 set -- "$@" -c reglas-backend.conf
                                 set -- "$@" -r backend-zap.html -J backend-zap.json
                                 # Jenkins corre `sh -xe`: sin el `||`, un 1 o un 2 de ZAP cortaría
