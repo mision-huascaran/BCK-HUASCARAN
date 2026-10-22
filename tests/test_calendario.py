@@ -53,7 +53,8 @@ def test_periodo_de_con_el_general(db, entorno):
     assert (periodo.tipo, periodo.numero, periodo.id_periodo_academico) == (
         "PA", 2, entorno.periodos["vigente"].id_periodo_academico
     )
-    assert (periodo.fecha_inicio, periodo.fecha_fin) == entorno.rangos["PA2"]
+    rango = (periodo.fecha_inicio, periodo.fecha_fin)
+    assert rango == entorno.rangos["PA2"]
 
 
 def test_periodo_de_un_pr_trae_el_pa_anterior(db, entorno):
@@ -76,7 +77,8 @@ def test_periodo_de_bordes_inclusivos(db, entorno, clave, esperado):
 
     for fecha in (inicio, fin):
         periodo = servicio.periodo_de(db, andino, fecha)
-        assert (periodo.tipo, periodo.numero) == esperado
+        obtenido = (periodo.tipo, periodo.numero)
+        assert obtenido == esperado
 
 
 def test_periodo_de_fuera_de_todo_periodo_es_none(db, entorno):

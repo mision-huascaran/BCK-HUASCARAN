@@ -274,7 +274,8 @@ def test_cu014_fecha_de_cambio_invalida(client, db, entorno, sup, con_dos_seccio
         inicio = (entorno.hoy - timedelta(days=10)).strftime("%d/%m/%Y")
         assert (campo, mensaje) == ("cambio_grupo_desde", f"Selecciona el {inicio} o una fecha posterior: ese día empezó su grupo actual.")
     else:
-        assert (campo, mensaje) == campo_esperado
+        obtenido = (campo, mensaje)
+        assert obtenido == campo_esperado
     assert [s for _, _, s, _ in intervalos(db, nora)] == [unica]
 
 

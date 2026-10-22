@@ -250,7 +250,7 @@ def _colegios_a_revisar(
     tienen fechas particulares en un año vecino."""
     if id_colegio is not None:
         return [id_colegio]
-    con_particular_vecino = {c for (a, c) in calendarios.particulares if a in ids_vecinos}
+    con_particular_vecino = {c for (a, c) in calendarios.particulares.keys() if a in ids_vecinos}
     return [None, *sorted(c for c in con_particular_vecino if (id_anio, c) not in calendarios.particulares)]
 
 

@@ -8,6 +8,7 @@ from sqlmodel import Field, SQLModel
 from app.core.tiempo import UTCDateTime
 
 FK_USUARIO = "usuario.id_usuario"
+FK_DOCENTE = "docente.id_docente"
 FK_COLEGIO = "colegio.id_colegio"
 FK_GRADO = "grado.id_grado"
 FK_PROGRAMA = "programa.id_programa"
@@ -156,7 +157,7 @@ class Usuario(SQLModel, table=True):
     id_rol: int = Field(foreign_key="rol.id_rol")
     correo: str = Field(unique=True, index=True)
     password_hash: str
-    id_docente: Optional[int] = Field(default=None, foreign_key="docente.id_docente")
+    id_docente: Optional[int] = Field(default=None, foreign_key=FK_DOCENTE)
     # Texto y no número: un DNI puede empezar con 0.
     dni: Optional[str] = Field(default=None, max_length=8)
     nombres: str
@@ -222,7 +223,7 @@ class DocenteColegioGrado(SQLModel, table=True):
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    id_docente: int = Field(foreign_key="docente.id_docente")
+    id_docente: int = Field(foreign_key=FK_DOCENTE)
     id_colegio: int = Field(foreign_key=FK_COLEGIO)
     id_grado: int = Field(foreign_key=FK_GRADO)
     id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
@@ -265,7 +266,7 @@ class PermisoCorreccion(SQLModel, table=True):
     )
 
     id_permiso: Optional[int] = Field(default=None, primary_key=True)
-    id_docente: int = Field(foreign_key="docente.id_docente")
+    id_docente: int = Field(foreign_key=FK_DOCENTE)
     id_anio_escolar: int = Field(foreign_key=FK_ANIO)
     id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
     id_colegio: int

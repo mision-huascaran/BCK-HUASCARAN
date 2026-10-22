@@ -36,7 +36,8 @@ def test_anios_y_periodos_marcan_el_vigente(client, entorno, cabeceras):
     assert [(p["numero"], p["tipo"], p["vigente"]) for p in periodos] == [
         (1, "PA", False), (2, "PA", True), (3, "PA", False), (4, "PA", False)
     ]
-    assert (periodos[1]["fecha_inicio"], periodos[1]["fecha_fin"]) == tuple(d.isoformat() for d in entorno.rangos["PA2"])
+    rango = (periodos[1]["fecha_inicio"], periodos[1]["fecha_fin"])
+    assert rango == tuple(d.isoformat() for d in entorno.rangos["PA2"])
     assert del_anio == []
 
 

@@ -77,7 +77,7 @@ def _calendarios_de(
     pares: list[ParColegioAnio], calendarios: Calendarios, colegios: dict[int, Colegio]
 ) -> list[CalendarioDeColegio]:
     salida = []
-    for id_colegio, id_anio in dict.fromkeys(pares):
+    for id_colegio, id_anio in sorted(set(pares)):
         aplicable = calendarios.aplicable(id_colegio, id_anio)
         if aplicable is not None:
             datos = respuesta(aplicable, colegios[id_colegio]).model_dump()

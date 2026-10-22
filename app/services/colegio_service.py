@@ -336,8 +336,11 @@ def _agregar_secciones(
 ) -> bool:
     """Agrega las secciones pedidas (y "Única" a los grados que no tengan). Devuelve si
     agregó alguna."""
-    agregadas = [agregar_secciones(db, id_colegio, g.id_grado, pedido.secciones, auditoria) for g, pedido in grados]
-    return any(agregadas)
+    agrego = False
+    for grado, pedido in grados:
+        # Sin cortocircuito: se agregan las de todos los grados.
+        agrego = agregar_secciones(db, id_colegio, grado.id_grado, pedido.secciones, auditoria) or agrego
+    return agrego
 
 
 # ── Escritura ───────────────────────────────────────────────────────────────────────

@@ -117,7 +117,7 @@ def estado_de_registros(db: Session, calendarios: Optional[Calendarios] = None) 
     ayer = hoy_lima() - UN_DIA
     obligaciones = [
         (id_colegio, clase)
-        for id_colegio in sorted({c for c, _ in docentes})
+        for id_colegio in sorted({c for c, _ in docentes.keys()})
         for clase in _obligaciones(db, calendarios, id_colegio, pa_actual[id_colegio], ayer)
         if (id_colegio, clase.id_grado) in docentes
     ]

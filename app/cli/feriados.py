@@ -47,7 +47,7 @@ def feriados_entre_semana(anios: set[int]) -> dict:
 
 def _fechas_con_asistencias(db: Session, calendarios: Calendarios, general: CalendarioResuelto) -> set[date]:
     """Fechas del calendario con asistencias de algún colegio que usa el general."""
-    particulares = {c for (a, c) in calendarios.particulares if a == general.id_anio_escolar}
+    particulares = {c for (a, c) in calendarios.particulares.keys() if a == general.id_anio_escolar}
     usan_general = select(Colegio.id_colegio).where(col(Colegio.id_colegio).not_in(particulares))
     return set(
         db.exec(

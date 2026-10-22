@@ -12,10 +12,9 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Text, Uniqu
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
-from app.models.organizacion import COLUMNAS_GRUPO, FK_ANIO, FK_GRADO, FK_GRUPO, FK_PROGRAMA, FK_USUARIO
+from app.models.organizacion import COLUMNAS_GRUPO, FK_ANIO, FK_DOCENTE, FK_GRADO, FK_GRUPO, FK_PROGRAMA, FK_USUARIO
 
 FK_ALUMNO = "alumno.id_alumno"
-FK_DOCENTE = "docente.id_docente"
 FK_NIVEL_RAZKIDS = "nivel_razkids.id_nivel_rk"
 FK_NIVEL_RUBRICA = "nivel_rubrica.id_nivel_rubrica"
 FK_NIVEL_GENERAL = "nivel_general.id_nivel_general"

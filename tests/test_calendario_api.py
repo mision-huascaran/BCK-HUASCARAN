@@ -108,7 +108,8 @@ def test_consultar_el_general(client, entorno, sup):
     assert cuerpo["id_calendario"] == entorno.calendario.id_calendario
     assert [f'{p["tipo"]}{p["numero"]}' for p in cuerpo["periodos"]] == list(ORDEN)
     assert cuerpo["periodos"][2]["id_periodo_academico"] == entorno.periodos["vigente"].id_periodo_academico
-    assert cuerpo["periodo_actual"]["tipo"] == "PA" and cuerpo["periodo_actual"]["numero"] == 2
+    assert cuerpo["periodo_actual"]["tipo"] == "PA"
+    assert cuerpo["periodo_actual"]["numero"] == 2
     assert (cuerpo["dias_no_lectivos"], cuerpo["fecha_referencia"]) == ([], HOY.isoformat())
     # Sin año: el de referencia.
     assert client.get(URL, headers=sup).json() == cuerpo
@@ -284,7 +285,8 @@ def test_editar_con_la_version_vigente_y_auditoria(client, db, entorno, sup):
     cambio = next(a for a in filas if a.campo == "periodos")
     assert cambio.id_usuario == entorno.supervisor.id_usuario
     anterior, nuevo = json.loads(cambio.valor_anterior), json.loads(cambio.valor_nuevo)
-    assert anterior[4]["periodo"] == "PA3" and anterior[4] != nuevo[4]
+    assert anterior[4]["periodo"] == "PA3"
+    assert anterior[4] != nuevo[4]
 
 
 def test_editar_con_version_vieja_es_409(client, entorno, sup):

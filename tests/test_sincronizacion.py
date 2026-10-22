@@ -101,8 +101,10 @@ def test_error_tecnico_no_registra_nada(db, entorno, actividad):
     def aplicar(_):
         raise RuntimeError("se cayó la BD")
 
+    operacion = item()
+
     with pytest.raises(RuntimeError):
-        procesar_operacion(db, entorno.docente, item(), aplicar, OPERACION)
+        procesar_operacion(db, entorno.docente, operacion, aplicar, OPERACION)
     db.rollback()
 
     assert operaciones(db) == []

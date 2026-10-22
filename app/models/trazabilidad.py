@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
+from app.models.organizacion import FK_DOCENTE, FK_USUARIO
 
 TIPOS_CIERRE_ACTIVIDAD = (
     "Manual por finalización de actividad",
@@ -57,7 +58,7 @@ class Actividad(SQLModel, table=True):
     # Lo genera el cliente, para no duplicar actividades iniciadas sin conexión: sin default.
     id_actividad: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
     id_sesion: uuid.UUID = Field(sa_type=Uuid, foreign_key="sesion.id_sesion")
-    id_docente: int = Field(foreign_key="docente.id_docente")
+    id_docente: int = Field(foreign_key=FK_DOCENTE)
     inicio: datetime = Field(sa_type=UTCDateTime)
     # null = actividad activa.
     fin: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
@@ -90,7 +91,7 @@ class Auditoria(SQLModel, table=True):
     campo: Optional[str] = Field(default=None, sa_type=Text)
     valor_anterior: Optional[str] = Field(default=None, sa_type=Text)
     valor_nuevo: Optional[str] = Field(default=None, sa_type=Text)
-    id_usuario: int = Field(foreign_key="usuario.id_usuario")
+    id_usuario: int = Field(foreign_key=FK_USUARIO)
     fecha: datetime = Field(sa_type=UTCDateTime)
     # null cuando el autor no es Docente.
     id_actividad: Optional[uuid.UUID] = Field(
@@ -118,7 +119,7 @@ class OperacionSincronizacion(SQLModel, table=True):
     )
 
     id_operacion: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
-    id_usuario: int = Field(foreign_key="usuario.id_usuario")
+    id_usuario: int = Field(foreign_key=FK_USUARIO)
     id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key="actividad.id_actividad")
     modulo: str = Field(sa_type=Text)
     entidad: str = Field(sa_type=Text)
@@ -145,7 +146,7 @@ class OperacionPendiente(SQLModel, table=True):
     )
 
     id_operacion: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
-    id_usuario: int = Field(foreign_key="usuario.id_usuario")
+    id_usuario: int = Field(foreign_key=FK_USUARIO)
     id_dispositivo: str = Field(sa_type=Text)
     # Sin FK: la actividad pudo crearse sin conexión y llegar al servidor después.
     id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid)
