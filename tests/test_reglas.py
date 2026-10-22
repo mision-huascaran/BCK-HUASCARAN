@@ -16,15 +16,9 @@ from app.core.errores import ErrorNegocio
 from app.core.paginacion import pagina
 from app.core.validacion import documentar_formato_422, errores_legibles
 from app.models.evaluacion import NivelRazkids
-from app.models.organizacion import AnioEscolar, DiaNoLaborable, Grado, PeriodoAcademico
+from app.models.organizacion import DiaNoLectivo, Grado
 from app.services import auditoria, cambios, usuario_service
-from app.services.calendario import (
-    anio_de_referencia,
-    cargar_dias_habiles,
-    dias_habiles,
-    periodo_de_referencia,
-    periodo_de_referencia_del_anio,
-)
+from app.services.calendario import anio_de_referencia
 from app.services.nivel_descriptivo import EscalaDescriptiva, escala_del_grado, nivel_descriptivo
 
 # ── Política de contraseña (CU006) ──────────────────────────────────────────────────
@@ -207,30 +201,13 @@ def test_id_actividad_activa(db, entorno, actividad):
     assert auditoria.id_actividad_activa(db, 999) is None
 
 
-# ── Calendario: días hábiles y periodo de referencia ────────────────────────────────
+# ── Año escolar de referencia ───────────────────────────────────────────────────────
+# (El calendario por colegio se prueba en test_calendario.py.)
 
-def test_dias_habiles_lunes_a_viernes_dentro_de_periodos_sin_feriados(db, entorno):
-    lunes = entorno.hoy - timedelta(days=entorno.hoy.weekday() + 7)
-    db.add(DiaNoLaborable(fecha=lunes + timedelta(days=2), motivo="Feriado", creado_por=1, creado_en=tiempo.ahora_utc()))
-    db.commit()
-
-    assert dias_habiles(db, lunes, lunes + timedelta(days=7)) == 4
-    assert dias_habiles(db, lunes, lunes) == 0
-    assert cargar_dias_habiles(db, lunes, lunes - timedelta(days=1)).contar(lunes, lunes) == 0
-
-
-def test_dias_entre_periodos_no_son_habiles(db, entorno):
-    """Entre el fin del periodo pasado y el inicio del vigente no hay clases."""
-    desde = entorno.periodos["pasado"].fecha_fin + timedelta(days=1)
-
-    assert dias_habiles(db, desde, entorno.periodos["vigente"].fecha_inicio) == 0
-
-
-def test_periodo_y_anio_de_referencia_entre_anios(db, entorno, reloj):
+def test_anio_de_referencia_entre_anios(db, entorno, reloj):
     reloj.fijar(tiempo.ahora_utc() + timedelta(days=400))
 
     assert anio_de_referencia(db).id_anio_escolar == entorno.anio.id_anio_escolar
-    assert periodo_de_referencia(db).id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
 
 
 def test_anio_de_referencia_antes_de_que_empiece(db, entorno, reloj):
@@ -239,50 +216,8 @@ def test_anio_de_referencia_antes_de_que_empiece(db, entorno, reloj):
     assert anio_de_referencia(db).id_anio_escolar == entorno.anio.id_anio_escolar
 
 
-def test_periodo_de_referencia_del_anio_vigente(db, entorno, reloj):
-    reloj.fijar(tiempo.ahora_utc())
-
-    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["vigente"].id_periodo_academico
-
-
-def test_periodo_de_referencia_del_anio_en_un_receso_es_el_proximo(db, entorno, reloj):
-    reloj.fijar(tiempo.ahora_utc() - timedelta(days=45))  # entre el pasado y el vigente
-
-    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["vigente"].id_periodo_academico
-
-
-def test_periodo_de_referencia_del_anio_terminado_es_el_ultimo(db, entorno, reloj):
-    """Con el año terminado no salta al siguiente, aunque ya esté cargado."""
-    hoy = entorno.hoy
-    auditoria = {"creado_por": 1, "creado_en": tiempo.ahora_utc()}
-    siguiente = AnioEscolar(
-        nombre="siguiente", fecha_inicio=hoy + timedelta(days=200), fecha_fin=hoy + timedelta(days=500), **auditoria
-    )
-    db.add(siguiente)
-    db.flush()
-    db.add(
-        PeriodoAcademico(
-            id_anio_escolar=siguiente.id_anio_escolar, numero=1, fecha_inicio=hoy + timedelta(days=210),
-            fecha_fin=hoy + timedelta(days=260), **auditoria,
-        )
-    )
-    db.commit()
-    reloj.fijar(tiempo.ahora_utc() + timedelta(days=170))  # el año terminó y el siguiente no empezó
-
-    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
-    assert periodo_de_referencia(db).id_anio_escolar == siguiente.id_anio_escolar  # el otro criterio sí salta
-
-
-def test_periodo_de_referencia_del_anio_antes_de_que_empiece_es_el_primero(db, entorno, reloj):
-    reloj.fijar(tiempo.ahora_utc() - timedelta(days=400))
-
-    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["pasado"].id_periodo_academico
-
-
-def test_sin_calendario_no_hay_referencia(db):
-    assert periodo_de_referencia(db) is None
-    assert periodo_de_referencia_del_anio(db) is None
-    assert db.exec(select(PeriodoAcademico)).all() == []
+def test_sin_anios_no_hay_referencia(db):
+    assert anio_de_referencia(db) is None
 
 
 # ── Formato de errores, paginación y base de datos ──────────────────────────────────
@@ -336,7 +271,7 @@ def test_paginacion_vacia():
 def test_opciones_de_conexion_e_insert_por_dialecto(db):
     assert opciones_de_conexion("postgresql://u:p@h/db") == {"connect_timeout": 10}
     assert opciones_de_conexion("sqlite://") == {}
-    insert_con_conflicto(db, DiaNoLaborable.__table__)
+    insert_con_conflicto(db, DiaNoLectivo.__table__)
 
     class OtroMotor:
         class dialect:  # noqa: N801 - imita la forma de un Engine de SQLAlchemy
@@ -346,7 +281,7 @@ def test_opciones_de_conexion_e_insert_por_dialecto(db):
         def get_bind(self):
             return OtroMotor()
 
-    sesion, tabla = SesionFalsa(), DiaNoLaborable.__table__
+    sesion, tabla = SesionFalsa(), DiaNoLectivo.__table__
     with pytest.raises(NotImplementedError):
         insert_con_conflicto(sesion, tabla)
 

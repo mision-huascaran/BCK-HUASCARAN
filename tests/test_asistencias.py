@@ -6,10 +6,23 @@ from sqlmodel import select
 
 from app.core.tiempo import ahora_utc
 from app.models.evaluacion import Asistencia
-from app.models.organizacion import Alumno, DiaNoLaborable
+from app.models.organizacion import Alumno
 from app.models.trazabilidad import Auditoria
 from app.services import asistencia_service
-from tests.conftest import a_las, cabecera_de, crear_alumno, crear_colegio, iso, motivo, releer
+from tests.conftest import (
+    a_las,
+    agregar_no_lectivo,
+    asignar,
+    cabecera_de,
+    crear_alumno,
+    crear_colegio,
+    crear_particular,
+    iso,
+    motivo,
+    rangos_en_receso,
+    releer,
+    terminar_pa_vigente,
+)
 
 # Miércoles. El periodo vigente va del lunes 18 de mayo al viernes 17 de julio; el pasado
 # termina el 18 de abril.
@@ -22,13 +35,16 @@ NO_LECTIVA = "La fecha seleccionada no corresponde a un día lectivo válido del
 
 
 @pytest.fixture(autouse=True)
-def miercoles(reloj, db):
-    """Fija el reloj antes de armar el entorno (el calendario es relativo a hoy) y marca
-    el viernes 12 como feriado."""
+def miercoles(reloj):
+    """Fija el reloj antes de armar el entorno (el calendario es relativo a hoy)."""
     reloj.fijar(a_las(HOY, 9))
-    db.add(DiaNoLaborable(fecha=FERIADO, motivo="Feriado", creado_por=1, creado_en=ahora_utc()))
-    db.commit()
     return reloj
+
+
+@pytest.fixture(autouse=True)
+def feriado(miercoles, db, entorno):
+    """El viernes 12 es un día no lectivo del calendario general."""
+    agregar_no_lectivo(db, entorno.calendario, FERIADO)
 
 
 def clase(entorno, fecha=HOY, colegio="Andino", grado="2.º", programa="Comprensión Lectora") -> dict:
@@ -170,12 +186,9 @@ def test_cu022_supervisor_lee_cualquier_dia_lectivo_pasado(client, entorno, cabe
 
 
 def test_cu022_sin_periodo_vigente_el_docente_no_lee_ni_registra(client, db, entorno, cabeceras, actividad):
-    vigente = entorno.periodos["vigente"]
-    vigente.fecha_fin = HOY - timedelta(days=1)
-    db.add(vigente)
-    db.commit()
+    terminar_pa_vigente(db, entorno)
 
-    # Sin periodo vigente el docente no tiene alcance (como en Alumnos): 403 antes que la fecha.
+    # Con el colegio en receso el docente no tiene alcance (como en Alumnos): 403 antes que la fecha.
     assert motivo(consultar(client, cabeceras["Docente"], clase(entorno, MARTES))) == "aula_fuera_de_alcance"
     assert motivo(guardar(client, cabeceras["Docente"], [marca(entorno, "ana")], fecha=MARTES)) == "fecha_no_lectiva"
     assert consultar(client, cabeceras["Supervisor"], clase(entorno, MARTES)).status_code == 200
@@ -537,3 +550,38 @@ def test_cu015_el_porcentaje_usa_el_aula_guardada(client, db, entorno, cabeceras
     rotar(db, entorno, "ana", grado="1.º")
 
     assert (porcentaje(ana), porcentaje(beto)) == (0.0, 100.0)
+
+
+# ── Calendario de cada colegio (CU027) ──────────────────────────────────────────────
+
+def calendario_de_lejano(db, entorno, en_receso=False):
+    """Calendario particular de Lejano; con `en_receso`, su PA2 terminó ayer (hoy es PR2)."""
+    return crear_particular(db, entorno, rangos_en_receso(HOY) if en_receso else None)
+
+
+def test_cu022_cada_clase_usa_el_calendario_de_su_colegio(client, db, entorno, cabeceras, actividad):
+    """El mismo día Andino (general) está en el PA2 y Lejano (particular) en el PR2: el
+    docente asignado a ambos solo lee y registra en Andino."""
+    asignar(db, entorno.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    calendario_de_lejano(db, entorno, en_receso=True)
+    doc = cabeceras["Docente"]
+
+    assert motivo(consultar(client, doc, clase(entorno, colegio="Lejano", grado="3.º"))) == "aula_fuera_de_alcance"
+    assert motivo(guardar(client, doc, [marca(entorno, "mario")])) == "validacion"
+    assert guardar(client, doc, [marca(entorno, "ana")]).status_code == 200
+
+
+def test_cu022_un_dia_no_lectivo_solo_afecta_a_su_calendario(client, db, entorno, cabeceras):
+    """El lunes es no lectivo solo en el particular de Lejano; el feriado del viernes 12
+    es del general y no le afecta a Lejano."""
+    particular = calendario_de_lejano(db, entorno)
+    agregar_no_lectivo(db, particular, LUNES, motivo="Aniversario del colegio")
+    sup = cabeceras["Supervisor"]
+
+    def codigo(fecha, **aula):
+        return consultar(client, sup, clase(entorno, fecha, **aula)).status_code
+
+    assert codigo(LUNES, colegio="Lejano", grado="3.º") == 422
+    assert codigo(LUNES) == 200
+    assert codigo(FERIADO, colegio="Lejano", grado="3.º") == 200
+    assert codigo(FERIADO) == 422

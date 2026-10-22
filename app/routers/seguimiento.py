@@ -37,7 +37,7 @@ def listar_docentes(
     activo: bool = True,
     page: Pagina = 1,
 ):
-    """CU020. `id_colegio`: asignado en el periodo vigente. `desde` y `hasta`: días de
+    """CU020. `id_colegio`: asignado al PA actual de ese colegio. `desde` y `hasta`: días de
     Lima, inclusivos, sobre la última conexión (quien nunca entró queda fuera)."""
     return seguimiento_service.listar_docentes(db, id_colegio, desde, hasta, sincronizacion, activo, page)
 

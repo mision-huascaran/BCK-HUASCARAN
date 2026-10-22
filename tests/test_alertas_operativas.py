@@ -6,9 +6,20 @@ from sqlmodel import select
 
 from app.core.tiempo import ahora_utc
 from app.models.evaluacion import Asistencia
-from app.models.organizacion import ColegioGrado, DiaNoLaborable, DocenteColegioGrado
+from app.models.organizacion import ColegioGrado, DocenteColegioGrado
 from app.services.registros_vencidos import estado_de_registros
-from tests.conftest import a_las, asignar, cabecera_de, crear_alumno, crear_docente
+from tests.conftest import (
+    a_las,
+    agregar_no_lectivo,
+    asignar,
+    cabecera_de,
+    crear_alumno,
+    crear_docente,
+    crear_particular,
+    rangos_en_receso,
+    rangos_relativos,
+    terminar_pa_vigente,
+)
 
 # Miércoles. El periodo vigente empieza el lunes 18 de mayo: hasta ayer hubo 5 lunes
 # (18 y 25 de mayo; 1, 8 y 15 de junio) y 5 martes.
@@ -88,8 +99,7 @@ def test_cu011_un_feriado_no_vence_y_la_clase_de_hoy_aun_no(client, db, entorno,
     dias_de_clase(db, entorno, primero=3)
     assert indicadores(client, sup) == (4, 0)
 
-    db.add(DiaNoLaborable(fecha=date(2026, 6, 10), motivo="Feriado", creado_por=1, creado_en=ahora_utc()))
-    db.commit()
+    agregar_no_lectivo(db, entorno.calendario, date(2026, 6, 10))
 
     assert indicadores(client, sup) == (3, 0)
 
@@ -145,10 +155,7 @@ def test_cu011_solo_se_exigen_grados_con_docente_alumnos_y_colegio_activo(client
 
 def test_cu011_sin_periodo_vigente_no_hay_vencidos(db, entorno):
     dias_de_clase(db, entorno, primero=1)
-    vigente = entorno.periodos["vigente"]
-    vigente.fecha_fin = HOY - timedelta(days=1)
-    db.add(vigente)
-    db.commit()
+    terminar_pa_vigente(db, entorno)
 
     estado = estado_de_registros(db)
 
@@ -297,3 +304,38 @@ def test_cu011_el_incumplimiento_de_sede_mira_el_colegio_guardado_en_el_registro
     assert sedes == [
         "Incumplimiento de Sede - Colegio Colegio Lejano: Sin registros obligatorios en el periodo académico actual."
     ]
+
+
+# ── Calendario de cada colegio (CU027) ──────────────────────────────────────────────
+
+def test_cu011_cada_colegio_vence_segun_su_calendario(client, db, entorno, sup):
+    """Lejano tiene fechas particulares: su PA2 empieza el lunes 8 de junio, así que de
+    sus lunes solo vencen el 8 y el 15 (con el general serían 5). Un día no lectivo de su
+    calendario tampoco vence; Andino no se ve afectado."""
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    dias_de_clase(db, entorno, colegio="Lejano", tercero=1)
+    assert indicadores(client, sup) == (5, 0)
+
+    rangos = rangos_relativos(HOY)
+    rangos["PR1"] = (rangos["PR1"][0], date(2026, 6, 7))
+    rangos["PA2"] = (date(2026, 6, 8), rangos["PA2"][1])
+    particular = crear_particular(db, entorno, rangos)
+    assert indicadores(client, sup) == (2, 0)
+
+    agregar_no_lectivo(db, particular, LUNES)
+    assert indicadores(client, sup) == (1, 0)
+
+
+def test_cu011_colegio_en_receso_no_vence_y_su_docente_no_cuenta(client, db, entorno, sup):
+    """Andino usa el general (PA2); Lejano, un particular en el PR2: solo cuentan Rosa
+    (Andino) como docente activa y las clases de Andino."""
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    dias_de_clase(db, entorno, colegio="Lejano", tercero=1)
+    dias_de_clase(db, entorno, primero=1)
+    crear_particular(db, entorno, rangos_en_receso(HOY))
+
+    cuerpo = inicio(client, sup)
+
+    assert (cuerpo["docentes_activos"], cuerpo["registros_vencidos"]) == (1, 5)

@@ -23,14 +23,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio
-from app.core.tiempo import ahora_utc, fecha_lima
+from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
 from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
-from app.models.organizacion import Usuario
+from app.models.organizacion import Colegio, Usuario
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadItem, ActividadRespuesta
-from app.services.alcance import alcance_docente, tenia_asignacion
-from app.services.calendario import periodo_vigente
+from app.services.alcance import asignaciones_habilitadas, tenia_asignacion
+from app.services.calendario import cargar_calendarios
 from app.services.sesiones import (
     CIERRE_ACTIVIDAD_FORZADO,
     CIERRE_ACTIVIDAD_MANUAL,
@@ -170,14 +170,22 @@ def _fuera_de_periodo() -> ErrorNegocio:
 
 
 def impedimento_para_iniciar(db: Session, id_docente: Optional[int]) -> Optional[str]:
-    """Qué le impide al docente iniciar una actividad hoy, sin contar una ya activa:
-    `fuera_de_periodo` si no hay periodo vigente; `sin_asignaciones` si lo hay pero el
-    docente no tiene asignaciones en él (en colegios activos); None si puede."""
-    if periodo_vigente(db) is None:
+    """Qué le impide al docente iniciar una actividad hoy, sin contar una ya activa
+    (CU009): None si tiene al menos una asignación habilitada, es decir, en un colegio
+    activo que hoy está en un PA, y del PA de ese colegio (cada colegio con su
+    calendario). Si no la tiene: `fuera_de_periodo` si ningún colegio activo está hoy en
+    un PA, o `sin_asignaciones` si alguno lo está.
+
+    Punto de extensión (T4): las asignaciones retroactivas en un PR y los permisos
+    excepcionales vigentes también habilitan el inicio (`asignaciones_habilitadas`).
+    """
+    activos = db.exec(select(Colegio.id_colegio).where(col(Colegio.activo).is_(True))).all()
+    calendarios = cargar_calendarios(db, ids_colegio=activos)
+    if id_docente is not None and asignaciones_habilitadas(db, id_docente, calendarios=calendarios):
+        return None
+    if not calendarios.pa_actual_por_colegio(activos, hoy_lima()):
         return FUERA_DE_PERIODO
-    if id_docente is None or not alcance_docente(db, id_docente):
-        return SIN_ASIGNACIONES
-    return None
+    return SIN_ASIGNACIONES
 
 
 def _inicio_invalido(detail: str) -> ErrorNegocio:

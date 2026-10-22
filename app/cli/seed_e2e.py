@@ -45,7 +45,12 @@ from app.models.organizacion import (
     Usuario,
 )
 from app.models.seguridad import ControlAccesoCorreo
-from app.services.calendario import anio_de_referencia, anio_vigente, periodos_del_anio
+from app.services.calendario import (
+    anio_de_referencia,
+    anio_vigente,
+    cargar_calendarios,
+    periodos_academicos_del_anio,
+)
 from app.services.colegio_service import completar_oferta, nombre_comparable
 from app.services.sesiones import cerrar_sesiones_usuario
 from app.services.usuario_service import CIERRE_POR_DESACTIVACION
@@ -323,21 +328,24 @@ def _asegurar_asignaciones(
 
 
 def _liberar_grados(db: Session, colegio: Colegio, grados: dict[str, Grado], resumen: Resumen) -> None:
-    """4.º–6.º del colegio E2E sin docente desde el periodo vigente (incluido) en adelante.
-    Las asignaciones de periodos terminados se conservan como historial (CU016)."""
-    no_terminados = select(PeriodoAcademico.id_periodo_academico).where(
-        PeriodoAcademico.fecha_fin >= hoy_lima()
-    )
-    resultado = db.execute(
-        delete(DocenteColegioGrado).where(
+    """4.º–6.º del colegio E2E sin docente desde el PA vigente (incluido) en adelante, según
+    el calendario del colegio. Las asignaciones de PA terminados se conservan como
+    historial (CU016)."""
+    filas = db.exec(
+        select(DocenteColegioGrado.id, PeriodoAcademico)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .where(
             DocenteColegioGrado.id_colegio == colegio.id_colegio,
             col(DocenteColegioGrado.id_grado).in_([grados[n].id_grado for n in GRADOS_LIBRES]),
-            col(DocenteColegioGrado.id_periodo_academico).in_(no_terminados),
         )
-    )
-    db.commit()
-    if resultado.rowcount:
-        resumen.eliminados["asignación E2E en 4.º–6.º"] += resultado.rowcount
+    ).all()
+    calendarios = cargar_calendarios(db, ids_colegio=[colegio.id_colegio])
+    hoy = hoy_lima()
+    liberables = [i for i, periodo in filas if not calendarios.pa_terminado(colegio.id_colegio, periodo, hoy)]
+    if liberables:
+        db.execute(delete(DocenteColegioGrado).where(col(DocenteColegioGrado.id).in_(liberables)))
+        db.commit()
+        resumen.eliminados["asignación E2E en 4.º–6.º"] += len(liberables)
 
 
 def _anio_escolar(db: Session) -> Optional[AnioEscolar]:
@@ -378,7 +386,7 @@ def sembrar_e2e(db: Session, entorno: Optional[Mapping[str, str]] = None) -> Res
     if anio is None:
         resumen.advertir("Datos E2E sin asignaciones: no hay calendario cargado")
     elif docente is not None:
-        periodos = periodos_del_anio(db, anio.id_anio_escolar)
+        periodos = periodos_academicos_del_anio(db, anio.id_anio_escolar)
         _asegurar_asignaciones(db, docente.id_docente, colegio, grados, periodos, id_autor, resumen)
     _liberar_grados(db, colegio, grados, resumen)
     return resumen

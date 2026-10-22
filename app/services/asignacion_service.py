@@ -5,8 +5,10 @@ Reglas de negocio:
   colegio ofrece (`colegio_grado`). Cada asignación se guarda como una fila por grado y
   periodo en `docente_colegio_grado`, para que en el futuro pueda enseñar solo algunos.
 - Un solo docente por (colegio, grado, periodo) (UNIQUE en la BD).
-- Solo se crean o reemplazan filas en periodos no terminados (`fecha_fin >= hoy`): los
-  periodos pasados son historial y nunca se tocan.
+- Solo se crean o reemplazan filas en PA no terminados (su fin, en el calendario del
+  colegio de la asignación, es hoy o después): los PA pasados son historial y nunca se
+  tocan. "Vigente", "terminado" y "próximo" siempre se miden con el calendario del colegio
+  (CU027): dos colegios pueden estar en periodos distintos el mismo día.
 
 Las asignaciones se cambian con POST y PATCH /usuarios; aquí no se hace commit.
 """
@@ -39,10 +41,13 @@ from app.schemas.comun import ItemCatalogo
 from app.schemas.usuario import AsignacionDetalle, GradoAsignado, PeriodoAsignado
 from app.services.alcance import alcance_docente
 from app.services.calendario import (
-    no_terminado,
-    periodo_vigente,
-    periodos_del_anio,
-    proximo_periodo,
+    CalendarioResuelto,
+    PeriodoCalendario,
+    anio_de_referencia,
+    cargar_calendarios,
+    en_pa_de_su_colegio,
+    pa_actual_de_colegios,
+    periodos_academicos_del_anio,
 )
 
 SIN_ASIGNACION = "Sin asignación"
@@ -113,49 +118,75 @@ def resolver_grados(db: Session, colegio: Colegio, ids_grados: Optional[list[int
     return [ofrecidos[i] for i in sorted(set(ids_grados))]
 
 
-def anio_con_periodos(db: Session, id_anio_escolar: int) -> tuple[AnioEscolar, list[PeriodoAcademico]]:
+@dataclass(frozen=True)
+class AnioDelColegio:
+    """Un año escolar con sus PA y el calendario que le aplica a un colegio."""
+
+    anio: AnioEscolar
+    periodos: list[PeriodoAcademico]
+    calendario: CalendarioResuelto
+
+    def no_terminado(self, periodo: PeriodoAcademico) -> bool:
+        """Vigente o futuro en el calendario del colegio: su último día es hoy o después."""
+        pa = self.calendario.pa(periodo.numero)
+        return pa is not None and pa.fecha_fin >= hoy_lima()
+
+
+def anio_del_colegio(db: Session, id_anio_escolar: int, id_colegio: int) -> AnioDelColegio:
+    """El año, sus PA y el calendario del colegio. 422 si el año no existe, no tiene PA o
+    no tiene calendario configurado (CU027)."""
     anio = db.get(AnioEscolar, id_anio_escolar)
     if anio is None:
         raise _no_procesable("No existe el año escolar indicado.", "anio_inexistente")
-    periodos = periodos_del_anio(db, id_anio_escolar)
+    periodos = periodos_academicos_del_anio(db, id_anio_escolar)
     if not periodos:
         raise _no_procesable("El año escolar no tiene periodos cargados.", "anio_sin_periodos")
-    return anio, periodos
+    calendario = cargar_calendarios(db, id_anio_escolar, ids_colegio=[id_colegio]).aplicable(
+        id_colegio, id_anio_escolar
+    )
+    if calendario is None:
+        raise _no_procesable(
+            "El año escolar no tiene un calendario académico configurado.", "calendario_no_configurado"
+        )
+    return AnioDelColegio(anio, periodos, calendario)
 
 
-def periodo_de_inicio(
-    db: Session, periodos: list[PeriodoAcademico], id_periodo: Optional[int]
-) -> Optional[PeriodoAcademico]:
-    """Desde qué periodo del año aplica un cambio.
+def _periodo_por_defecto(anio: AnioDelColegio) -> Optional[PeriodoAcademico]:
+    """El PA en que hoy está el colegio o, si está en un PR, el siguiente PA del año.
+    None si hoy cae fuera de ese año (= desde el primer PA no terminado)."""
+    actual = anio.calendario.periodo_de(hoy_lima())
+    if actual is None:
+        return None
+    numero = actual.numero if actual.es_pa else actual.numero + 1
+    return next((p for p in anio.periodos if p.numero == numero), None)
 
-    Con `id_periodo`, ese (debe ser del año y no estar terminado). Sin él, el vigente o,
-    si estamos entre periodos, el próximo; si ninguno es de ese año, None (= desde el
-    primer periodo no terminado del año).
+
+def periodo_de_inicio(anio: AnioDelColegio, id_periodo: Optional[int]) -> Optional[PeriodoAcademico]:
+    """Desde qué PA del año aplica un cambio, según el calendario del colegio.
+
+    Con `id_periodo`, ese (debe ser del año y no estar terminado). Sin él, el PA en que
+    está hoy el colegio o, si está en un receso, el próximo; si hoy no cae en ese año,
+    None (= desde el primer PA no terminado del año). Punto de extensión (T4):
+    Retroactivo/Próximo durante un PR.
     """
-    if id_periodo is not None:
-        elegido = next((p for p in periodos if p.id_periodo_academico == id_periodo), None)
-        if elegido is None:
-            raise _no_procesable(
-                "El periodo indicado no pertenece al año escolar de la asignación.",
-                "periodo_fuera_del_anio",
-            )
-        if not no_terminado(elegido):
-            raise _no_procesable("El periodo indicado ya terminó.", "periodo_terminado")
-        return elegido
-    ids_del_anio = {p.id_periodo_academico for p in periodos}
-    for candidato in (periodo_vigente(db), proximo_periodo(db)):
-        if candidato is not None and candidato.id_periodo_academico in ids_del_anio:
-            return candidato
-    return None
+    if id_periodo is None:
+        return _periodo_por_defecto(anio)
+    elegido = next((p for p in anio.periodos if p.id_periodo_academico == id_periodo), None)
+    if elegido is None:
+        raise _no_procesable(
+            "El periodo indicado no pertenece al año escolar de la asignación.",
+            "periodo_fuera_del_anio",
+        )
+    if not anio.no_terminado(elegido):
+        raise _no_procesable("El periodo indicado ya terminó.", "periodo_terminado")
+    return elegido
 
 
-def periodos_asignables(
-    periodos: list[PeriodoAcademico], desde: Optional[PeriodoAcademico] = None
-) -> list[PeriodoAcademico]:
-    """Periodos no terminados del año, desde `desde` en adelante."""
+def periodos_asignables(anio: AnioDelColegio, desde: Optional[PeriodoAcademico] = None) -> list[PeriodoAcademico]:
+    """PA no terminados del año (en el calendario del colegio), desde `desde` en adelante."""
     asignables = [
-        p for p in periodos
-        if no_terminado(p) and (desde is None or p.fecha_inicio >= desde.fecha_inicio)
+        p for p in anio.periodos
+        if anio.no_terminado(p) and (desde is None or p.numero >= desde.numero)
     ]
     if not asignables:
         raise _no_procesable(
@@ -252,9 +283,9 @@ def planificar_asignacion_nueva(
     """Asignación de un docente que no tiene una previa (alta o paso a Docente)."""
     colegio = colegio_activo(db, id_colegio)
     grados = resolver_grados(db, colegio, ids_grados)
-    anio, periodos = anio_con_periodos(db, id_anio_escolar)
-    desde = periodo_de_inicio(db, periodos, desde_periodo) if desde_periodo is not None else None
-    return Asignacion(colegio, grados, anio, periodos_asignables(periodos, desde))
+    anio = anio_del_colegio(db, id_anio_escolar, colegio.id_colegio)
+    desde = periodo_de_inicio(anio, desde_periodo) if desde_periodo is not None else None
+    return Asignacion(colegio, grados, anio.anio, periodos_asignables(anio, desde))
 
 
 @dataclass(frozen=True)
@@ -274,13 +305,16 @@ def estado_en(db: Session, id_docente: int, periodo: Optional[PeriodoAcademico] 
             PeriodoAcademico,
             PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico,
         )
+        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
         .where(DocenteColegioGrado.id_docente == id_docente)
     )
     if periodo is not None:
         consulta = consulta.where(
             DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico
         )
-    filas = db.exec(consulta.order_by(col(PeriodoAcademico.fecha_inicio).desc())).all()
+    filas = db.exec(
+        consulta.order_by(col(AnioEscolar.fecha_inicio).desc(), col(PeriodoAcademico.numero).desc())
+    ).all()
     if not filas:
         return None
     ultimo = filas[0][1]
@@ -317,19 +351,20 @@ def planificar_cambio(
         return planificar_asignacion_nueva(db, id_colegio, id_anio_escolar, ids_grados, desde_periodo)
 
     id_anio = id_anio_escolar if id_anio_escolar is not None else ultimo.periodo.id_anio_escolar
-    anio, periodos = anio_con_periodos(db, id_anio)
+    # "Desde cuándo" se mide con el calendario del colegio de destino (el nuevo si cambia).
+    anio = anio_del_colegio(db, id_anio, id_colegio if id_colegio is not None else ultimo.id_colegio)
     renovacion = id_anio != ultimo.periodo.id_anio_escolar
-    desde, base = _inicio_y_base(db, id_docente, ultimo, periodos, desde_periodo, renovacion)
+    desde, base = _inicio_y_base(db, id_docente, ultimo, anio, desde_periodo, renovacion)
     colegio = colegio_activo(db, id_colegio if id_colegio is not None else base.id_colegio)
     grados = _grados_del_cambio(db, colegio, ids_grados, base)
-    return Asignacion(colegio, grados, anio, periodos_asignables(periodos, desde))
+    return Asignacion(colegio, grados, anio.anio, periodos_asignables(anio, desde))
 
 
 def _inicio_y_base(
     db: Session,
     id_docente: int,
     ultimo: EstadoActual,
-    periodos: list[PeriodoAcademico],
+    anio: AnioDelColegio,
     desde_periodo: Optional[int],
     renovacion: bool,
 ) -> tuple[Optional[PeriodoAcademico], EstadoActual]:
@@ -340,9 +375,9 @@ def _inicio_y_base(
     partiendo de lo que tiene en ese periodo.
     """
     if renovacion:
-        desde = periodo_de_inicio(db, periodos, desde_periodo) if desde_periodo is not None else None
+        desde = periodo_de_inicio(anio, desde_periodo) if desde_periodo is not None else None
         return desde, ultimo
-    desde = periodo_de_inicio(db, periodos, desde_periodo)
+    desde = periodo_de_inicio(anio, desde_periodo)
     base = estado_en(db, id_docente, desde) if desde is not None else None
     return desde, base or ultimo
 
@@ -375,56 +410,47 @@ def resumen_actual(db: Session, id_docente: int, periodos: list[PeriodoAcademico
 
 
 def liberar_asignaciones(db: Session, id_docente: int) -> str:
-    """Quita al docente de sus grados desde el periodo vigente (incluido) en adelante.
+    """Quita al docente de sus grados desde el PA vigente de su colegio (incluido) en
+    adelante.
 
     Se usa al desactivarlo y al pasarlo a otro rol: así otro docente puede tomar esos
-    grados de inmediato. Las asignaciones de periodos terminados se conservan como
-    historial. Devuelve el resumen de lo liberado (para la auditoría) o SIN_ASIGNACION.
+    grados de inmediato. Las asignaciones de PA terminados (en el calendario de su
+    colegio) se conservan como historial. Devuelve el resumen de lo liberado (para la
+    auditoría) o SIN_ASIGNACION.
     """
-    no_terminados = list(
-        db.exec(
-            select(PeriodoAcademico)
-            .join(
-                DocenteColegioGrado,
-                DocenteColegioGrado.id_periodo_academico == PeriodoAcademico.id_periodo_academico,
-            )
-            .where(
-                DocenteColegioGrado.id_docente == id_docente,
-                PeriodoAcademico.fecha_fin >= hoy_lima(),
-            )
-            .distinct()
-            .order_by(PeriodoAcademico.fecha_inicio)
-        ).all()
-    )
-    if not no_terminados:
+    filas = db.exec(
+        select(DocenteColegioGrado, PeriodoAcademico)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
+        .where(DocenteColegioGrado.id_docente == id_docente)
+        .order_by(AnioEscolar.fecha_inicio, PeriodoAcademico.numero)
+    ).all()
+    calendarios = cargar_calendarios(db, ids_colegio={f.id_colegio for f, _ in filas})
+    hoy = hoy_lima()
+    liberables = [(f, p) for f, p in filas if not calendarios.pa_terminado(f.id_colegio, p, hoy)]
+    if not liberables:
         return SIN_ASIGNACION
+    no_terminados = list({p.id_periodo_academico: p for _, p in liberables}.values())
     anio = db.get(AnioEscolar, no_terminados[0].id_anio_escolar)
     resumen = resumen_actual(db, id_docente, no_terminados, anio)
-    db.execute(
-        delete(DocenteColegioGrado).where(
-            DocenteColegioGrado.id_docente == id_docente,
-            col(DocenteColegioGrado.id_periodo_academico).in_(
-                [p.id_periodo_academico for p in no_terminados]
-            ),
-        )
-    )
+    db.execute(delete(DocenteColegioGrado).where(col(DocenteColegioGrado.id).in_([f.id for f, _ in liberables])))
     return resumen
 
 
 # ── Lectura ─────────────────────────────────────────────────────────────────────────
 
 def colegios_vigentes_por_docente(db: Session, ids_docente: list[int]) -> dict[int, list[ItemCatalogo]]:
-    """Colegios de cada docente en el periodo vigente, sin repetir y por nombre, en una
-    sola consulta."""
-    periodo = periodo_vigente(db)
-    if periodo is None or not ids_docente:
+    """Colegios de cada docente con asignación del PA en que hoy está ese colegio, sin
+    repetir y por nombre, en una sola consulta (más los calendarios)."""
+    if not ids_docente:
         return {}
+    pa_actual = pa_actual_de_colegios(db)
     filas = db.exec(
         select(DocenteColegioGrado.id_docente, Colegio.id_colegio, Colegio.nombre)
         .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
         .where(
             col(DocenteColegioGrado.id_docente).in_(ids_docente),
-            DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
+            en_pa_de_su_colegio(DocenteColegioGrado.id_colegio, DocenteColegioGrado.id_periodo_academico, pa_actual),
         )
         .distinct()
         .order_by(Colegio.nombre, Colegio.id_colegio)
@@ -438,8 +464,9 @@ def colegios_vigentes_por_docente(db: Session, ids_docente: list[int]) -> dict[i
 def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetalle]:
     """Asignación del docente para prellenar el formulario de edición.
 
-    Los periodos del año escolar vigente si tiene asignaciones en él; si no, los del año
-    más reciente en que tenga. None si nunca tuvo asignaciones.
+    Los periodos del año escolar de referencia si tiene asignaciones en él; si no, los
+    del año más reciente en que tenga. None si nunca tuvo asignaciones. `vigente` marca
+    el PA en que hoy está el colegio de la asignación.
     """
     filas = db.exec(
         select(DocenteColegioGrado, PeriodoAcademico, Colegio, Grado)
@@ -447,20 +474,22 @@ def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetal
             PeriodoAcademico,
             PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico,
         )
+        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
         .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
         .join(Grado, Grado.id_grado == DocenteColegioGrado.id_grado)
         .where(DocenteColegioGrado.id_docente == id_docente)
-        .order_by(PeriodoAcademico.fecha_inicio, Grado.id_grado)
+        .order_by(AnioEscolar.fecha_inicio, PeriodoAcademico.numero, Grado.id_grado)
     ).all()
     if not filas:
         return None
 
-    vigente = periodo_vigente(db)
+    referencia = anio_de_referencia(db)
     anios = {p.id_anio_escolar for _, p, _, _ in filas}
-    if vigente is not None and vigente.id_anio_escolar in anios:
-        id_anio = vigente.id_anio_escolar
+    if referencia is not None and referencia.id_anio_escolar in anios:
+        id_anio = referencia.id_anio_escolar
     else:
         id_anio = filas[-1][1].id_anio_escolar  # el del periodo más reciente
+    pa_actual = pa_actual_de_colegios(db)
 
     periodos: dict[int, PeriodoAsignado] = {}
     for fila, periodo, colegio, grado in filas:
@@ -471,7 +500,7 @@ def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetal
             PeriodoAsignado(
                 id_periodo=periodo.id_periodo_academico,
                 numero=periodo.numero,
-                vigente=vigente is not None and vigente.id_periodo_academico == periodo.id_periodo_academico,
+                vigente=_es_pa_actual(pa_actual, fila.id_colegio, periodo.id_periodo_academico),
                 id_colegio=fila.id_colegio,
                 colegio=colegio.nombre,
                 grados=[],
@@ -481,13 +510,20 @@ def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetal
     return AsignacionDetalle(id_anio_escolar=id_anio, periodos=list(periodos.values()))
 
 
+def _es_pa_actual(pa_actual: dict[int, PeriodoCalendario], id_colegio: int, id_periodo: int) -> bool:
+    """Si el periodo es el PA en que hoy está ese colegio."""
+    pa = pa_actual.get(id_colegio)
+    return pa is not None and pa.id_periodo_academico == id_periodo
+
+
 def listar_asignaciones(
     db: Session,
     id_docente: Optional[int] = None,
     id_periodo_academico: Optional[int] = None,
     id_colegio: Optional[int] = None,
 ) -> list[AsignacionItem]:
-    vigente = periodo_vigente(db)
+    """Asignaciones con filtros. `vigente`: del PA en que hoy está su colegio."""
+    pa_actual = pa_actual_de_colegios(db)
     consulta = (
         select(DocenteColegioGrado, Docente, Colegio, Grado, PeriodoAcademico, AnioEscolar)
         .join(Docente, Docente.id_docente == DocenteColegioGrado.id_docente)
@@ -506,7 +542,7 @@ def listar_asignaciones(
     if id_colegio is not None:
         consulta = consulta.where(DocenteColegioGrado.id_colegio == id_colegio)
     consulta = consulta.order_by(
-        PeriodoAcademico.fecha_inicio, Colegio.nombre, Grado.id_grado, Docente.apellidos
+        AnioEscolar.fecha_inicio, PeriodoAcademico.numero, Colegio.nombre, Grado.id_grado, Docente.apellidos
     )
     return [
         AsignacionItem(
@@ -521,7 +557,7 @@ def listar_asignaciones(
             periodo=periodo.numero,
             id_anio_escolar=anio.id_anio_escolar,
             anio=anio.nombre,
-            vigente=vigente is not None and vigente.id_periodo_academico == periodo.id_periodo_academico,
+            vigente=_es_pa_actual(pa_actual, colegio.id_colegio, periodo.id_periodo_academico),
         )
         for fila, docente, colegio, grado, periodo, anio in db.exec(consulta).all()
     ]

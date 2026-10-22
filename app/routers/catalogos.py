@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.tiempo import hoy_lima
 from app.dependencies import get_current_user
 from app.models.evaluacion import NivelGeneral, NivelRazkids, NivelRubrica, SemanaReporte
-from app.models.organizacion import AnioEscolar, Grado, PeriodoAcademico, Programa, Usuario
+from app.models.organizacion import TIPO_PA, AnioEscolar, Grado, PeriodoAcademico, Programa, Usuario
 from app.schemas.catalogos import (
     AnioEscolarResponse,
     GradoResponse,
@@ -23,6 +23,7 @@ from app.schemas.catalogos import (
     ProgramaResponse,
     SemanaResponse,
 )
+from app.services.calendario import PeriodoCalendario, cargar_calendarios
 
 router = APIRouter(tags=["catalogos"])
 
@@ -62,8 +63,22 @@ def listar_anios_escolares(db: Db, _: Autenticado):
     ]
 
 
+def _periodo_academico(p: PeriodoAcademico, pa: Optional[PeriodoCalendario], hoy: date) -> PeriodoAcademicoResponse:
+    return PeriodoAcademicoResponse(
+        id=p.id_periodo_academico, id_anio_escolar=p.id_anio_escolar, numero=p.numero, tipo=TIPO_PA,
+        fecha_inicio=pa.fecha_inicio if pa else None, fecha_fin=pa.fecha_fin if pa else None,
+        vigente=pa is not None and pa.contiene(hoy),
+    )
+
+
 @router.get("/periodos-academicos", response_model=list[PeriodoAcademicoResponse])
-def listar_periodos_academicos(db: Db, _: Autenticado, id_anio_escolar: Optional[int] = None):
+def listar_periodos_academicos(
+    db: Db, _: Autenticado, id_anio_escolar: Optional[int] = None, id_colegio: Optional[int] = None
+):
+    """PA1 a PA4 de cada año con las fechas del calendario general (CU027) o, con
+    `id_colegio`, del calendario que aplica a ese colegio (su particular activo si lo
+    tiene). Fechas null si el año no tiene calendario. Los recesos (PR) y los días no
+    lectivos están en GET /calendarios."""
     hoy = hoy_lima()
     consulta = (
         select(PeriodoAcademico, AnioEscolar.fecha_inicio)
@@ -72,14 +87,12 @@ def listar_periodos_academicos(db: Db, _: Autenticado, id_anio_escolar: Optional
     )
     if id_anio_escolar is not None:
         consulta = consulta.where(PeriodoAcademico.id_anio_escolar == id_anio_escolar)
-    return [
-        PeriodoAcademicoResponse(
-            id=p.id_periodo_academico, id_anio_escolar=p.id_anio_escolar, numero=p.numero,
-            fecha_inicio=p.fecha_inicio, fecha_fin=p.fecha_fin,
-            vigente=_vigente(p.fecha_inicio, p.fecha_fin, hoy),
-        )
-        for p, _ in db.exec(consulta).all()
-    ]
+    calendarios = cargar_calendarios(db, id_anio_escolar, ids_colegio=[] if id_colegio is None else [id_colegio])
+    respuesta = []
+    for p, _ in db.exec(consulta).all():
+        calendario = calendarios.aplicable(id_colegio, p.id_anio_escolar)
+        respuesta.append(_periodo_academico(p, calendario.pa(p.numero) if calendario else None, hoy))
+    return respuesta
 
 
 @router.get("/semanas", response_model=list[SemanaResponse])

@@ -38,7 +38,7 @@ from app.schemas.comun import ItemCatalogo
 from app.services.actividad import requerir_actividad_activa
 from app.services.alcance import alcance_docente
 from app.services.auditoria import ACTIVAR, CREAR, EDITAR, INACTIVAR, registrar_auditoria
-from app.services.calendario import periodo_de_referencia
+from app.services.calendario import cargar_calendarios
 from app.services.usuario_service import DOCENTE, nombre_rol
 
 TABLA = "alumno"
@@ -231,15 +231,16 @@ def validar_estado(db: Session, id_colegio: int, id_grado: int, id_programa: int
 
 
 def registrar_programa(db: Session, alumno: Alumno, id_actor: int, ahora: datetime) -> None:
-    """Deja el subprograma actual del alumno en `alumno_programa_historial`, en el periodo
-    de referencia (vigente, próximo o último cargado).
+    """Deja el subprograma actual del alumno en `alumno_programa_historial`, en el PA de
+    referencia de SU colegio (vigente, próximo o último cargado, según el calendario del
+    colegio).
 
     Una sola sentencia INSERT ... ON CONFLICT sobre el UNIQUE (alumno, periodo): si ya hay
     fila para ese periodo, la actualiza (solo si el subprograma cambió) en vez de
     duplicarla, y dos peticiones simultáneas nunca chocan en un 500.
     """
-    periodo = periodo_de_referencia(db)
-    if periodo is None:
+    periodo = cargar_calendarios(db, ids_colegio=[alumno.id_colegio]).pa_para_registrar(alumno.id_colegio, hoy_lima())
+    if periodo is None or periodo.id_periodo_academico is None:
         return
     sentencia = insert_con_conflicto(db, _historial).values(
         id_alumno=alumno.id_alumno,

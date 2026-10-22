@@ -23,19 +23,30 @@ from app.cli.supervisor import DatosSupervisor, errores_de_validacion, inicializ
 from app.core.config import Settings
 from app.core.security import verify_password
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import EvaluacionDiagnostica, ReporteSemanalAlumno, SemanaReporte
+from app.models.evaluacion import Asistencia, EvaluacionDiagnostica, ReporteSemanalAlumno, SemanaReporte
 from app.models.organizacion import (
     AnioEscolar,
+    Calendario,
     Colegio,
     ColegioGrado,
-    DiaNoLaborable,
+    DiaNoLectivo,
     Docente,
     DocenteColegioGrado,
     Grado,
     PeriodoAcademico,
     Usuario,
 )
-from tests.conftest import PASSWORD, crear_alumno, crear_colegio, crear_docente
+from app.services.calendario import cargar_calendarios
+from tests.conftest import (
+    PASSWORD,
+    agregar_no_lectivo,
+    crear_alumno,
+    crear_colegio,
+    crear_docente,
+    fijar_periodo,
+    releer,
+    terminar_pa_vigente,
+)
 
 LUNES = date(2030, 3, 4)
 
@@ -63,14 +74,24 @@ def con_original(db):
     return db
 
 
-def calendario(periodos=None, **anio) -> dict:
-    """Año de 2030 con dos periodos de lunes a viernes."""
-    if periodos is None:
-        periodos = [
-            {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"},
-            {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05", "corte_diagnostico": "2030-03-27"},
-        ]
-    return {"anio": {"nombre": "2030", "fecha_inicio": "2030-03-01", "fecha_fin": "2030-12-20", **anio}, "periodos": periodos}
+# PA1 a PA4 de 2030, de lunes a viernes: 2, 2, 1 y 1 semanas.
+PAS_2030 = (
+    {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"},
+    {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05", "corte_diagnostico": "2030-03-27"},
+    {"numero": 3, "fecha_inicio": "2030-05-06", "fecha_fin": "2030-05-10", "corte_diagnostico": "2030-05-07"},
+    {"numero": 4, "fecha_inicio": "2030-06-03", "fecha_fin": "2030-06-07", "corte_diagnostico": "2030-06-04"},
+)
+
+
+def calendario(periodos=None, recesos=None, **anio) -> dict:
+    """Año 2030 con sus PA (por defecto PAS_2030) y, si se pasan, sus recesos."""
+    datos = {
+        "anio": {"nombre": "2030", "fecha_inicio": "2030-03-01", "fecha_fin": "2030-12-20", **anio},
+        "periodos": [dict(p) for p in (PAS_2030 if periodos is None else periodos)],
+    }
+    if recesos is not None:
+        datos["recesos"] = recesos
+    return datos
 
 
 def escribir(tmp_path: Path, datos, nombre="calendario.json") -> Path:
@@ -251,44 +272,86 @@ def test_supervisor_original_sin_rol_supervisor(db):
 
 # ── cargar-calendario ───────────────────────────────────────────────────────────────
 
-def test_cargar_calendario_crea_anio_periodos_cortes_y_semanas(con_original, tmp_path):
+def general_2030(db):
+    return cargar_calendarios(db).generales[db.exec(select(AnioEscolar)).one().id_anio_escolar]
+
+
+def test_cargar_calendario_crea_anio_periodos_calendario_cortes_y_semanas(con_original, tmp_path):
     db = con_original
 
     resumen = cargar_calendario(db, escribir(tmp_path, calendario()))
 
     assert resumen.errores == []
-    assert (resumen.creados["año_escolar"], resumen.creados["periodo_academico"]) == (1, 2)
-    assert resumen.creados["evaluacion_diagnostica"] == 2
+    assert (resumen.creados["año_escolar"], resumen.creados["periodo_academico"], resumen.creados["calendario"]) == (1, 4, 1)
+    assert resumen.creados["evaluacion_diagnostica"] == 4
+    # Sin `recesos` en el archivo, cada PR cubre el hueco hasta el PA siguiente y el PR4
+    # llega al fin del año.
+    assert [(p.nombre, p.fecha_inicio, p.fecha_fin) for p in general_2030(db).periodos] == [
+        ("PA1", date(2030, 3, 4), date(2030, 3, 15)), ("PR1", date(2030, 3, 16), date(2030, 3, 24)),
+        ("PA2", date(2030, 3, 25), date(2030, 4, 5)), ("PR2", date(2030, 4, 6), date(2030, 5, 5)),
+        ("PA3", date(2030, 5, 6), date(2030, 5, 10)), ("PR3", date(2030, 5, 11), date(2030, 6, 2)),
+        ("PA4", date(2030, 6, 3), date(2030, 6, 7)), ("PR4", date(2030, 6, 8), date(2030, 12, 20)),
+    ]
     semanas = db.exec(select(SemanaReporte).order_by(SemanaReporte.numero_semana)).all()
     assert [(s.numero_semana, s.fecha_inicio) for s in semanas] == [
-        (1, LUNES), (2, LUNES + timedelta(days=7)), (3, date(2030, 3, 25)), (4, date(2030, 4, 1))
+        (1, LUNES), (2, LUNES + timedelta(days=7)), (3, date(2030, 3, 25)), (4, date(2030, 4, 1)),
+        (5, date(2030, 5, 6)), (6, date(2030, 6, 3)),
     ]
-    assert sum(cargar_calendario(db, escribir(tmp_path, calendario())).creados.values()) == 0
+    otra = cargar_calendario(db, escribir(tmp_path, calendario()))
+    assert (sum(otra.creados.values()), otra.advertencias) == (0, [])
 
 
-def test_cargar_calendario_actualiza_fechas_y_elimina_semanas_sobrantes(con_original, tmp_path):
+def test_cargar_calendario_usa_los_recesos_del_archivo(con_original, tmp_path):
+    db = con_original
+    recesos = [
+        {"numero": 1, "fecha_inicio": "2030-03-16", "fecha_fin": "2030-03-17"},
+        {"numero": 2, "fecha_inicio": "2030-04-06", "fecha_fin": "2030-04-07"},
+        {"numero": 3, "fecha_inicio": "2030-05-11", "fecha_fin": "2030-05-12"},
+        {"numero": 4, "fecha_inicio": "2030-06-08", "fecha_fin": "2031-02-28"},
+    ]
+
+    assert cargar_calendario(db, escribir(tmp_path, calendario(recesos=recesos))).errores == []
+
+    periodos = {p.nombre: (p.fecha_inicio, p.fecha_fin) for p in general_2030(db).periodos}
+    assert (periodos["PR1"], periodos["PR4"]) == ((date(2030, 3, 16), date(2030, 3, 17)), (date(2030, 6, 8), date(2031, 2, 28)))
+
+
+def test_cargar_calendario_no_pisa_el_calendario_de_la_api(con_original, tmp_path):
+    """Desde CU027 el general lo gestiona el Supervisor: un archivo distinto no lo cambia
+    (WARNING). El año y los cortes sí los manda el archivo."""
     db = con_original
     cargar_calendario(db, escribir(tmp_path, calendario()))
-    cambiado = calendario(
-        [
-            {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-08", "corte_diagnostico": "2030-03-07"},
-            {"numero": 3, "fecha_inicio": "2030-04-01", "fecha_fin": "2030-04-12", "corte_diagnostico": "2030-04-03"},
-        ],
-        fecha_fin="2030-12-13",
-    )
+    cambiado = calendario(fecha_fin="2030-12-13")
+    cambiado["periodos"][0] = {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-08",
+                               "corte_diagnostico": "2030-03-07"}
     db.add(PeriodoAcademico(id_anio_escolar=db.exec(select(AnioEscolar)).one().id_anio_escolar, numero=9,
-                            fecha_inicio=date(2030, 9, 2), fecha_fin=date(2030, 9, 6), creado_por=1, creado_en=ahora_utc()))
+                            creado_por=1, creado_en=ahora_utc()))
     db.commit()
 
     resumen = cargar_calendario(db, escribir(tmp_path, cambiado))
 
     assert resumen.errores == []
-    assert resumen.actualizados["año_escolar"] == 1
-    assert resumen.actualizados["periodo_academico"] == 1
-    assert resumen.actualizados["evaluacion_diagnostica"] == 1
-    assert resumen.eliminados["semana_reporte"] == 2
-    assert any("el periodo 2 existe en la BD" in a for a in resumen.advertencias)
-    assert [s.numero_semana for s in db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).all()] == [1, 2, 3]
+    assert (resumen.actualizados["año_escolar"], resumen.actualizados["evaluacion_diagnostica"]) == (1, 1)
+    assert any("calendario general 2030: difiere del archivo y no se modifica" in a for a in resumen.advertencias)
+    assert any("el periodo 9 existe en la BD" in a for a in resumen.advertencias)
+    assert general_2030(db).pa(1).fecha_fin == date(2030, 3, 15)
+    assert resumen.eliminados["semana_reporte"] == 0
+
+
+def test_cargar_calendario_genera_las_semanas_con_el_calendario_de_la_bd(con_original, tmp_path):
+    """Si el Supervisor acortó el PA2 (termina el 29/03), la semana del 1/04 sobra."""
+    db = con_original
+    cargar_calendario(db, escribir(tmp_path, calendario()))
+    general = db.exec(select(Calendario)).one()
+    fijar_periodo(db, general, "PA2", fin=date(2030, 3, 29))
+    fijar_periodo(db, general, "PR2", inicio=date(2030, 3, 30))
+
+    resumen = cargar_calendario(db, escribir(tmp_path, calendario()))
+
+    assert resumen.eliminados["semana_reporte"] == 1
+    assert [s.numero_semana for s in db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio)).all()] == [
+        1, 2, 3, 4, 5
+    ]
 
 
 def test_cargar_calendario_no_mueve_semanas_con_registros(con_original, tmp_path):
@@ -305,30 +368,35 @@ def test_cargar_calendario_no_mueve_semanas_con_registros(con_original, tmp_path
                                 id_anio_escolar=semana.id_anio_escolar, id_periodo_academico=semana.id_periodo_academico,
                                 id_docente=ficha.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc()))
     db.commit()
-    corrido = calendario(
-        [{"numero": 1, "fecha_inicio": "2030-03-11", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-12"}]
-    )
+    fijar_periodo(db, db.exec(select(Calendario)).one(), "PA1", inicio=date(2030, 3, 11))
 
-    resumen = cargar_calendario(db, escribir(tmp_path, corrido))
+    resumen = cargar_calendario(db, escribir(tmp_path, calendario(fecha_fin="2030-12-13")))
 
     assert "tiene registros" in resumen.errores[0]
-    assert db.exec(select(PeriodoAcademico).where(PeriodoAcademico.numero == 1)).one().fecha_inicio == LUNES
+    assert db.exec(select(AnioEscolar)).one().fecha_fin == date(2030, 12, 20)
+    assert db.get(SemanaReporte, semana.id_semana) is not None
+
+
+def con_pa1(**cambios) -> list[dict]:
+    """Los PA de `calendario()` con el PA1 cambiado."""
+    periodos = calendario()["periodos"]
+    periodos[0] = {**periodos[0], **cambios}
+    return periodos
 
 
 @pytest.mark.parametrize(
     "periodos, anio, texto",
     [
-        ([{"numero": 1, "fecha_inicio": "2030-03-05", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"}], {}, "no es lunes"),
-        ([{"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-14", "corte_diagnostico": "2030-03-06"}], {}, "no es viernes"),
-        ([{"numero": 1, "fecha_inicio": "2030-03-15", "fecha_fin": "2030-03-04", "corte_diagnostico": "2030-03-06"}], {}, "después de terminar"),
-        ([{"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-20"}], {}, "corte"),
-        ([{"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"}],
-         {"fecha_inicio": "2030-03-10"}, "sale del año"),
-        ([], {}, "no tiene periodos"),
+        (con_pa1(fecha_inicio="2030-03-05"), {}, "no es lunes"),
+        (con_pa1(fecha_fin="2030-03-14"), {}, "no es viernes"),
+        (con_pa1(fecha_inicio="2030-03-15", fecha_fin="2030-03-04"), {}, "después de terminar"),
+        (con_pa1(corte_diagnostico="2030-03-20"), {}, "corte"),
+        (con_pa1(), {"fecha_inicio": "2030-03-10"}, "sale del año"),
+        ([], {}, "debe tener los periodos 1 a 4"),
+        (calendario()["periodos"][:3], {}, "debe tener los periodos 1 a 4"),
         ([], {"fecha_inicio": "2031-01-01"}, "empieza (2031-01-01)"),
-        ([{"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"},
-          {"numero": 1, "fecha_inicio": "2030-03-11", "fecha_fin": "2030-03-22", "corte_diagnostico": "2030-03-12"}],
-         {}, "se solapan"),
+        (con_pa1(fecha_fin="2030-03-29"), {}, "se solapan"),
+        (con_pa1(fecha_fin="2030-03-24"), {}, "se solapan o no dejan días para el receso"),
     ],
 )
 def test_validar_calendario(periodos, anio, texto):
@@ -338,10 +406,22 @@ def test_validar_calendario(periodos, anio, texto):
     assert any(texto in e for e in errores), errores
 
 
+def test_validar_recesos_del_archivo():
+    recesos = [{"numero": n, "fecha_inicio": "2030-03-16", "fecha_fin": "2030-03-17"} for n in (1, 2, 3, 4)]
+
+    _, errores = leer_calendario(calendario(recesos=recesos))
+
+    assert any("PA2 debe empezar después del fin de PR1" in e or "PR2" in e for e in errores), errores
+
+
 def test_leer_calendario_con_formato_invalido():
     assert leer_calendario({"anio": {}})[1][0].startswith("formato inválido")
     cal, _ = leer_calendario(calendario())
-    assert len(semanas_deseadas(cal)) == 4
+    assert len(semanas_deseadas([(p.numero, p.inicio, p.fin) for p in cal.periodos])) == 6
+    # Un PA que no empieza en lunes genera sus semanas desde el lunes siguiente.
+    assert [s.lunes for s in semanas_deseadas([(1, date(2030, 3, 6), date(2030, 3, 22))])] == [
+        date(2030, 3, 11), date(2030, 3, 18)
+    ]
 
 
 def test_cargar_calendario_archivo_invalido_o_sin_supervisor(db, con_original, tmp_path):
@@ -359,9 +439,28 @@ def test_cargar_calendario_sin_supervisor_original(db, tmp_path):
 def test_cargar_calendario_real_del_repositorio(con_original):
     assert cargar_calendario(con_original).errores == []
     assert len(con_original.exec(select(EvaluacionDiagnostica)).all()) == 4
+    general = cargar_calendarios(con_original).generales
+    assert [p.nombre for p in next(iter(general.values())).periodos] == [
+        "PA1", "PR1", "PA2", "PR2", "PA3", "PR3", "PA4", "PR4"
+    ]
 
 
 # ── cargar-feriados ─────────────────────────────────────────────────────────────────
+
+# PA3 del 22/07 al 2/08 (feriados el martes 23 y el lunes 29) y PA4 del 26 al 30/08
+# (Santa Rosa, el viernes 30). El 6/08 cae en el PR3 y los de octubre en adelante, en el PR4.
+PAS_CON_FERIADOS = [
+    {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15", "corte_diagnostico": "2030-03-06"},
+    {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05", "corte_diagnostico": "2030-03-27"},
+    {"numero": 3, "fecha_inicio": "2030-07-22", "fecha_fin": "2030-08-02", "corte_diagnostico": "2030-07-24"},
+    {"numero": 4, "fecha_inicio": "2030-08-26", "fecha_fin": "2030-08-30", "corte_diagnostico": "2030-08-27"},
+]
+
+
+def no_lectivos(db) -> dict[date, DiaNoLectivo]:
+    db.expire_all()
+    return {d.fecha_inicio: d for d in db.exec(select(DiaNoLectivo)).all()}
+
 
 def test_feriados_de_lunes_a_viernes_en_espanol():
     feriados = feriados_entre_semana({2030})
@@ -371,21 +470,46 @@ def test_feriados_de_lunes_a_viernes_en_espanol():
     assert feriados_entre_semana(set()) == {}
 
 
-def test_cargar_feriados(con_original, tmp_path):
+def test_cargar_feriados_en_el_general_solo_dentro_de_un_pa(con_original, tmp_path):
     db = con_original
-    assert cargar_feriados(db).omitidos == ["feriados: no hay ningún año escolar en la BD"]
-    cargar_calendario(db, escribir(tmp_path, calendario()))
-    db.add(DiaNoLaborable(fecha=date(2030, 1, 1), motivo="Otro nombre", creado_por=1, creado_en=ahora_utc()))
+    assert cargar_feriados(db).omitidos == ["feriados: no hay ningún calendario general en la BD"]
+    cargar_calendario(db, escribir(tmp_path, calendario(PAS_CON_FERIADOS)))
+    general = db.exec(select(Calendario)).one()
+    agregar_no_lectivo(db, general, date(2030, 7, 29), motivo="Otro nombre")
+
+    resumen = cargar_feriados(db)
+
+    assert resumen.creados["dia_no_lectivo"] == 2
+    assert resumen.advertencias == [
+        "dia_no_lectivo 2030-07-29 (calendario general 1): ya existe con motivo 'Otro nombre' (la librería dice "
+        "'Feriado nacional: Día de la Gran Parada Militar'). No se modifica."
+    ]
+    dias = no_lectivos(db)
+    assert set(dias) == {date(2030, 7, 23), date(2030, 7, 29), date(2030, 8, 30)}
+    assert (dias[date(2030, 8, 30)].origen, dias[date(2030, 8, 30)].fecha_fin) == ("automatico", date(2030, 8, 30))
+    assert releer(db, Calendario, general.id_calendario).version == 2
+    assert sum(cargar_feriados(db).creados.values()) == 0
+    assert releer(db, Calendario, general.id_calendario).version == 2
+
+
+def test_cargar_feriados_no_vuelve_no_lectiva_una_fecha_con_asistencias(con_original, tmp_path):
+    db = con_original
+    cargar_calendario(db, escribir(tmp_path, calendario(PAS_CON_FERIADOS)))
+    supervisor = db.exec(select(Usuario)).one()
+    colegio = crear_colegio(db, "C", [1], [1], supervisor.id_usuario)
+    alumno = crear_alumno(db, "A", "B", colegio, 1, 1, supervisor.id_usuario)
+    ficha = Docente(nombres="D", apellidos="D", creado_por=1, creado_en=ahora_utc())
+    db.add(ficha)
+    db.flush()
+    db.add(Asistencia(id_alumno=alumno.id_alumno, fecha=date(2030, 8, 30), id_programa=1, id_colegio=colegio.id_colegio,
+                      id_grado=1, estado="presente", id_docente=ficha.id_docente, fecha_registro=ahora_utc(),
+                      creado_por=1, creado_en=ahora_utc()))
     db.commit()
 
     resumen = cargar_feriados(db)
 
-    assert resumen.creados["dia_no_laborable"] > 5
-    assert resumen.advertencias == [
-        "dia_no_laborable 2030-01-01: ya existe con motivo 'Otro nombre' (la librería dice 'Feriado nacional: Año Nuevo'). "
-        "No se modifica."
-    ]
-    assert sum(cargar_feriados(db).creados.values()) == 0
+    assert set(no_lectivos(db)) == {date(2030, 7, 23), date(2030, 7, 29)}
+    assert any("2030-08-30" in a and "asistencias" in a for a in resumen.advertencias)
 
 
 def test_cargar_feriados_sin_supervisor(db):
@@ -532,10 +656,9 @@ def test_seed_asigna_al_docente_en_el_periodo_vigente(motor_de_la_app, db, entor
 
 
 def test_seed_completa_datos_de_cuentas_antiguas(motor_de_la_app, db, entorno):
-    """Sin periodo vigente, el seed cuelga la asignación del último periodo cargado."""
-    vigente = entorno.periodos["vigente"]
-    vigente.fecha_fin = entorno.hoy - timedelta(days=1)
-    db.add(vigente)
+    """Si hoy el calendario general no está en un PA, el seed cuelga la asignación del
+    último periodo cargado (el PA4)."""
+    terminar_pa_vigente(db, entorno)
     crear_docente(db, entorno, "Docente", seed_data.PROFESOR_CORREO, "00000002").dni = None
     db.commit()
 
@@ -544,4 +667,4 @@ def test_seed_completa_datos_de_cuentas_antiguas(motor_de_la_app, db, entorno):
     db.expire_all()
     profesor = db.exec(select(Usuario).where(Usuario.correo == seed_data.PROFESOR_CORREO)).one()
     assert profesor.dni == seed_data.PROFESOR_DNI
-    assert seed_data.periodo_para_asignaciones(db).id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
+    assert seed_data.periodo_para_asignaciones(db).id_periodo_academico == entorno.periodos["cuarto"].id_periodo_academico

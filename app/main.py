@@ -9,6 +9,7 @@ from app.routers import (
     asignaciones,
     asistencias,
     auth,
+    calendarios,
     catalogos,
     colegios,
     inicio,
@@ -32,6 +33,7 @@ app.include_router(auth.router)
 app.include_router(colegios.router)
 app.include_router(alumnos.router)
 app.include_router(catalogos.router)
+app.include_router(calendarios.router)
 app.include_router(password.router)
 app.include_router(usuarios.router)
 app.include_router(asignaciones.router)

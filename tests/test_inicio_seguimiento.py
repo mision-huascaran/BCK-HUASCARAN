@@ -5,11 +5,21 @@ from datetime import date, timedelta
 import pytest
 from sqlmodel import select
 
-from app.core.tiempo import ahora_utc
-from app.models.organizacion import DiaNoLaborable, DocenteColegioGrado, PeriodoAcademico
-from app.services import inicio_service
-from app.services.calendario import periodo_de_referencia_del_anio
-from tests.conftest import a_las, asignar, cabecera_de, crear_docente, iniciar_actividad, motivo
+from app.models.organizacion import Calendario, CalendarioPeriodo, DocenteColegioGrado
+from app.services.calendario import cargar_calendarios
+from app.services.inicio_service import pa_de_referencia_por_colegio
+from tests.conftest import (
+    a_las,
+    agregar_no_lectivo,
+    asignar,
+    cabecera_de,
+    crear_docente,
+    crear_particular,
+    iniciar_actividad,
+    motivo,
+    rangos_en_receso,
+    terminar_pa_vigente,
+)
 
 # Miércoles. Las alertas cuentan días hábiles hasta ayer (martes 16).
 MIERCOLES = date(2026, 6, 17)
@@ -36,10 +46,21 @@ def alertas(client, cabeceras) -> list[dict]:
 
 
 def terminar_periodo_vigente(db, entorno) -> None:
-    vigente = entorno.periodos["vigente"]
-    vigente.fecha_fin = entorno.hoy - timedelta(days=1)
-    db.add(vigente)
+    """Hoy los colegios (todos usan el general) pasan a estar en el PR2."""
+    terminar_pa_vigente(db, entorno)
+
+
+def sin_calendario(db, entorno) -> None:
+    """Borra el calendario del año: ninguna fecha tiene periodo."""
+    for fila in db.exec(select(CalendarioPeriodo)).all():
+        db.delete(fila)
+    db.delete(db.get(Calendario, entorno.calendario.id_calendario))
     db.commit()
+
+
+def lejano_en_receso(db, entorno) -> None:
+    """Lejano con fechas particulares: su PA2 terminó ayer y hoy está en el PR2."""
+    crear_particular(db, entorno, rangos_en_receso(entorno.hoy))
 
 
 # ── CU010: Inicio del Docente ───────────────────────────────────────────────────────
@@ -138,7 +159,7 @@ def test_cu011_docentes_activos_solo_con_asignacion_vigente_en_colegio_activo(cl
 def test_cu011_en_un_receso_no_hay_docentes_activos(client, db, entorno, cabeceras, reloj):
     """Entre el periodo pasado y el vigente no hay periodo vigente: 0, aunque el docente
     tenga asignaciones en ambos (el Periodo de Receso del CU no se implementa)."""
-    reloj.fijar(a_las(entorno.periodos["pasado"].fecha_fin + timedelta(days=10)))
+    reloj.fijar(a_las(entorno.fin("pasado") + timedelta(days=10)))
     cabecera = cabecera_de(db, entorno.supervisor)
 
     assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 0
@@ -152,8 +173,8 @@ def test_cu011_solo_cuenta_asignaciones_del_periodo_vigente(client, db, entorno,
     assert supervisor(client, cabeceras)["docentes_activos"] == 1
 
 
-def test_cu011_sin_calendario_no_hay_docentes_activos(client, entorno, cabeceras, monkeypatch):
-    monkeypatch.setattr(inicio_service, "periodo_vigente", lambda _db: None)
+def test_cu011_sin_calendario_no_hay_docentes_activos(client, db, entorno, cabeceras):
+    sin_calendario(db, entorno)
 
     cuerpo = supervisor(client, cabeceras)
     assert (cuerpo["docentes_activos"], cuerpo["alertas"]) == (0, [])
@@ -182,8 +203,7 @@ def test_cu011_alerta_con_4_dias_habiles_sin_actividad(miercoles, client, db, en
 
 def test_cu011_los_feriados_no_cuentan(miercoles, client, db, entorno, cabeceras):
     asignado_desde(db, entorno, date(2026, 6, 10))
-    db.add(DiaNoLaborable(fecha=date(2026, 6, 15), motivo="Feriado", creado_por=1, creado_en=ahora_utc()))
-    db.commit()
+    agregar_no_lectivo(db, entorno.calendario, date(2026, 6, 15))
 
     assert alertas(client, cabeceras) == []
 
@@ -256,21 +276,22 @@ def test_cu012_beneficiarios_solo_de_colegios_activos(client, db, entorno, cabec
 
 def test_cu012_en_un_receso_entre_periodos_usa_el_proximo(client, entorno, cabeceras, reloj):
     """Entre el periodo pasado y el vigente: cuenta los colegios del que viene."""
-    reloj.fijar(a_las(entorno.periodos["pasado"].fecha_fin + timedelta(days=10)))
+    reloj.fijar(a_las(entorno.fin("pasado") + timedelta(days=10)))
 
     assert directivo(client, cabeceras)["colegios_operando"] == 1
 
 
 def test_cu012_con_el_anio_terminado_usa_el_ultimo_periodo(client, db, entorno, reloj):
     lejano = entorno.colegios["Lejano"]
-    asignar(db, entorno.id_docente, lejano, [entorno.grados["3.º"]], entorno.periodos["futuro"], 1)
+    asignar(db, entorno.id_docente, lejano, [entorno.grados["3.º"]], entorno.periodos["cuarto"], 1)
     db.commit()
     reloj.fijar(a_las(entorno.anio.fecha_fin + timedelta(days=10)))
     # La sesión se abre después de mover el reloj: una de antes ya habría vencido.
     cabecera = cabecera_de(db, entorno.usuarios["Directivo"])
 
     assert client.get("/inicio/directivo", headers=cabecera).json()["colegios_operando"] == 1
-    assert periodo_de_referencia_del_anio(db).id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
+    referencia = pa_de_referencia_por_colegio(db)
+    assert referencia[lejano.id_colegio].id_periodo_academico == entorno.periodos["cuarto"].id_periodo_academico
 
 
 def test_cu012_entre_periodos_sin_asignaciones_en_el_proximo_no_opera_ninguno(client, db, entorno, cabeceras):
@@ -279,10 +300,35 @@ def test_cu012_entre_periodos_sin_asignaciones_en_el_proximo_no_opera_ninguno(cl
     assert directivo(client, cabeceras)["colegios_operando"] == 0
 
 
-def test_cu012_sin_calendario_no_opera_ningun_colegio(client, entorno, cabeceras, monkeypatch):
-    monkeypatch.setattr(inicio_service, "periodo_de_referencia_del_anio", lambda _db: None)
+def test_cu012_sin_calendario_no_opera_ningun_colegio(client, db, entorno, cabeceras):
+    sin_calendario(db, entorno)
 
     assert directivo(client, cabeceras)["colegios_operando"] == 0
+
+
+def test_cu012_cada_colegio_opera_segun_su_calendario(client, db, entorno, cabeceras):
+    """Lejano está en su PR2 (particular): cuenta si tiene asignación del PA3, el próximo
+    de su calendario; Andino (general, en el PA2) cuenta por su asignación del PA2."""
+    lejano_en_receso(db, entorno)
+    assert directivo(client, cabeceras)["colegios_operando"] == 1
+
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000009")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["futuro"], 1)
+    db.commit()
+    assert directivo(client, cabeceras)["colegios_operando"] == 2
+
+
+def test_cu010_y_cu011_dos_colegios_con_calendarios_distintos(client, db, entorno, cabeceras):
+    """El docente tiene asignaciones del PA2 en Andino (en PA2) y en Lejano (en su PR2):
+    su alcance y su Inicio solo incluyen Andino."""
+    asignar(db, entorno.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    lejano_en_receso(db, entorno)
+
+    cuerpo = client.get("/inicio/docente", headers=cabeceras["Docente"]).json()
+
+    assert [a["colegio"] for a in cuerpo["asignaciones"]] == ["Colegio Andino"]
+    assert cuerpo["puede_iniciar_actividad"] is True
+    assert supervisor(client, cabeceras)["docentes_activos"] == 1
 
 
 def test_cu011_sin_docentes_asignados_no_hay_alertas(client, db, entorno, cabeceras):
@@ -420,9 +466,7 @@ def test_cu020_solo_el_supervisor(client, entorno, cabeceras, rol):
     assert client.get("/seguimiento/docentes", headers=cabeceras[rol]).status_code == 403
 
 
-def test_periodo_vigente_unico(db, entorno):
-    vigentes = db.exec(
-        select(PeriodoAcademico).where(PeriodoAcademico.fecha_inicio <= entorno.hoy, PeriodoAcademico.fecha_fin >= entorno.hoy)
-    ).all()
+def test_el_calendario_del_entorno_esta_en_el_pa2(db, entorno):
+    general = cargar_calendarios(db).generales[entorno.anio.id_anio_escolar]
 
-    assert len(vigentes) == 1
+    assert [p.nombre for p in general.periodos if p.contiene(entorno.hoy)] == ["PA2"]

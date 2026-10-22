@@ -40,6 +40,7 @@ from app.schemas.colegio import (
 from app.schemas.comun import ItemCatalogo
 from app.services.alcance import alcance_docente
 from app.services.auditoria import ACTIVAR, CREAR, EDITAR, INACTIVAR, registrar_auditoria
+from app.services.calendario import cargar_calendarios
 
 TABLA = "colegio"
 CAMPOS_SIMPLES = ("nombre", "departamento", "distrito", "provincia", "nivel_educativo", "seccion")
@@ -244,19 +245,15 @@ def _uso_de_grado(db: Session, id_colegio: int, grado: Grado) -> Optional[str]:
             Alumno.id_colegio == id_colegio, Alumno.id_grado == grado.id_grado, col(Alumno.activo).is_(True)
         )
     ).one()
-    asignaciones = db.exec(
-        select(func.count())
-        .select_from(DocenteColegioGrado)
-        .join(
-            PeriodoAcademico,
-            PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico,
-        )
-        .where(
-            DocenteColegioGrado.id_colegio == id_colegio,
-            DocenteColegioGrado.id_grado == grado.id_grado,
-            PeriodoAcademico.fecha_fin >= hoy_lima(),
-        )
-    ).one()
+    periodos = db.exec(
+        select(PeriodoAcademico)
+        .join(DocenteColegioGrado, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .where(DocenteColegioGrado.id_colegio == id_colegio, DocenteColegioGrado.id_grado == grado.id_grado)
+    ).all()
+    # Vigentes o futuras: su PA no terminó en el calendario del colegio.
+    calendarios = cargar_calendarios(db, ids_colegio=[id_colegio])
+    hoy = hoy_lima()
+    asignaciones = sum(not calendarios.pa_terminado(id_colegio, p, hoy) for p in periodos)
     usos = []
     if alumnos:
         usos.append(_cantidad(alumnos, "alumno activo", "alumnos activos"))

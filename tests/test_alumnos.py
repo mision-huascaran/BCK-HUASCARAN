@@ -19,10 +19,17 @@ from app.models.evaluacion import (
     RubricaRegistroSemanal,
     SemanaReporte,
 )
-from app.models.organizacion import Alumno, AlumnoProgramaHistorial, CicloEbr, Colegio, PeriodoAcademico
+from app.models.organizacion import Alumno, AlumnoProgramaHistorial, CicloEbr, Colegio
 from app.models.trazabilidad import Auditoria
 from app.services import alumno_detalle_service
-from tests.conftest import crear_colegio, motivo, releer
+from tests.conftest import (
+    crear_colegio,
+    crear_particular,
+    motivo,
+    rangos_en_receso,
+    releer,
+    terminar_pa_vigente,
+)
 
 
 def nuevo(entorno, colegio="Andino", grado="2.º", programa="Comprensión Lectora", **cambios):
@@ -359,7 +366,8 @@ def registro_de_vuelo(db, entorno, id_alumno, periodo, nivel_colocado) -> None:
     ).first()
     if corte is None:
         corte = EvaluacionDiagnostica(
-            id_periodo_academico=periodo.id_periodo_academico, fecha_realizacion=periodo.fecha_inicio, **base
+            id_periodo_academico=periodo.id_periodo_academico,
+            fecha_realizacion=entorno.rangos[f"PA{periodo.numero}"][0], **base,
         )
         db.add(corte)
         db.flush()
@@ -400,27 +408,16 @@ def test_cu015_nivel_colocado_del_periodo_mas_avanzado_con_dato(client, db, ento
     assert client.get(url, headers=cabeceras["Supervisor"]).json()["nivel_colocado"]["numero_periodo"] == 2
 
 
-def test_cu015_registro_de_vuelo_como_maximo_4_filas(client, db, entorno, cabeceras):
-    """Una por periodo; con más periodos que filas se muestran los 4 últimos, en orden."""
+def test_cu015_registro_de_vuelo_una_fila_por_pa(client, db, entorno, cabeceras):
+    """Una fila por PA del año (como máximo 4: PA1 a PA4), en orden."""
     luis = entorno.alumnos["luis"].id_alumno
-    base = {"creado_por": entorno.supervisor.id_usuario, "creado_en": ahora_utc()}
-    periodos = [entorno.periodos[clave] for clave in ("pasado", "vigente", "futuro")]
-    for numero in (4, 5):
-        inicio = entorno.hoy + timedelta(days=100 + 10 * numero)
-        periodo = PeriodoAcademico(
-            id_anio_escolar=entorno.anio.id_anio_escolar, numero=numero, fecha_inicio=inicio,
-            fecha_fin=inicio + timedelta(days=5), **base,
-        )
-        db.add(periodo)
-        db.flush()
-        periodos.append(periodo)
-    for periodo in periodos:
-        registro_de_vuelo(db, entorno, luis, periodo, 2)
+    for clave in ("cuarto", "pasado", "futuro", "vigente"):
+        registro_de_vuelo(db, entorno, luis, entorno.periodos[clave], 2)
     db.commit()
 
     vuelo = client.get(f"/alumnos/{luis}/registro-vuelo", headers=cabeceras["Supervisor"]).json()
 
-    assert [fila["corte"] for fila in vuelo] == [2, 3, 4, 5]
+    assert [fila["corte"] for fila in vuelo] == [1, 2, 3, 4]
 
 
 def test_cu015_nivel_descriptivo_segun_el_grado_actual(client, db, entorno, cabeceras):
@@ -569,10 +566,8 @@ def test_cu015_historial_con_catalogo_borrado_muestra_el_id(client, db, entorno,
 
 
 def test_cu014_crear_desde_supervisor_entre_periodos_usa_el_proximo(client, db, entorno, cabeceras):
-    vigente = entorno.periodos["vigente"]
-    vigente.fecha_fin = entorno.hoy - timedelta(days=1)
-    db.add(vigente)
-    db.commit()
+    """El colegio está en el PR2: el subprograma se registra en el PA3 de su calendario."""
+    terminar_pa_vigente(db, entorno)
 
     creado = client.post("/alumnos", json=nuevo(entorno), headers=cabeceras["Supervisor"]).json()
 
@@ -580,3 +575,19 @@ def test_cu014_crear_desde_supervisor_entre_periodos_usa_el_proximo(client, db, 
     assert historial.id_periodo_academico == entorno.periodos["futuro"].id_periodo_academico
     assert releer(db, Alumno, creado["id"]).activo is True
     assert releer(db, Colegio, entorno.colegios["Andino"].id_colegio).activo is True
+
+
+def test_cu014_el_pa_del_subprograma_sale_del_calendario_de_su_colegio(client, db, entorno, cabeceras):
+    """El mismo día, Lejano (con fechas particulares) está en el PR2 y Andino (general) en
+    el PA2: cada alumno nuevo queda en el PA de su colegio."""
+    crear_particular(db, entorno, rangos_en_receso(entorno.hoy))
+    sup = cabeceras["Supervisor"]
+
+    en_lejano = client.post("/alumnos", json=nuevo(entorno, colegio="Lejano", grado="3.º"), headers=sup).json()
+    en_andino = client.post("/alumnos", json=nuevo(entorno, nombres="Otra"), headers=sup).json()
+
+    periodos = {
+        h.id_alumno: h.id_periodo_academico for h in db.exec(select(AlumnoProgramaHistorial)).all()
+    }
+    assert periodos[en_lejano["id"]] == entorno.periodos["futuro"].id_periodo_academico
+    assert periodos[en_andino["id"]] == entorno.periodos["vigente"].id_periodo_academico

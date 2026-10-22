@@ -1,57 +1,77 @@
-"""Alcance del Docente: los colegios y grados que tiene a cargo hoy.
+"""Alcance del Docente: los colegios y grados que tiene a cargo en una fecha.
 
-Se usa para recortar lo que ve y lo que puede registrar un Docente.
+Se usa para recortar lo que ve y lo que puede registrar un Docente. Una asignación está
+habilitada en una fecha si su PA es el PA en que está SU colegio en esa fecha, según el
+calendario de ese colegio (CU027): dos colegios pueden estar en periodos distintos el
+mismo día.
+
+Punto de extensión (T4): las asignaciones retroactivas en un PR y los permisos
+excepcionales de CU028 se suman en `asignaciones_habilitadas`.
 """
+from dataclasses import dataclass
 from datetime import date
+from typing import Optional
 
 from sqlmodel import Session, col, select
 
-from app.models.organizacion import Colegio, DocenteColegioGrado, PeriodoAcademico
-from app.services.calendario import periodo_vigente
+from app.core.tiempo import hoy_lima
+from app.models.organizacion import Colegio, DocenteColegioGrado
+from app.services.calendario import Calendarios, cargar_calendarios
 
 
-def alcance_docente(db: Session, id_docente: int) -> set[tuple[int, int]]:
-    """Pares (id_colegio, id_grado) asignados al docente en el periodo vigente.
+@dataclass(frozen=True)
+class AsignacionHabilitada:
+    id_colegio: int
+    id_grado: int
+    id_periodo_academico: int
 
-    Excluye los colegios inactivos. Vacío si no hay periodo vigente (entre periodos
-    ningún docente tiene alcance: no se inventa un periodo que no está en curso).
-    """
-    periodo = periodo_vigente(db)
-    if periodo is None:
-        return set()
-    filas = db.exec(
-        select(DocenteColegioGrado.id_colegio, DocenteColegioGrado.id_grado)
-        .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
-        .where(
-            DocenteColegioGrado.id_docente == id_docente,
-            DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
-            col(Colegio.activo).is_(True),
+
+def _asignaciones(db: Session, id_docente: int, solo_colegios_activos: bool) -> list[tuple[int, int, int]]:
+    """(colegio, grado, periodo) de todas las asignaciones del docente."""
+    consulta = select(
+        DocenteColegioGrado.id_colegio, DocenteColegioGrado.id_grado, DocenteColegioGrado.id_periodo_academico
+    ).where(DocenteColegioGrado.id_docente == id_docente)
+    if solo_colegios_activos:
+        consulta = consulta.join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio).where(
+            col(Colegio.activo).is_(True)
         )
-    ).all()
-    return {(id_colegio, id_grado) for id_colegio, id_grado in filas}
+    return list(db.exec(consulta).all())
+
+
+def asignaciones_habilitadas(
+    db: Session,
+    id_docente: int,
+    en: Optional[date] = None,
+    solo_colegios_activos: bool = True,
+    calendarios: Optional[Calendarios] = None,
+) -> list[AsignacionHabilitada]:
+    """Asignaciones del docente cuyo PA es el PA de su colegio en la fecha `en` (hoy por
+    defecto). Vacía si ninguno de sus colegios está en un PA: entre periodos no se inventa
+    uno. Con `calendarios` ya cargados no vuelve a leerlos."""
+    dia = en or hoy_lima()
+    filas = _asignaciones(db, id_docente, solo_colegios_activos)
+    if not filas:
+        return []
+    calendarios = calendarios or cargar_calendarios(db, ids_colegio={c for c, _, _ in filas})
+    habilitadas = []
+    for id_colegio, id_grado, id_periodo in filas:
+        pa = calendarios.pa_de(id_colegio, dia)
+        if pa is not None and pa.id_periodo_academico == id_periodo:
+            habilitadas.append(AsignacionHabilitada(id_colegio, id_grado, id_periodo))
+    return habilitadas
+
+
+def alcance_docente(db: Session, id_docente: int, calendarios: Optional[Calendarios] = None) -> set[tuple[int, int]]:
+    """Pares (id_colegio, id_grado) habilitados hoy para el docente, en colegios activos."""
+    return {(a.id_colegio, a.id_grado) for a in asignaciones_habilitadas(db, id_docente, calendarios=calendarios)}
 
 
 def tenia_asignacion(db: Session, id_docente: int, dia: date, solo_colegios_activos: bool) -> bool:
-    """Si el docente tenía alguna asignación en el periodo que contiene `dia` (día de Lima).
+    """Si el docente tenía alguna asignación habilitada en `dia` (día de Lima), cada una
+    según el calendario de su colegio.
 
     Sirve para fechas pasadas, p. ej. una actividad sincronizada después de un nuevo
     login. `solo_colegios_activos` exige además que el colegio siga activo hoy (no se
     guarda desde cuándo está inactivo, así que solo tiene sentido para lo que ocurre ahora).
     """
-    consulta = (
-        select(DocenteColegioGrado.id_docente)
-        .join(
-            PeriodoAcademico,
-            PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico,
-        )
-        .where(
-            DocenteColegioGrado.id_docente == id_docente,
-            PeriodoAcademico.fecha_inicio <= dia,
-            PeriodoAcademico.fecha_fin >= dia,
-        )
-    )
-    if solo_colegios_activos:
-        consulta = consulta.join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio).where(
-            col(Colegio.activo).is_(True)
-        )
-    return db.exec(consulta.limit(1)).first() is not None
+    return bool(asignaciones_habilitadas(db, id_docente, dia, solo_colegios_activos))

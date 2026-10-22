@@ -24,7 +24,7 @@ from app.services.actividad_consulta import (
     listar_actividades,
 )
 from app.services.asignacion_service import colegios_vigentes_por_docente
-from app.services.calendario import periodo_vigente
+from app.services.calendario import periodo_actual
 from app.services.sincronizacion import (
     errores_docente_sql,
     estado_docente_sql,
@@ -84,8 +84,9 @@ def listar_docentes(
     consulta, ultima_conexion, estado = _consulta_docentes()
     consulta = consulta.where(Usuario.activo == activo, *entre_fechas(ultima_conexion, desde, hasta))
     if id_colegio is not None:
-        periodo = periodo_vigente(db)
-        if periodo is None:
+        # Asignado al PA en que hoy está ese colegio (según su calendario).
+        periodo = periodo_actual(db, id_colegio)
+        if periodo is None or not periodo.es_pa:
             return pagina([], 0, page)
         consulta = consulta.where(
             col(Usuario.id_docente).in_(

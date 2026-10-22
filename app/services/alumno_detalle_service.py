@@ -90,7 +90,7 @@ def _nivel_colocado(db: Session, alumno: Alumno, id_anio: int) -> Optional[Nivel
         .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == EvaluacionDiagnostica.id_periodo_academico)
         .join(NivelRazkids, NivelRazkids.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
         .where(EvaluacionDiagnosticaAlumno.id_alumno == alumno.id_alumno, PeriodoAcademico.id_anio_escolar == id_anio)
-        .order_by(col(PeriodoAcademico.fecha_inicio).desc())
+        .order_by(col(PeriodoAcademico.numero).desc())
     ).first()
     if fila is None:
         return None

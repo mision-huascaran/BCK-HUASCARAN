@@ -3,13 +3,15 @@
 Una clase es fecha + colegio + grado + subprograma; se dicta una por semana, pero el
 registro guarda la fecha de la clase.
 
+- "Día lectivo" es siempre según el calendario del colegio de la clase (CU027): lunes a
+  viernes, dentro de un PA y fuera de los días no lectivos de ESE calendario.
 - Lectura: el Docente, de un aula (colegio + grado) de su alcance vigente y en un día
-  lectivo del periodo vigente; el Supervisor, de cualquier colegio y cualquier día lectivo
-  ya llegado de cualquier periodo (atajos "Ver Asistencias" de CU021). Leer no exige
-  actividad.
+  lectivo ya llegado del PA en que hoy está ese colegio; el Supervisor, de cualquier
+  colegio y cualquier día lectivo ya llegado de cualquier PA (desde el sidebar o desde
+  los atajos "Ver Asistencias" de CU021, sin contexto adicional). Leer no exige actividad.
 - Escritura: solo el Docente, con una actividad activa (queda en la auditoría y cuenta
   como productividad del módulo Asistencia), sobre alumnos activos de su alcance y en un
-  día lectivo del periodo vigente. Todo o nada.
+  día lectivo del PA actual del colegio de cada clase. Todo o nada.
 - Una fila por (alumno, fecha, subprograma): se crea la primera vez, con el aula
   (colegio y grado) que el alumno tiene en ese momento, y después se actualiza sin mudarla
   aunque el alumno haya rotado. Con dos dispositivos gana la captura más reciente
@@ -23,7 +25,7 @@ from sqlmodel import Session, col, select
 
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
-from app.core.tiempo import ahora_utc
+from app.core.tiempo import ahora_utc, hoy_lima
 from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
 from app.models.evaluacion import Asistencia
 from app.models.organizacion import Alumno, Colegio, ColegioGrado, ColegioPrograma, Usuario
@@ -38,7 +40,7 @@ from app.schemas.asistencia import (
 from app.services.actividad import requerir_actividad_activa
 from app.services.alumno_service import alcance_de
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
-from app.services.calendario import es_dia_lectivo, periodo_vigente
+from app.services.calendario import Calendarios, cargar_calendarios
 from app.services.sesiones import MARGEN_RELOJ
 
 TABLA = "asistencia"
@@ -71,11 +73,18 @@ def _fecha_no_lectiva() -> ErrorNegocio:
 
 # ── Fecha de la clase ───────────────────────────────────────────────────────────────
 
-def lectiva_del_vigente(db: Session, fecha: date) -> bool:
-    """Día lectivo del periodo vigente ya llegado: el único en que el Docente lee y
-    registra. Sin periodo vigente, ninguno."""
-    vigente = periodo_vigente(db)
-    return vigente is not None and es_dia_lectivo(db, fecha, vigente)
+def lectiva_para_supervisor(calendarios: Calendarios, id_colegio: int, fecha: date, hoy: date) -> bool:
+    """Día lectivo ya llegado del calendario del colegio, de cualquier PA."""
+    return fecha <= hoy and calendarios.es_lectivo(id_colegio, fecha)
+
+
+def lectiva_para_docente(calendarios: Calendarios, id_colegio: int, fecha: date, hoy: date) -> bool:
+    """Día lectivo ya llegado del PA en que hoy está el colegio: el único en que el
+    Docente lee y registra. Si hoy el colegio no está en un PA, ninguno."""
+    pa_actual = calendarios.pa_de(id_colegio, hoy)
+    return pa_actual is not None and pa_actual.contiene(fecha) and lectiva_para_supervisor(
+        calendarios, id_colegio, fecha, hoy
+    )
 
 
 # ── Consulta de la clase ────────────────────────────────────────────────────────────
@@ -103,8 +112,8 @@ def consultar_clase(
       no se lista: su asistencia de ese día ya se tomó allá y no puede tener dos.
 
     Errores: 403 `aula_fuera_de_alcance` (Docente), 422 del aula y 422
-    `fecha_no_lectiva` (Docente: día lectivo del periodo vigente; Supervisor: cualquier
-    día lectivo ya llegado).
+    `fecha_no_lectiva` (Docente: día lectivo del PA actual del colegio; Supervisor:
+    cualquier día lectivo ya llegado del colegio).
     """
     alcance = alcance_de(db, usuario)
     es_docente = alcance is not None
@@ -115,8 +124,8 @@ def consultar_clase(
             motivo="aula_fuera_de_alcance",
         )
     _validar_aula(db, id_colegio, id_grado, id_programa)
-    lectiva = lectiva_del_vigente(db, fecha) if es_docente else es_dia_lectivo(db, fecha)
-    if not lectiva:
+    es_lectiva = lectiva_para_docente if es_docente else lectiva_para_supervisor
+    if not es_lectiva(cargar_calendarios(db, ids_colegio=[id_colegio]), id_colegio, fecha, hoy_lima()):
         raise _fecha_no_lectiva()
 
     aula = (id_colegio, id_grado, id_programa)
@@ -174,7 +183,7 @@ def _fecha_registro(fecha: Optional[datetime], ahora: datetime) -> datetime:
 
 
 def _validar_registros(
-    db: Session, usuario: Usuario, data: AsistenciaGuardar
+    db: Session, alcance: set[tuple[int, int]], data: AsistenciaGuardar
 ) -> tuple[dict[int, Alumno], dict[tuple[int, int], Asistencia]]:
     """Los alumnos de los registros y sus filas ya guardadas en la fecha (bloqueadas).
 
@@ -182,7 +191,6 @@ def _validar_registros(
     inactivo, o fuera del alcance vigente del docente. El alcance se mide contra el aula
     del registro: la guardada si ya existe (no se muda), la actual del alumno si es nuevo.
     Si hay alguno, no se guarda nada."""
-    alcance = alcance_de(db, usuario) or set()
     ids = {r.id_alumno for r in data.registros}
     alumnos = {a.id_alumno: a for a in db.exec(select(Alumno).where(col(Alumno.id_alumno).in_(ids))).all()}
     existentes = _existentes(db, data.fecha, list(alumnos))
@@ -204,6 +212,27 @@ def _validar_registros(
     if errores:
         raise _error_validacion(errores)
     return alumnos, existentes
+
+
+def _colegios_de_las_clases(
+    data: AsistenciaGuardar, alumnos: dict[int, Alumno], existentes: dict[tuple[int, int], Asistencia]
+) -> set[int]:
+    """Colegio de la clase de cada registro: el guardado si ya existe, el actual del
+    alumno si es nuevo."""
+    colegios = set()
+    for registro in data.registros:
+        alumno = alumnos[registro.id_alumno]
+        fila = existentes.get((alumno.id_alumno, alumno.id_programa_actual))
+        colegios.add(fila.id_colegio if fila is not None else alumno.id_colegio)
+    return colegios
+
+
+def _exigir_fecha_lectiva(db: Session, fecha: date, ids_colegio: set[int]) -> None:
+    """422 si la fecha no es un día lectivo del PA actual de alguno de esos colegios."""
+    calendarios = cargar_calendarios(db, ids_colegio=ids_colegio)
+    hoy = hoy_lima()
+    if not all(lectiva_para_docente(calendarios, c, fecha, hoy) for c in ids_colegio):
+        raise _fecha_no_lectiva()
 
 
 def _existentes(db: Session, fecha: date, ids_alumno: list[int]) -> dict[tuple[int, int], Asistencia]:
@@ -252,8 +281,10 @@ def _guardado(id_alumno: int, aplicado: bool, fila: Optional[Asistencia], cambio
 def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -> AsistenciaGuardada:
     """Guarda la asistencia de uno o varios alumnos en una clase (CU022), todo o nada.
 
-    Orden: actividad activa (409 `actividad_requerida`), día lectivo del periodo vigente
-    (422 `fecha_no_lectiva`), `fecha_registro` y registros (422 `validacion`).
+    Orden: actividad activa (409 `actividad_requerida`), docente sin ningún colegio en
+    un PA (422 `fecha_no_lectiva`), `fecha_registro` y registros (422 `validacion`) y,
+    por último, día lectivo del PA actual del colegio de cada clase (422
+    `fecha_no_lectiva`).
 
     Un registro nuevo va a la clase del aula y subprograma actuales del alumno; uno que ya
     existe conserva su aula aunque el alumno haya rotado. Si la fila guardada
@@ -263,11 +294,13 @@ def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -
     distintos por `id_registro`).
     """
     id_actividad = requerir_actividad_activa(db, usuario)
-    if not lectiva_del_vigente(db, data.fecha):
+    alcance = alcance_de(db, usuario) or set()
+    if not alcance:
         raise _fecha_no_lectiva()
     ahora = ahora_utc()
     fecha_registro = _fecha_registro(data.fecha_registro, ahora)
-    alumnos, existentes = _validar_registros(db, usuario, data)
+    alumnos, existentes = _validar_registros(db, alcance, data)
+    _exigir_fecha_lectiva(db, data.fecha, _colegios_de_las_clases(data, alumnos, existentes))
 
     auditoria = {"id_usuario": usuario.id_usuario, "fecha": ahora, "id_actividad": id_actividad}
     captura = {"id_docente": usuario.id_docente, "fecha_registro": fecha_registro}

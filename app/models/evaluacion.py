@@ -11,7 +11,7 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Text, Uniqu
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
-from app.models.organizacion import FK_COLEGIO, FK_GRADO, FK_PROGRAMA, FK_USUARIO
+from app.models.organizacion import FK_ANIO, FK_COLEGIO, FK_GRADO, FK_PROGRAMA, FK_USUARIO
 
 FK_ALUMNO = "alumno.id_alumno"
 FK_DOCENTE = "docente.id_docente"
@@ -19,7 +19,6 @@ FK_NIVEL_RAZKIDS = "nivel_razkids.id_nivel_rk"
 FK_NIVEL_RUBRICA = "nivel_rubrica.id_nivel_rubrica"
 FK_NIVEL_GENERAL = "nivel_general.id_nivel_general"
 FK_PERIODO = "periodo_academico.id_periodo_academico"
-FK_ANIO = "año_escolar.id_anio_escolar"
 
 # Columnas de semana_reporte a las que apuntan las FK compuestas de las tablas semanales.
 SEMANA_PERIODO_ANIO = ("id_semana", "id_periodo_academico", "id_anio_escolar")

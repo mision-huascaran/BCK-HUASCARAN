@@ -8,9 +8,12 @@ pruebas de Jenkins, donde no hay base de datos.
 Piezas principales (para agregar pruebas, partir de estas fixtures y helpers):
 
 - `db`: sesión sobre la base de la prueba, para preparar datos y comprobar resultados.
-- `entorno`: catálogos reales (los carga `cargar_catalogos`), calendario relativo a hoy,
-  dos colegios, cuentas de los tres roles más el Supervisor original, una asignación
-  vigente del Docente y alumnos de ambos subprogramas.
+- `entorno`: catálogos reales (los carga `cargar_catalogos`), calendario general relativo
+  a hoy (PA1 terminado, hoy en PA2, PA3 y PA4 futuros, con sus PR), dos colegios, cuentas
+  de los tres roles más el Supervisor original, una asignación vigente del Docente y
+  alumnos de ambos subprogramas.
+- `crear_calendario` / `agregar_no_lectivo` / `fijar_periodo`: fábricas para armar o
+  mover calendarios (general o particular) sin pasar por las validaciones de la API.
 - `cabeceras`: cabecera Authorization por rol, con una sesión real en la tabla `sesion`.
 - `client`: TestClient; cada petición usa su propia sesión de BD, como en producción.
 - `correos`: buzón que reemplaza al SMTP (autouse): ninguna prueba sale a la red.
@@ -48,12 +51,16 @@ from app.core import security, tiempo  # noqa: E402
 from app.core.database import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.organizacion import (  # noqa: E402
+    ORIGEN_MANUAL,
     Alumno,
     AnioEscolar,
+    Calendario,
+    CalendarioPeriodo,
     Colegio,
     ColegioGrado,
     ColegioPrograma,
     Docente,
+    DiaNoLectivo,
     DocenteColegioGrado,
     Grado,
     PeriodoAcademico,
@@ -169,6 +176,94 @@ def a_las(dia: date, hora: int = 10, minuto: int = 0) -> datetime:
     return datetime(dia.year, dia.month, dia.day, hora, minuto, tzinfo=tiempo.ZONA_LIMA)
 
 
+# ── Calendario ──────────────────────────────────────────────────────────────────────
+
+# Claves de `entorno.periodos` -> número de PA.
+NUMERO_DE_PA = {"pasado": 1, "vigente": 2, "futuro": 3, "cuarto": 4}
+
+
+def rangos_relativos(hoy: date) -> dict[str, tuple[date, date]]:
+    """Los 8 periodos del calendario del entorno: PA1 terminado, hoy en PA2, PA3 y PA4
+    futuros; los PR entre ellos (PR2 y PR3 de un día)."""
+    dia = timedelta(days=1)
+    return {
+        "PA1": (hoy - 150 * dia, hoy - 60 * dia),
+        "PR1": (hoy - 59 * dia, hoy - 31 * dia),
+        "PA2": (hoy - 30 * dia, hoy + 30 * dia),
+        "PR2": (hoy + 31 * dia, hoy + 31 * dia),
+        "PA3": (hoy + 32 * dia, hoy + 120 * dia),
+        "PR3": (hoy + 121 * dia, hoy + 121 * dia),
+        "PA4": (hoy + 122 * dia, hoy + 140 * dia),
+        "PR4": (hoy + 141 * dia, hoy + 150 * dia),
+    }
+
+
+def crear_calendario(
+    db, id_anio_escolar: int, rangos: dict[str, tuple[date, date]], id_actor: int, id_colegio=None, activo=True
+) -> Calendario:
+    """Calendario (general o, con `id_colegio`, particular) con los periodos de `rangos`
+    ({"PA1": (inicio, fin), ...}), sin validar. Crea los PA del año que falten."""
+    ahora = tiempo.ahora_utc()
+    existentes = {
+        p.numero for p in db.exec(select(PeriodoAcademico).where(PeriodoAcademico.id_anio_escolar == id_anio_escolar))
+    }
+    for numero in sorted({1, 2, 3, 4} - existentes):
+        db.add(PeriodoAcademico(id_anio_escolar=id_anio_escolar, numero=numero, creado_por=id_actor, creado_en=ahora))
+    calendario = Calendario(
+        id_anio_escolar=id_anio_escolar, id_colegio=id_colegio, activo=activo, creado_por=id_actor, creado_en=ahora
+    )
+    db.add(calendario)
+    db.flush()
+    for nombre, (inicio, fin) in rangos.items():
+        db.add(CalendarioPeriodo(id_calendario=calendario.id_calendario, tipo=nombre[:2], numero=int(nombre[2]),
+                                 fecha_inicio=inicio, fecha_fin=fin))
+    db.flush()
+    return calendario
+
+
+def rangos_en_receso(hoy: date, fin_pa2=None) -> dict[str, tuple[date, date]]:
+    """Rangos relativos con el PA2 terminado (por defecto, ayer) y el PR2 desde el día
+    siguiente: hoy ese calendario está en receso."""
+    rangos = rangos_relativos(hoy)
+    fin = fin_pa2 or hoy - timedelta(days=1)
+    rangos["PA2"] = (rangos["PA2"][0], fin)
+    rangos["PR2"] = (fin + timedelta(days=1), rangos["PR2"][1])
+    return rangos
+
+
+def crear_particular(db, entorno: "Entorno", rangos=None, colegio="Lejano") -> Calendario:
+    """Calendario particular del colegio en el año del entorno (por defecto, como el general)."""
+    particular = crear_calendario(
+        db, entorno.anio.id_anio_escolar, rangos or rangos_relativos(entorno.hoy), 1,
+        id_colegio=entorno.colegios[colegio].id_colegio,
+    )
+    db.commit()
+    return particular
+
+
+def crear_calendario_general(db, anio: AnioEscolar, id_actor: int, rangos=None) -> Calendario:
+    """Calendario general del año (por defecto, los rangos relativos a hoy)."""
+    return crear_calendario(db, anio.id_anio_escolar, rangos or rangos_relativos(tiempo.hoy_lima()), id_actor)
+
+
+def agregar_no_lectivo(db, calendario: Calendario, inicio: date, fin=None, motivo="Feriado", origen=ORIGEN_MANUAL):
+    db.add(DiaNoLectivo(id_calendario=calendario.id_calendario, motivo=motivo, fecha_inicio=inicio,
+                        fecha_fin=fin or inicio, origen=origen, creado_por=1, creado_en=tiempo.ahora_utc()))
+    db.commit()
+
+
+def fijar_periodo(db, calendario: Calendario, nombre: str, inicio=None, fin=None) -> None:
+    """Mueve las fechas de un periodo ("PA2", "PR4"...) sin validar (para preparar casos)."""
+    fila = db.exec(select(CalendarioPeriodo).where(
+        CalendarioPeriodo.id_calendario == calendario.id_calendario,
+        CalendarioPeriodo.tipo == nombre[:2], CalendarioPeriodo.numero == int(nombre[2]),
+    )).one()
+    fila.fecha_inicio = inicio or fila.fecha_inicio
+    fila.fecha_fin = fin or fila.fecha_fin
+    db.add(fila)
+    db.commit()
+
+
 # ── Entorno ─────────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -181,7 +276,11 @@ class Entorno:
     programas: dict[str, int]
     usuarios: dict[str, Usuario]
     anio: AnioEscolar
+    # "pasado" (PA1), "vigente" (PA2), "futuro" (PA3) y "cuarto" (PA4).
     periodos: dict[str, PeriodoAcademico]
+    calendario: Calendario
+    # Fechas del calendario general: {"PA1": (inicio, fin), ..., "PR4": (...)}.
+    rangos: dict[str, tuple[date, date]]
     colegios: dict[str, Colegio]
     alumnos: dict[str, Alumno]
     id_docente: int
@@ -194,6 +293,22 @@ class Entorno:
     @property
     def docente(self) -> Usuario:
         return self.usuarios["Docente"]
+
+    def _clave(self, clave: str) -> str:
+        return f"PA{NUMERO_DE_PA[clave]}" if clave in NUMERO_DE_PA else clave
+
+    def inicio(self, clave: str) -> date:
+        """Primer día del PA de esa clave ("vigente") o del periodo ("PR1")."""
+        return self.rangos[self._clave(clave)][0]
+
+    def fin(self, clave: str) -> date:
+        return self.rangos[self._clave(clave)][1]
+
+
+def terminar_pa_vigente(db, entorno: Entorno) -> None:
+    """El PA2 termina ayer y hoy empieza el PR2 (los colegios del general quedan en receso)."""
+    fijar_periodo(db, entorno.calendario, "PA2", fin=entorno.hoy - timedelta(days=1))
+    fijar_periodo(db, entorno.calendario, "PR2", inicio=entorno.hoy)
 
 
 def _usuario(db, correo, id_rol, nombres, apellidos, dni, creado_por=None, **extra) -> Usuario:
@@ -324,18 +439,13 @@ def armar_entorno(db: Session) -> Entorno:
     )
     db.add(anio)
     db.flush()
-    rangos = {
-        "pasado": (hoy - timedelta(days=150), hoy - timedelta(days=60), 1),
-        "vigente": (hoy - timedelta(days=30), hoy + timedelta(days=30), 2),
-        "futuro": (hoy + timedelta(days=31), hoy + timedelta(days=120), 3),
+    rangos = rangos_relativos(hoy)
+    calendario = crear_calendario_general(db, anio, id_actor, rangos)
+    por_numero = {
+        p.numero: p
+        for p in db.exec(select(PeriodoAcademico).where(PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar))
     }
-    periodos = {}
-    for clave, (inicio, fin, numero) in rangos.items():
-        periodos[clave] = PeriodoAcademico(
-            id_anio_escolar=anio.id_anio_escolar, numero=numero, fecha_inicio=inicio, fecha_fin=fin, **auditoria
-        )
-        db.add(periodos[clave])
-    db.flush()
+    periodos = {clave: por_numero[numero] for clave, numero in NUMERO_DE_PA.items()}
 
     todos_los_grados = sorted(grados.values())
     todos_los_programas = sorted(programas.values())
@@ -361,7 +471,9 @@ def armar_entorno(db: Session) -> Entorno:
         ),
     }
     db.commit()
-    for fila in [original, supervisor, directivo, docente, anio, *periodos.values(), *colegios.values(), *alumnos.values()]:
+    filas = [original, supervisor, directivo, docente, anio, calendario, *periodos.values(), *colegios.values(),
+             *alumnos.values()]
+    for fila in filas:
         db.refresh(fila)
 
     return Entorno(
@@ -372,6 +484,8 @@ def armar_entorno(db: Session) -> Entorno:
         usuarios={"Docente": docente, "Supervisor": supervisor, "Directivo": directivo, "Original": original},
         anio=anio,
         periodos=periodos,
+        calendario=calendario,
+        rangos=rangos,
         colegios=colegios,
         alumnos=alumnos,
         id_docente=ficha.id_docente,

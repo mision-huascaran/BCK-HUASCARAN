@@ -42,8 +42,8 @@ Los datos viven en archivos versionados en `app/datos/`.
 | `inicializar` | cada arranque | Ejecuta en orden los cinco comandos de abajo marcados como "cada arranque" y registra un resumen (creado, actualizado, omitido, advertencias, errores). |
 | `cargar-catalogos` | cada arranque | Roles, ciclos EBR, grados y programas (buscados por nombre) y los niveles Raz-Kids (29, el id es el orden: J = 11), generales (4), de rúbrica (17) y el nivel esperado por grado (6), desde `app/datos/catalogos.json`. |
 | `inicializar-supervisor-original` | cada arranque | Si no existe, crea el Supervisor original (CU001) con las variables `SUPERVISOR_ORIGINAL_*`. Si falta alguna variable, avisa y lo omite. |
-| `cargar-calendario [--archivo RUTA]` | cada arranque | Año escolar, periodos, cortes diagnósticos y semanas (lunes a viernes, solo dentro de los periodos) desde `app/datos/calendario_2026.json`. |
-| `cargar-feriados` | cada arranque | Feriados nacionales de Perú (librería `holidays`) que caen de lunes a viernes, para cada año escolar de la BD. |
+| `cargar-calendario [--archivo RUTA]` | cada arranque | Año escolar, PA1 a PA4, calendario general (si el año aún no tiene: PA y PR), cortes diagnósticos y semanas (lunes a viernes, solo dentro de los PA del general) desde `app/datos/calendario_2026.json`. |
+| `cargar-feriados` | cada arranque | Feriados nacionales de Perú (librería `holidays`) que caen de lunes a viernes dentro de un PA, como días no lectivos `automatico` del calendario general de cada año. |
 | `cargar-colegios-iniciales [--archivo RUTA]` | solo con `CARGAR_COLEGIOS_INICIALES=true` | Los 9 colegios reales con sus 6 grados y 2 programas, desde `app/datos/colegios_iniciales.json`. |
 
 ### Supervisor original
@@ -60,14 +60,19 @@ Los datos viven en archivos versionados en `app/datos/`.
 ### Calendario (FICTICIO por ahora)
 
 `app/datos/calendario_2026.json` es un **calendario ficticio** de desarrollo, no el
-calendario escolar real: hay que reemplazarlo cuando el equipo confirme las fechas. El
-archivo es la fuente de verdad (no hay pantalla para editarlo):
+calendario escolar real. Desde CU027 el calendario académico (general y particular por
+colegio, con sus recesos y días no lectivos) lo gestiona el Supervisor en
+`/calendarios`; el archivo solo lo siembra:
 
-- valida que los periodos no se solapen, estén dentro del año, empiecen en lunes, terminen
-  en viernes y que cada corte caiga dentro de su periodo; si algo falla, no escribe nada;
-- si cambia una fecha, la actualiza en la BD y lo registra en el log, salvo que eso deje
-  fuera de rango semanas que ya tienen registros (rúbrica o reporte; la asistencia es por
-  fecha y no depende de las semanas): en ese caso registra un `ERROR` y no toca nada.
+- valida que los PA 1 a 4 no se solapen y dejen días de receso entre ellos, estén dentro
+  del año, empiecen en lunes, terminen en viernes y que cada corte caiga dentro de su PA;
+  si trae `recesos`, valida los 8 periodos; si algo falla, no escribe nada;
+- crea el calendario general del año si no existe (sin `recesos`, cada PR cubre el hueco
+  entre dos PA y el PR4 llega al fin del año). Si ya existe y difiere, NO lo modifica:
+  registra un `WARNING` (un despliegue no debe pisar lo que guardó un Supervisor);
+- las fechas del año y de los cortes sí las manda el archivo; las semanas se generan con
+  los PA del calendario general de la BD, salvo que eso deje fuera de rango semanas que ya
+  tienen registros (rúbrica o reporte): en ese caso registra un `ERROR` y no toca nada.
 
 ### Colegios iniciales: `CARGAR_COLEGIOS_INICIALES`
 

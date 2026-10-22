@@ -5,6 +5,8 @@ import pytest
 
 from app.core.tiempo import ahora_utc
 from app.models.evaluacion import SemanaReporte
+from app.models.organizacion import AnioEscolar, PeriodoAcademico
+from tests.conftest import crear_particular, rangos_en_receso
 
 
 @pytest.mark.parametrize("rol", ["Docente", "Supervisor", "Directivo"])
@@ -31,8 +33,41 @@ def test_anios_y_periodos_marcan_el_vigente(client, entorno, cabeceras):
     del_anio = client.get("/periodos-academicos", params={"id_anio_escolar": 999}, headers=cabecera).json()
 
     assert [a["vigente"] for a in anios] == [True]
-    assert [(p["numero"], p["vigente"]) for p in periodos] == [(1, False), (2, True), (3, False)]
+    assert [(p["numero"], p["tipo"], p["vigente"]) for p in periodos] == [
+        (1, "PA", False), (2, "PA", True), (3, "PA", False), (4, "PA", False)
+    ]
+    assert (periodos[1]["fecha_inicio"], periodos[1]["fecha_fin"]) == tuple(d.isoformat() for d in entorno.rangos["PA2"])
     assert del_anio == []
+
+
+def test_periodos_academicos_con_las_fechas_del_colegio(client, db, entorno, cabeceras):
+    """Sin `id_colegio`, las fechas del general; con él, las del calendario que le aplica."""
+    lejano = entorno.colegios["Lejano"].id_colegio
+    crear_particular(db, entorno, rangos_en_receso(entorno.hoy))
+    cabecera = cabeceras["Docente"]
+
+    general = client.get("/periodos-academicos", headers=cabecera).json()
+    de_lejano = client.get("/periodos-academicos", params={"id_colegio": lejano}, headers=cabecera).json()
+
+    assert [p["vigente"] for p in general] == [False, True, False, False]
+    assert [p["vigente"] for p in de_lejano] == [False, False, False, False]
+    assert de_lejano[1]["fecha_fin"] == (entorno.hoy - timedelta(days=1)).isoformat()
+
+
+def test_periodos_academicos_sin_calendario_traen_fechas_null(client, db, entorno, cabeceras):
+    otro = AnioEscolar(nombre="Siguiente", fecha_inicio=entorno.hoy + timedelta(days=400),
+                       fecha_fin=entorno.hoy + timedelta(days=700), creado_por=1, creado_en=ahora_utc())
+    db.add(otro)
+    db.flush()
+    db.add(PeriodoAcademico(id_anio_escolar=otro.id_anio_escolar, numero=1, creado_por=1, creado_en=ahora_utc()))
+    db.commit()
+
+    periodos = client.get(
+        "/periodos-academicos", params={"id_anio_escolar": otro.id_anio_escolar}, headers=cabeceras["Docente"]
+    ).json()
+
+    assert periodos == [{"id": periodos[0]["id"], "id_anio_escolar": otro.id_anio_escolar, "numero": 1, "tipo": "PA",
+                         "fecha_inicio": None, "fecha_fin": None, "vigente": False}]
 
 
 def test_semanas_por_periodo_y_cerradas(client, db, entorno, cabeceras):

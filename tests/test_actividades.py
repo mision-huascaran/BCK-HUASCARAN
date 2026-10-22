@@ -9,7 +9,18 @@ from sqlmodel import select
 from app.core.tiempo import ahora_utc
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
-from tests.conftest import asignar, cabecera_de, crear_docente, id_sesion_de, iniciar_actividad, instante, iso, motivo, releer
+from tests.conftest import (
+    asignar,
+    cabecera_de,
+    crear_docente,
+    id_sesion_de,
+    iniciar_actividad,
+    instante,
+    iso,
+    motivo,
+    releer,
+    terminar_pa_vigente,
+)
 
 MANUAL = "Manual por finalización de actividad"
 FORZADO = "Forzado por cierre de sesión"
@@ -84,11 +95,9 @@ def test_cu009_sin_asignaciones_no_inicia(client, db, entorno):
 
 
 def test_cu010_fuera_de_periodo_no_inicia(client, db, entorno, doc):
-    """Entre periodos el motivo es el periodo, no las asignaciones (aunque tampoco tenga)."""
-    vigente = entorno.periodos["vigente"]
-    vigente.fecha_fin = entorno.hoy - timedelta(days=1)
-    db.add(vigente)
-    db.commit()
+    """Si ningún colegio está hoy en un PA (todos en receso), el motivo es el periodo, no
+    las asignaciones (aunque tampoco tenga)."""
+    terminar_pa_vigente(db, entorno)
 
     respuesta = post(client, doc)
 
