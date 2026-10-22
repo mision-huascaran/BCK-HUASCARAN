@@ -244,8 +244,22 @@ def _actividad_forzada(db: Session, id_sesion: uuid.UUID) -> Optional[Actividad]
     ).first()
 
 
+def fin_estimado(sesion: Sesion, fin_minimo: datetime) -> datetime:
+    """Cierre sin hora verificada (CU008): lo más tarde entre `fin_minimo` y la última
+    petición que recibió el servidor de esa sesión, sin pasar de su vencimiento."""
+    fin = fin_minimo.astimezone(timezone.utc)
+    if sesion.ultima_peticion_en is not None:
+        fin = max(fin, sesion.ultima_peticion_en)
+    return min(fin, sesion.expira)
+
+
 def cerrar_sesion_diferida(
-    db: Session, id_usuario: int, id_sesion_actual: uuid.UUID, id_sesion: uuid.UUID, fin: datetime
+    db: Session,
+    id_usuario: int,
+    id_sesion_actual: uuid.UUID,
+    id_sesion: uuid.UUID,
+    fin: Optional[datetime],
+    fin_minimo: Optional[datetime] = None,
 ) -> tuple[Sesion, Optional[Actividad]]:
     """Registra un "Cerrar sesión" hecho sin conexión, con su hora real `fin` (CU008).
 
@@ -265,6 +279,9 @@ def cerrar_sesion_diferida(
     orden: lo que llega después hereda (o corrige) el cierre de lo que llegó antes.
     `sincronizado_en` de las actividades tocadas es la hora de llegada, aparte de `fin`.
 
+    Con `fin_minimo` en vez de `fin`, el cierre es `fin_estimado` y la sesión queda con
+    `fin_verificado = false`; la actividad que se cierra con ella usa el mismo instante.
+
     Devuelve la sesión y la actividad que terminó con el cierre de la sesión (por esta
     petición o por una anterior), o None. Quien llama confirma todo en un solo commit.
     """
@@ -277,12 +294,13 @@ def cerrar_sesion_diferida(
     cerrar_sesiones_vencidas(db, id_usuario)
     sesion = sesion_propia_bloqueada(db, id_usuario, id_sesion)
     ahora = ahora_utc()
-    fin = _validar_fin_de_sesion(sesion, fin, ahora)
+    verificado = fin_minimo is None
+    fin = _validar_fin_de_sesion(sesion, fin if verificado else fin_estimado(sesion, fin_minimo), ahora)
     instante = literal(fin, UTCDateTime())
 
     if sesion.fin is None:
         _cerrar_actividades(db, _en_curso([id_sesion]), instante, CIERRE_ACTIVIDAD_FORZADO, ahora)
-        sesion.fin, sesion.tipo_cierre = fin, CIERRE_MANUAL
+        sesion.fin, sesion.tipo_cierre, sesion.fin_verificado = fin, CIERRE_MANUAL, verificado
     elif sesion.tipo_cierre == CIERRE_POR_EXPIRACION and fin < sesion.fin:
         cerradas_por_expiracion = and_(
             Actividad.id_sesion == id_sesion,
@@ -290,7 +308,7 @@ def cerrar_sesion_diferida(
             col(Actividad.fin) > fin,
         )
         _cerrar_actividades(db, cerradas_por_expiracion, instante, CIERRE_ACTIVIDAD_FORZADO, ahora)
-        sesion.fin, sesion.tipo_cierre = fin, CIERRE_MANUAL
+        sesion.fin, sesion.tipo_cierre, sesion.fin_verificado = fin, CIERRE_MANUAL, verificado
     db.add(sesion)
     db.flush()
     return sesion, _actividad_forzada(db, id_sesion)

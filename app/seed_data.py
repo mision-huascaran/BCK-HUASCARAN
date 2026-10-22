@@ -12,8 +12,9 @@ from app.cli.catalogos import cargar_catalogos, roles_por_nombre
 from app.core.correo import normalizar_correo
 from app.core.database import engine
 from app.core.security import hash_password
-from app.core.tiempo import ahora_utc
+from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
+    AnioEscolar,
     Colegio,
     Docente,
     DocenteColegioGrado,
@@ -22,7 +23,7 @@ from app.models.organizacion import (
     Programa,
     Usuario,
 )
-from app.services.calendario import periodo_vigente
+from app.services.calendario import periodo_general_de
 from app.services.colegio_service import completar_oferta
 
 APELLIDOS_PRUEBA = "de Prueba"
@@ -43,13 +44,16 @@ DIRECTIVO_DNI = "00000003"
 
 
 def periodo_para_asignaciones(session: Session) -> Optional[PeriodoAcademico]:
-    """Periodo del calendario real del que cuelgan las asignaciones de prueba: el vigente
-    hoy o, si no hay ninguno vigente, el último. None si no hay calendario cargado."""
-    vigente = periodo_vigente(session)
-    if vigente is not None:
-        return vigente
+    """Periodo del calendario real del que cuelgan las asignaciones de prueba: el PA en
+    que hoy está el calendario GENERAL (el seed no depende de un colegio) o, si hoy no es
+    un PA, el último cargado. None si no hay periodos."""
+    vigente = periodo_general_de(session, hoy_lima())
+    if vigente is not None and vigente.es_pa and vigente.id_periodo_academico is not None:
+        return session.get(PeriodoAcademico, vigente.id_periodo_academico)
     return session.exec(
-        select(PeriodoAcademico).order_by(col(PeriodoAcademico.fecha_inicio).desc())
+        select(PeriodoAcademico)
+        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
+        .order_by(col(AnioEscolar.fecha_inicio).desc(), col(PeriodoAcademico.numero).desc())
     ).first()
 
 
@@ -240,10 +244,12 @@ def seed() -> None:
             )
             session.commit()
 
+        # Solo los correos: este script corre en el despliegue y su salida queda en el log
+        # (bug #500). Las contraseñas de prueba están en este archivo.
         print("Seed completado.")
-        print(f"Docente     -> correo: {PROFESOR_CORREO}  password: {PROFESOR_PASSWORD}")
-        print(f"Supervisor  -> correo: {JEFA_CORREO}  password: {JEFA_PASSWORD}")
-        print(f"Directivo   -> correo: {DIRECTIVO_CORREO}  password: {DIRECTIVO_PASSWORD}")
+        print(f"Docente     -> correo: {PROFESOR_CORREO}")
+        print(f"Supervisor  -> correo: {JEFA_CORREO}")
+        print(f"Directivo   -> correo: {DIRECTIVO_CORREO}")
         if periodo is None:
             print("Sin calendario cargado: no se creó la asignación de prueba.")
         else:

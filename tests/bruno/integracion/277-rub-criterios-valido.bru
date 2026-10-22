@@ -1,0 +1,19 @@
+meta {
+  name: RUB criterios · válido
+  type: http
+  seq: 277
+}
+
+get {
+  url: {{baseUrl}}/rubricas/criterios?id_programa={{idPrograma1}}&id_ciclo=1
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("descriptores por dimensión y nivel", function () { expect(res.status).to.equal(200); expect(res.body.length).to.be.greaterThan(0); expect(res.body[0].descriptor).to.be.a("string"); });
+}

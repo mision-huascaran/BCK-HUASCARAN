@@ -1,0 +1,44 @@
+meta {
+  name: F3-05 El Supervisor intenta registrar asistencia
+  type: http
+  seq: 47
+}
+
+put {
+  url: {{baseUrl}}/asistencias
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody({
+    id_colegio: Number(bru.getVar('idColegioDoc')),
+    id_grado: Number(bru.getVar('idGradoClase')),
+    id_seccion: Number(bru.getVar('idSeccion')),
+    fecha: bru.getVar('fechaClase'),
+    registros: [{ id_operacion: uuid(), id_alumno: Number(bru.getVar('idAlumnoB')), estado: 'ausente' }],
+  });
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}
+
+docs {
+  CU022: el Supervisor solo lee asistencias.
+}

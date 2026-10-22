@@ -5,10 +5,11 @@ ya empezó (`calendario.anio_de_referencia`). Los permisos (alcance del Docente)
 el router con `alumno_service.alumno_visible`.
 
 Las pestañas son mini-grillas: Registro de Vuelo, una fila por periodo (4 como máximo);
-Rúbrica y Seguimiento de Lectura, los 5 registros más recientes.
+Rúbrica y Seguimiento de Lectura, los 5 registros más recientes (Lectura: sus filas en
+las tablas semanales, por semana).
 """
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import func
@@ -20,43 +21,44 @@ from app.core.tiempo import limites_lima
 from app.models.evaluacion import (
     ESTADOS_ASISTIO,
     Asistencia,
-    EvaluacionDiagnostica,
-    EvaluacionDiagnosticaAlumno,
-    LibroSubidaNivel,
-    NivelFinalMensual,
-    NivelGeneral,
-    NivelRazkids,
+    Clase,
+    ClaseAlumno,
+    LECTURA_NORMAL,
+    LecturaSemanal,
+    LecturaSemanalAlumno,
     NivelRubrica,
-    ReporteSemanalAlumno,
-    RubricaRegistroSemanal,
     SemanaReporte,
 )
+from app.models.evaluacion import RubricaMensual as EvaluacionRubrica
 from app.models.organizacion import (
     Alumno,
     AnioEscolar,
-    CicloEbr,
     Colegio,
     Grado,
     PeriodoAcademico,
     Programa,
+    Seccion,
     Rol,
     Usuario,
 )
 from app.models.trazabilidad import Auditoria
 from app.schemas.alumno import (
+    AsistenciaDelAlumno,
     CambioHistorial,
     EventoHistorial,
-    LecturaSemanal,
-    LibroLsb,
+    EvaluacionMensual,
+    LecturaDeLaSemana,
     NivelColocado,
-    RegistroVuelo,
+    PeriodoDeVuelo,
     Resumen,
     Rubrica,
-    RubricaMensual,
-    RubricaSemanal,
 )
+from app.services import lectura_service, rubrica_service
+from app.services import registro_vuelo as vuelo
 from app.services.calendario import anio_de_referencia
-from app.services.nivel_descriptivo import escala_del_grado
+from app.services.motor_sugerencias import resultado_decimas
+from app.services.nivel_descriptivo import EscalaDescriptiva
+from app.services.pertenencia import CAMPO_AUDITORIA, fecha_legible
 
 # Filas de las mini-grillas del detalle (CU015).
 FILAS_REGISTRO_VUELO = 4  # una por periodo
@@ -65,197 +67,171 @@ FILAS_RECIENTES = 5  # Rúbrica y Seguimiento de Lectura
 # ── Resumen ─────────────────────────────────────────────────────────────────────────
 
 def resumen(db: Session, alumno: Alumno) -> Resumen:
-    """Tarjetas del detalle. Sin datos: nivel colocado null, 0 libros y 0 % (CU015)."""
+    """Tarjetas del detalle. Sin datos: nivel colocado null, 0 libros y asistencia sin datos (CU015)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return Resumen()
     return Resumen(
-        nivel_colocado=_nivel_colocado(db, alumno, anio.id_anio_escolar),
+        nivel_colocado=_nivel_colocado(db, alumno, anio),
         libros_leidos_anio=_libros_leidos(db, alumno.id_alumno, anio.id_anio_escolar),
-        asistencia_porcentaje=_asistencia(db, alumno, anio),
+        asistencia=_asistencia(db, alumno, anio),
     )
 
 
-def _nivel_colocado(db: Session, alumno: Alumno, id_anio: int) -> Optional[NivelColocado]:
-    """Letra Raz-Kids colocada en el Registro de Vuelo más reciente del año: el del
-    periodo más avanzado que tenga `nivel_colocado` (uno incompleto, sin él, no cuenta).
-    None si ninguno lo tiene. Su nivel descriptivo es el del grado actual del alumno."""
-    fila = db.exec(
-        select(NivelRazkids.letra, NivelRazkids.id_nivel_rk, PeriodoAcademico.numero)
-        .select_from(EvaluacionDiagnosticaAlumno)
-        .join(
-            EvaluacionDiagnostica,
-            EvaluacionDiagnostica.id_evaluacion_diagnostica == EvaluacionDiagnosticaAlumno.id_evaluacion_diagnostica,
-        )
-        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == EvaluacionDiagnostica.id_periodo_academico)
-        .join(NivelRazkids, NivelRazkids.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
-        .where(EvaluacionDiagnosticaAlumno.id_alumno == alumno.id_alumno, PeriodoAcademico.id_anio_escolar == id_anio)
-        .order_by(col(PeriodoAcademico.fecha_inicio).desc())
-    ).first()
-    if fila is None:
-        return None
-    letra, id_nivel_rk, numero = fila
-    return NivelColocado(
-        letra=letra, id_nivel_rk=id_nivel_rk, numero_periodo=numero,
-        nivel_descriptivo=escala_del_grado(db, alumno.id_grado).nivel(id_nivel_rk),
-    )
+def _nivel_colocado(db: Session, alumno: Alumno, anio: AnioEscolar) -> Optional[NivelColocado]:
+    """El nivel colocado del último PA del año que lo tenga (Registro de Vuelo, en
+    cualquier grupo), con su nivel del programa según el grado de esa decisión."""
+    datos = vuelo.cargar_datos(db, anio, [alumno.id_alumno])
+    registros = datos.registros.get(alumno.id_alumno, [])
+    for periodo in reversed(datos.periodos):
+        decision = vuelo.decision_del_periodo(registros, periodo.id_periodo_academico)
+        if decision is not None:
+            escala = datos.escalas.get(decision.id_grado, EscalaDescriptiva(()))
+            return NivelColocado(
+                letra=datos.letras[decision.id_nivel_colocado], id_nivel_rk=decision.id_nivel_colocado,
+                numero_periodo=periodo.numero, nivel_descriptivo=escala.nivel(decision.id_nivel_colocado),
+            )
+    return None
 
 
 def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
-    """LSL + LSB de los reportes del año (0 si no tiene ninguno)."""
-    lsl = db.exec(
-        select(func.coalesce(func.sum(ReporteSemanalAlumno.cantidad_lsl), 0))
-        .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == id_anio)
-    ).one()
-    lsb = db.exec(
-        select(func.count(LibroSubidaNivel.id))
-        .join(ReporteSemanalAlumno, ReporteSemanalAlumno.id == LibroSubidaNivel.id_reporte_semanal)
-        .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == id_anio)
-    ).one()
-    return int(lsl) + lsb
+    """Total de libros leídos en el año: la suma del total de libros (LSN + LSL) de sus
+    filas en las tablas de lectura del año que se realizaron (0 si no tiene ninguna)."""
+    return int(db.exec(
+        select(func.coalesce(func.sum(lectura_service.total_libros_sql()), 0))
+        .join(LecturaSemanal, LecturaSemanal.id == LecturaSemanalAlumno.id_lectura_semanal)
+        .where(
+            LecturaSemanalAlumno.id_alumno == id_alumno,
+            LecturaSemanal.id_anio_escolar == id_anio,
+            LecturaSemanal.estado == LECTURA_NORMAL,
+        )
+    ).one())
 
 
-def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> float:
-    """% de asistencia del año, con 1 decimal (CU015): asistencias del alumno (presente
-    o tardanza) en su aula actual (colegio, grado y subprograma) sobre las clases
-    dictadas en esa aula (las fechas con al menos un registro con estado). El aula es la
-    guardada en cada registro: lo que el alumno registró en otra aula antes de rotar no
-    cuenta aquí. 0 si no hubo clases."""
-    de_su_aula = (
-        Asistencia.fecha >= anio.fecha_inicio,
-        Asistencia.fecha <= anio.fecha_fin,
-        Asistencia.id_colegio == alumno.id_colegio,
-        Asistencia.id_grado == alumno.id_grado,
-        Asistencia.id_programa == alumno.id_programa_actual,
+def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> AsistenciaDelAlumno:
+    """% de asistencia del año (CU015): (presente + tardanza) / clases contabilizadas.
+    Cuentan las clases de los PA del año con la lista completa (todos sus alumnos con
+    estado) en cuya lista está el alumno; una reprogramada es una sola clase y las
+    adicionales también cuentan. Sin clases contabilizadas, porcentaje null."""
+    incompletas = (
+        select(ClaseAlumno.id_clase)
+        .outerjoin(
+            Asistencia,
+            (Asistencia.id_clase == ClaseAlumno.id_clase) & (Asistencia.id_alumno == ClaseAlumno.id_alumno),
+        )
+        .where(col(Asistencia.estado).is_(None))
     )
-    clases = db.exec(
-        select(func.count(func.distinct(Asistencia.fecha))).where(*de_su_aula, col(Asistencia.estado).is_not(None))
-    ).one()
-    if not clases:
-        return 0.0
-    asistidas = db.exec(
+    contabilizadas = (
         select(func.count())
-        .select_from(Asistencia)
-        .where(*de_su_aula, Asistencia.id_alumno == alumno.id_alumno, col(Asistencia.estado).in_(ESTADOS_ASISTIO))
+        .select_from(ClaseAlumno)
+        .join(Clase, Clase.id_clase == ClaseAlumno.id_clase)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == Clase.id_periodo_academico)
+        .where(
+            ClaseAlumno.id_alumno == alumno.id_alumno,
+            PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
+            col(ClaseAlumno.id_clase).not_in(incompletas),
+        )
+    )
+    total = db.exec(contabilizadas).one()
+    asistidas = db.exec(
+        contabilizadas.join(
+            Asistencia,
+            (Asistencia.id_clase == ClaseAlumno.id_clase) & (Asistencia.id_alumno == ClaseAlumno.id_alumno),
+        ).where(col(Asistencia.estado).in_(ESTADOS_ASISTIO))
     ).one()
-    return round(100 * asistidas / clases, 1)
+    porcentaje = round(100 * asistidas / total, 1) if total else None
+    return AsistenciaDelAlumno(porcentaje=porcentaje, asistidas=asistidas, contabilizadas=total)
 
 
 # ── Registro de Vuelo, Rúbrica y Seguimiento de Lectura ─────────────────────────────
 
-def registro_vuelo(db: Session, alumno: Alumno) -> list[RegistroVuelo]:
-    """Una fila por periodo del año. Cada letra colocada trae su nivel descriptivo según
-    el grado actual del alumno (eje Y de la gráfica)."""
+def registro_vuelo(db: Session, alumno: Alumno) -> list[PeriodoDeVuelo]:
+    """Los PA del año con entrada, nivel colocado, proyección y nivel del programa, para
+    la gráfica (decisión vigente en cualquier grupo, V1)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return []
-    entrada = aliased(NivelRazkids)
-    colocado = aliased(NivelRazkids)
-    filas = db.exec(
-        select(
-            PeriodoAcademico.numero, EvaluacionDiagnostica.fecha_realizacion, CicloEbr.nombre,
-            entrada.letra, EvaluacionDiagnosticaAlumno, colocado.letra, NivelGeneral.nombre_nivel,
-        )
-        .select_from(EvaluacionDiagnosticaAlumno)
-        .join(
-            EvaluacionDiagnostica,
-            EvaluacionDiagnostica.id_evaluacion_diagnostica == EvaluacionDiagnosticaAlumno.id_evaluacion_diagnostica,
-        )
-        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == EvaluacionDiagnostica.id_periodo_academico)
-        .join(CicloEbr, CicloEbr.id_ciclo == EvaluacionDiagnosticaAlumno.id_ciclo_evaluado)
-        .join(entrada, entrada.id_nivel_rk == EvaluacionDiagnosticaAlumno.id_nivel_rk_entrada)
-        .outerjoin(colocado, colocado.id_nivel_rk == EvaluacionDiagnosticaAlumno.nivel_colocado)
-        .outerjoin(NivelGeneral, NivelGeneral.id_nivel_general == EvaluacionDiagnosticaAlumno.id_nivel_general)
-        .where(
-            EvaluacionDiagnosticaAlumno.id_alumno == alumno.id_alumno,
-            PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
-        )
-        # Una fila por periodo (UNIQUE de la evaluación por periodo y del alumno por
-        # evaluación); si el año tuviera más periodos que filas, se quedan los últimos.
-        .order_by(col(PeriodoAcademico.numero).desc())
-        .limit(FILAS_REGISTRO_VUELO)
-    ).all()
-    escala = escala_del_grado(db, alumno.id_grado)
-    return [
-        RegistroVuelo(
-            corte=corte, fecha=fecha, ciclo_evaluado=ciclo, nivel_entrada=nivel_entrada,
-            aciertos=registro.aciertos_prueba, total=registro.total_prueba,
-            nivel_colocado=nivel_colocado, nivel_descriptivo=escala.nivel(registro.nivel_colocado),
-            nivel_general=nivel_general, observacion=registro.observacion,
-        )
-        for corte, fecha, ciclo, nivel_entrada, registro, nivel_colocado, nivel_general in reversed(filas)
-    ]
+    datos = vuelo.cargar_datos(db, anio, [alumno.id_alumno])
+    registros = datos.registros.get(alumno.id_alumno, [])
+    salida = []
+    for periodo in datos.periodos[:FILAS_REGISTRO_VUELO]:
+        decision = vuelo.decision_del_periodo(registros, periodo.id_periodo_academico)
+        id_grado = _grado_en(registros, periodo.id_periodo_academico) or alumno.id_grado
+        id_entrada, origen = vuelo.entrada_de(datos, alumno.id_alumno, periodo, id_grado)
+        colocado = decision.id_nivel_colocado if decision else None
+        escala = datos.escalas.get(decision.id_grado if decision else id_grado, EscalaDescriptiva(()))
+        salida.append(PeriodoDeVuelo(
+            numero=periodo.numero, id_periodo_academico=periodo.id_periodo_academico,
+            entrada=datos.letras.get(id_entrada), origen_entrada=origen, nivel_colocado=datos.letras.get(colocado),
+            id_nivel_colocado=colocado,
+            proyeccion=datos.letras.get(decision.id_nivel_proyeccion) if decision else None,
+            nivel_programa=escala.nivel(colocado),
+        ))
+    return salida
+
+
+def _grado_en(registros: list, id_periodo: int) -> Optional[int]:
+    """El grado del alumno en sus filas de ese PA (la más reciente), si tiene alguna."""
+    filas = [r for r in registros if r.id_periodo_academico == id_periodo]
+    return max(filas, key=lambda r: r.fecha_registro).id_grado if filas else None
 
 
 def rubrica(db: Session, id_alumno: int) -> Rubrica:
     anio = anio_de_referencia(db)
     if anio is None:
-        return Rubrica(semanales=[], mensuales=[])
-    fluidez = aliased(NivelRubrica)
-    comprension = aliased(NivelRubrica)
-    semanales = db.exec(
-        select(SemanaReporte, RubricaRegistroSemanal, fluidez.nombre_nivel, comprension.nombre_nivel)
-        .select_from(RubricaRegistroSemanal)
-        .join(SemanaReporte, SemanaReporte.id_semana == RubricaRegistroSemanal.id_semana)
-        .outerjoin(fluidez, fluidez.id_nivel_rubrica == RubricaRegistroSemanal.id_nivel_fluidez)
-        .outerjoin(comprension, comprension.id_nivel_rubrica == RubricaRegistroSemanal.id_nivel_comprension)
-        .where(RubricaRegistroSemanal.id_alumno == id_alumno, RubricaRegistroSemanal.id_anio_escolar == anio.id_anio_escolar)
-        .order_by(col(SemanaReporte.fecha_inicio).desc())
-        .limit(FILAS_RECIENTES)
-    ).all()
-    mensuales = db.exec(
-        select(NivelFinalMensual, NivelGeneral.nombre_nivel)
-        .join(NivelGeneral, NivelGeneral.id_nivel_general == NivelFinalMensual.id_nivel_final)
-        .where(NivelFinalMensual.id_alumno == id_alumno, NivelFinalMensual.id_anio_escolar == anio.id_anio_escolar)
-        .order_by(col(NivelFinalMensual.mes).desc())
+        return Rubrica(evaluaciones=[])
+    fluidez, comprension = aliased(NivelRubrica), aliased(NivelRubrica)
+    evaluaciones = db.exec(
+        select(EvaluacionRubrica.mes, fluidez, comprension)
+        .outerjoin(fluidez, fluidez.id_nivel_rubrica == EvaluacionRubrica.id_nivel_fluidez)
+        .outerjoin(comprension, comprension.id_nivel_rubrica == EvaluacionRubrica.id_nivel_comprension)
+        .where(EvaluacionRubrica.id_alumno == id_alumno, EvaluacionRubrica.id_anio_escolar == anio.id_anio_escolar)
+        .order_by(col(EvaluacionRubrica.mes).desc(), col(EvaluacionRubrica.id).desc())
         .limit(FILAS_RECIENTES)
     ).all()
     return Rubrica(
-        semanales=[
-            RubricaSemanal(
-                semana=semana.numero_semana, fecha_inicio=semana.fecha_inicio,
-                fluidez=nivel_fluidez, comprension=nivel_comprension, observacion=registro.observacion,
-            )
-            for semana, registro, nivel_fluidez, nivel_comprension in semanales
-        ],
-        mensuales=[
-            RubricaMensual(
-                mes=nivel.mes, nivel_final=nombre, ajustado=nivel.ajustado_por_docente,
-                justificacion=nivel.justificacion,
-            )
-            for nivel, nombre in mensuales
-        ],
+        evaluaciones=[_evaluacion(mes, nivel_f, nivel_c) for mes, nivel_f, nivel_c in evaluaciones],
     )
 
 
-def lectura(db: Session, id_alumno: int) -> list[LecturaSemanal]:
+def _evaluacion(mes: int, fluidez: Optional[NivelRubrica], comprension: Optional[NivelRubrica]) -> EvaluacionMensual:
+    completa = fluidez is not None and comprension is not None
+    return EvaluacionMensual(
+        mes=mes, fluidez=fluidez.nombre_nivel if fluidez else None,
+        comprension=comprension.nombre_nivel if comprension else None,
+        estado=rubrica_service.estado_de(fluidez, comprension),
+        resultado_decimas=resultado_decimas(fluidez.valor, comprension.valor) if completa else None,
+    )
+
+
+def lectura(db: Session, id_alumno: int) -> list[LecturaDeLaSemana]:
+    """Sus filas en las 5 tablas de lectura más recientes del año, con el estado de la
+    fila y la asistencia de la clase de referencia (CU015)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return []
-    reportes = db.exec(
-        select(ReporteSemanalAlumno, SemanaReporte)
-        .join(SemanaReporte, SemanaReporte.id_semana == ReporteSemanalAlumno.id_semana)
-        .where(ReporteSemanalAlumno.id_alumno == id_alumno, ReporteSemanalAlumno.id_anio_escolar == anio.id_anio_escolar)
-        .order_by(col(SemanaReporte.fecha_inicio).desc())
+    filas = db.exec(
+        select(LecturaSemanalAlumno, LecturaSemanal, SemanaReporte, Asistencia.estado)
+        .join(LecturaSemanal, LecturaSemanal.id == LecturaSemanalAlumno.id_lectura_semanal)
+        .join(SemanaReporte, SemanaReporte.id_semana == LecturaSemanal.id_semana)
+        .outerjoin(
+            Asistencia,
+            (Asistencia.id_clase == LecturaSemanal.id_clase_referencia)
+            & (Asistencia.id_alumno == LecturaSemanalAlumno.id_alumno),
+        )
+        .where(LecturaSemanalAlumno.id_alumno == id_alumno, LecturaSemanal.id_anio_escolar == anio.id_anio_escolar)
+        .order_by(col(SemanaReporte.fecha_inicio).desc(), col(LecturaSemanal.id).desc())
         .limit(FILAS_RECIENTES)
     ).all()
-    libros: dict[int, list[LibroLsb]] = defaultdict(list)
-    if reportes:
-        for libro in db.exec(
-            select(LibroSubidaNivel)
-            .where(col(LibroSubidaNivel.id_reporte_semanal).in_([r.id for r, _ in reportes]))
-            .order_by(LibroSubidaNivel.id)
-        ).all():
-            libros[libro.id_reporte_semanal].append(
-                LibroLsb(titulo=libro.titulo_libro, aciertos=libro.aciertos, total=libro.total_preguntas)
-            )
     return [
-        LecturaSemanal(
-            semana=semana.numero_semana, fecha_inicio=semana.fecha_inicio,
-            cantidad_lsl=reporte.cantidad_lsl, observaciones=reporte.observaciones,
-            libros_lsb=libros[reporte.id],
+        LecturaDeLaSemana(
+            semana=semana.numero_semana, fecha_inicio=semana.fecha_inicio, fecha_fin=semana.fecha_fin, mes=tabla.mes,
+            id_programa=tabla.id_programa, estado_tabla=tabla.estado, motivo_no_realizada=tabla.motivo_no_realizada,
+            asistencia=asistencia, lsn_titulo=fila.lsn_titulo, lsn_nota=fila.lsn_nota, lsn_maximo=fila.lsn_maximo,
+            cantidad_lsl=fila.cantidad_lsl, total_libros=lectura_service.total_libros(fila),
+            observacion=fila.observacion, estado_fila=lectura_service.estado_fila(tabla.estado, asistencia, fila),
         )
-        for reporte, semana in reportes
+        for fila, tabla, semana, asistencia in filas
     ]
 
 
@@ -268,13 +244,17 @@ ETIQUETAS = {
     "id_grado": "Grado",
     "id_programa": "Subprograma",
     "id_colegio": "Colegio",
+    "id_seccion": "Sección",
     "activo": "Estado",
+    # Campo virtual de la pertenencia (CU014): la fecha desde la que rige el evento.
+    CAMPO_AUDITORIA: "Fecha efectiva",
 }
 # Campos que guardan un id de catálogo -> (modelo, columna id).
 CATALOGOS = {
     "id_grado": (Grado, "id_grado"),
     "id_programa": (Programa, "id_programa"),
     "id_colegio": (Colegio, "id_colegio"),
+    "id_seccion": (Seccion, "id_seccion"),
 }
 ESTADOS = {"true": "Activo", "false": "Inactivo"}
 
@@ -306,6 +286,8 @@ def _legible(campo: str, valor: Optional[str], nombres: dict[str, dict[str, str]
         return None
     if campo == "activo":
         return ESTADOS.get(valor, valor)
+    if campo == CAMPO_AUDITORIA:
+        return fecha_legible(date.fromisoformat(valor))
     # Si el id ya no existe en el catálogo, se muestra el id.
     return nombres.get(campo, {}).get(valor, valor)
 
@@ -313,7 +295,7 @@ def _legible(campo: str, valor: Optional[str], nombres: dict[str, dict[str, str]
 def historial(db: Session, id_alumno: int, page: int) -> Paginado[EventoHistorial]:
     """Eventos de `auditoria` del alumno en el año escolar de referencia, del más reciente
     al más antiguo. Las filas con el mismo (fecha, usuario, acción) son un solo evento, y
-    la paginación es sobre los eventos (10 por página), no sobre las filas.
+    la paginación es sobre los eventos (`TAMANO_PAGINA` por página), no sobre las filas.
 
     `crear` no guarda campos: sus `cambios` vienen vacíos. `activar` e `inactivar` se
     guardan con el campo `activo`: vienen con el cambio de "Estado".

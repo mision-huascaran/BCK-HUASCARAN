@@ -1,0 +1,34 @@
+meta {
+  name: CIERRE inactivar alumno (idAlumnoInt)
+  type: http
+  seq: 339
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}/desactivar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "aplicar_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("inactivo (o la clase de hoy ya lo tiene en su lista congelada)", function () {
+    expect([200, 409]).to.include(res.status);
+    if (res.status === 200) expect(res.body.activo).to.equal(false);
+  });
+}
+
+docs {
+  # Cierre
+
+  Nada se elimina: lo creado en la corrida queda inactivo.
+}

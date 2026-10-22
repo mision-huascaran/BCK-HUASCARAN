@@ -1,0 +1,22 @@
+meta {
+  name: LEC tabla · todavía no existe
+  type: http
+  seq: 243
+}
+
+get {
+  url: {{baseUrl}}/lectura/tablas?id_colegio={{idColegioDoc}}&id_programa={{idPrograma1}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&id_anio_escolar={{idAnio}}&mes={{mesClase}}&id_semana={{idSemana}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("404 tabla_no_existe", function () {
+    expect(res.status).to.equal(404);
+    expect(res.body.motivo).to.equal('tabla_no_existe');
+  });
+}

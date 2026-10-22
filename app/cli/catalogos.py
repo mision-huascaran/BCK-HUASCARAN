@@ -2,10 +2,12 @@
 
 - rol, ciclo_ebr, grado y programa ya existen en las BD actuales con ids SERIAL creados
   por el seed: se buscan por nombre (get-or-create), sin forzar ids.
-- nivel_razkids, nivel_general y nivel_rubrica usan ids explícitos (el id de
+- nivel_razkids y nivel_rubrica usan ids explícitos (el id de
   nivel_razkids ES el orden del nivel); después se ajusta su secuencia.
 - nivel_esperado_por_grado y escala_nivel_descriptivo se identifican por grado (y nivel)
   y apuntan a la letra por su nombre.
+- descriptor_rubrica (app/datos/descriptores_rubrica.json, 33 textos de CU029) se
+  identifica por nivel (subprograma, dimensión y valor) y ciclo.
 - Nunca se sobrescribe una fila existente: si difiere del archivo, WARNING y se deja.
 """
 from typing import Optional
@@ -14,15 +16,16 @@ from sqlmodel import Session, SQLModel, select
 
 from app.cli.comun import DIR_DATOS, Resumen, ajustar_secuencia, leer_json
 from app.models.evaluacion import (
+    DescriptorRubrica,
     EscalaNivelDescriptivo,
     NivelEsperadoPorGrado,
-    NivelGeneral,
     NivelRazkids,
     NivelRubrica,
 )
 from app.models.organizacion import CicloEbr, Grado, Programa, Rol
 
 ARCHIVO_CATALOGOS = DIR_DATOS / "catalogos.json"
+ARCHIVO_DESCRIPTORES = DIR_DATOS / "descriptores_rubrica.json"
 
 
 def _por_nombre(db: Session, modelo: type[SQLModel], nombre: str, resumen: Resumen, **extra):
@@ -76,6 +79,7 @@ def _filas_rubrica(datos: list[dict], programas: dict[str, Programa]) -> list[di
             "id_programa": programas[n["programa"]].id_programa,
             "dimension": n["dimension"],
             "orden": n["orden"],
+            "valor": n["valor"],
             "nombre_nivel": n["nombre"],
         }
         for n in datos
@@ -130,10 +134,31 @@ def _cargar_escala_descriptiva(db: Session, datos: list[dict], resumen: Resumen)
                 )
 
 
-def cargar_catalogos(db: Session, datos: Optional[dict] = None) -> Resumen:
+def _cargar_descriptores(
+    db: Session, datos: list[dict], programas: dict[str, Programa], ciclos: dict[str, CicloEbr], resumen: Resumen
+) -> None:
+    """Descriptores de la rúbrica por nivel y ciclo (CU029)."""
+    tabla = DescriptorRubrica.__tablename__
+    niveles = {(n.id_programa, n.dimension, n.valor): n.id_nivel_rubrica for n in db.exec(select(NivelRubrica)).all()}
+    for item in datos:
+        clave = (programas[item["programa"]].id_programa, item["dimension"], item["valor"])
+        id_nivel, ciclo = niveles.get(clave), ciclos.get(item["ciclo"])
+        if id_nivel is None or ciclo is None:
+            resumen.error(f"{tabla}: no existe el nivel {clave} o el ciclo {item['ciclo']}. Se omite.")
+            continue
+        existente = db.get(DescriptorRubrica, (id_nivel, ciclo.id_ciclo))
+        if existente is None:
+            db.add(DescriptorRubrica(id_nivel_rubrica=id_nivel, id_ciclo=ciclo.id_ciclo, texto=item["descriptor"]))
+            resumen.creados[tabla] += 1
+        elif existente.texto != item["descriptor"]:
+            resumen.advertir(f"{tabla} {clave} {item['ciclo']}: la BD tiene otro texto. No se modifica.")
+
+
+def cargar_catalogos(db: Session, datos: Optional[dict] = None, descriptores: Optional[dict] = None) -> Resumen:
     """Carga todos los catálogos fijos. Idempotente: se ejecuta en cada arranque."""
     resumen = Resumen()
     datos = datos if datos is not None else leer_json(ARCHIVO_CATALOGOS)
+    descriptores = descriptores if descriptores is not None else leer_json(ARCHIVO_DESCRIPTORES)
     if datos is None:
         resumen.error(f"No se pudieron leer los catálogos de {ARCHIVO_CATALOGOS}")
         return resumen
@@ -146,14 +171,14 @@ def cargar_catalogos(db: Session, datos: Optional[dict] = None) -> Resumen:
 
     niveles_rk = [{"id_nivel_rk": n["id"], "letra": n["letra"]} for n in datos["niveles_razkids"]]
     _cargar_por_id(db, NivelRazkids, niveles_rk, resumen)
-    niveles_generales = [
-        {"id_nivel_general": n["id"], "nombre_nivel": n["nombre"], "orden": n["orden"]}
-        for n in datos["niveles_generales"]
-    ]
-    _cargar_por_id(db, NivelGeneral, niveles_generales, resumen)
     _cargar_por_id(db, NivelRubrica, _filas_rubrica(datos["niveles_rubrica"], programas), resumen)
     _cargar_niveles_esperados(db, datos["niveles_esperados_por_grado"], resumen)
     _cargar_escala_descriptiva(db, datos["escala_nivel_descriptivo"], resumen)
+    db.flush()
+    if descriptores is None:
+        resumen.error(f"No se pudieron leer los descriptores de la rúbrica de {ARCHIVO_DESCRIPTORES}")
+    else:
+        _cargar_descriptores(db, descriptores["descriptores"], programas, ciclos, resumen)
 
     db.commit()
     return resumen

@@ -58,6 +58,7 @@ def registrar_auditoria(
     id_usuario: int,
     fecha: datetime,
     id_actividad: Optional[uuid.UUID] = None,
+    id_permiso: Optional[int] = None,
 ) -> int:
     """Agrega las filas de historial de una operación. No hace commit.
 
@@ -65,6 +66,8 @@ def registrar_auditoria(
     - `editar`: una fila por campo de `cambios` ({campo: (anterior, nuevo)}) cuyo valor
       realmente cambió; si ninguno cambió, no escribe nada.
     - `activar` / `inactivar`: una fila con `campo = 'activo'`.
+    En `crear`, `activar` e `inactivar`, los `cambios` que se pasen se agregan como filas
+    del mismo evento (p. ej. la fecha efectiva de la pertenencia de un alumno).
 
     Devuelve cuántas filas agregó.
     """
@@ -78,29 +81,25 @@ def registrar_auditoria(
         "id_usuario": id_usuario,
         "fecha": fecha,
         "id_actividad": id_actividad,
+        "id_permiso": id_permiso,
     }
+    filas = []
     if accion == CREAR:
-        filas = [Auditoria(**base)]
+        filas.append(Auditoria(**base))
     elif accion in (ACTIVAR, INACTIVAR):
-        filas = [
+        filas.append(
             Auditoria(
                 **base,
                 campo="activo",
                 valor_anterior=serializar(accion == INACTIVAR),
                 valor_nuevo=serializar(accion == ACTIVAR),
             )
-        ]
-    else:
-        filas = [
-            Auditoria(
-                **base,
-                campo=campo,
-                valor_anterior=serializar(anterior),
-                valor_nuevo=serializar(nuevo),
-            )
-            for campo, (anterior, nuevo) in (cambios or {}).items()
-            if campo not in CAMPOS_SENSIBLES and serializar(anterior) != serializar(nuevo)
-        ]
+        )
+    filas.extend(
+        Auditoria(**base, campo=campo, valor_anterior=serializar(anterior), valor_nuevo=serializar(nuevo))
+        for campo, (anterior, nuevo) in (cambios or {}).items()
+        if campo not in CAMPOS_SENSIBLES and serializar(anterior) != serializar(nuevo)
+    )
     db.add_all(filas)
     return len(filas)
 

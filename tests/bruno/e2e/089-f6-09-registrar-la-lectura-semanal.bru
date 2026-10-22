@@ -1,0 +1,51 @@
+meta {
+  name: F6-09 Registrar la lectura semanal
+  type: http
+  seq: 89
+}
+
+put {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/filas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([
+    { id_operacion: uuid(), version: JSON.parse(bru.getVar('filasTabla'))[bru.getVar('idAlumnoB')], id_alumno: Number(bru.getVar('idAlumnoB')), lsn_titulo: 'El zorro', lsn_nota: 4, lsn_maximo: 5, cantidad_lsl: 2 },
+    { id_operacion: uuid(), version: JSON.parse(bru.getVar('filasTabla'))[bru.getVar('idAlumnoA')], id_alumno: Number(bru.getVar('idAlumnoA')), cantidad_lsl: 1 },
+  ]);
+}
+
+script:post-response {
+  bru.setVar('versionFilaB', res.body[0].registro ? res.body[0].registro.version : null);
+}
+
+tests {
+  test("B (presente): aceptada, completada y total de libros calculado", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body[0].estado).to.equal('aceptada');
+    expect(res.body[0].registro.estado_fila).to.equal('completada');
+    expect(res.body[0].registro.total_libros).to.equal(3);
+  });
+  test("A (ausente): rechazada sin asistencia", function () {
+    expect(res.body[1].estado).to.equal('rechazada');
+    expect(res.body[1].motivo).to.equal('sin_asistencia');
+  });
+}
+
+docs {
+  CU025: total de libros = 1 si hay LSN + cantidad de LSL; sin Presente o Tardanza no se registra lectura.
+}

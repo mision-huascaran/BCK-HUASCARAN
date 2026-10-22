@@ -1,6 +1,7 @@
-"""Paginación común de los listados: página de 10 elementos, `page` desde 1.
+"""Paginación común de los listados: página de 40 elementos (CU013 a CU021), `page`
+desde 1.
 
-Respuesta: {"items": [...], "total": 37, "page": 1, "page_size": 10, "total_pages": 4}.
+Respuesta: {"items": [...], "total": 97, "page": 1, "page_size": 40, "total_pages": 3}.
 Una página posterior a la última devuelve `items` vacío, no un error.
 """
 from math import ceil
@@ -12,7 +13,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 from sqlmodel.sql.expression import Select, SelectOfScalar
 
-TAMANO_PAGINA = 10
+TAMANO_PAGINA = 40
 
 T = TypeVar("T")
 

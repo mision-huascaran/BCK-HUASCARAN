@@ -1,0 +1,22 @@
+meta {
+  name: F5-14 El Inicio ya no tiene pendientes
+  type: http
+  seq: 75
+}
+
+get {
+  url: {{baseUrl}}/inicio/docente
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocenteB}}
+}
+
+tests {
+  test("vuelve a los pendientes de antes de la caída", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.registros_offline_pendientes).to.equal(Number(bru.getVar('pendientesAntes')));
+  });
+}

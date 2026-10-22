@@ -1,0 +1,30 @@
+meta {
+  name: SYN descartar una inexistente
+  type: http
+  seq: 234
+}
+
+post {
+  url: {{baseUrl}}/sincronizacion/operaciones/{{opInexistente}}/descartar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opInexistente', uuid());
+}
+
+tests {
+  test("404 operacion_no_encontrada", function () {
+    expect(res.status).to.equal(404);
+    expect(res.body.motivo).to.equal('operacion_no_encontrada');
+  });
+}

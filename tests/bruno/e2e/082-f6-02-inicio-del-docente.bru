@@ -1,0 +1,32 @@
+meta {
+  name: F6-02 Inicio del docente
+  type: http
+  seq: 82
+}
+
+get {
+  url: {{baseUrl}}/inicio/docente
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:pre-request {
+  // Una actividad que quedó abierta por una corrida anterior interrumpida impediría
+  // iniciar otra (una sola en curso por docente): se finaliza antes de empezar.
+  const base = bru.getEnvVar('baseUrl');
+  const headers = { Authorization: 'Bearer ' + bru.getVar('tokenDocente') };
+  const inicio = await bru.sendRequest({ method: 'GET', url: base + '/inicio/docente', headers });
+  const abierta = inicio.data.actividad_activa;
+  if (abierta) {
+    await bru.sendRequest({ method: 'POST', url: `${base}/actividades/${abierta.id}/finalizar`, headers, data: {} });
+    console.log('Se finalizó una actividad que había quedado abierta: ' + abierta.id);
+  }
+}
+
+tests {
+  test("200", function () { expect(res.status).to.equal(200); });
+}

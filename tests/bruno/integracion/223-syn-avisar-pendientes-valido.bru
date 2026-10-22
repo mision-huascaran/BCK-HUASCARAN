@@ -1,0 +1,42 @@
+meta {
+  name: SYN avisar pendientes · válido
+  type: http
+  seq: 223
+}
+
+post {
+  url: {{baseUrl}}/sincronizacion/pendientes
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  [
+    { "id_operacion": "{{opPendiente}}", "id_dispositivo": "tablet-bruno", "id_actividad": "{{idActividadInt}}",
+      "modulo": "asistencias", "realizado_en": "{{ahora}}" }
+  ]
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opPendiente', uuid());
+  bru.setVar('ahora', new Date().toISOString());
+}
+
+tests {
+  test("recibido y registrado", function () { expect(res.status).to.equal(200); expect(res.body).to.deep.equal({ recibidos: 1, registrados: 1 }); });
+}
+
+docs {
+  # Sincronización (CU017 a CU021)
+
+  Solo el Docente opera sin conexión: avisa lo pendiente al reconectar, verifica el resultado
+  de una operación y descarta una rechazada para que deje de contar como error.
+}

@@ -1,0 +1,19 @@
+meta {
+  name: USR inactivar · válido
+  type: http
+  seq: 341
+}
+
+patch {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/desactivar
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("activo = false", function () { expect(res.status).to.equal(200); expect(res.body.activo).to.equal(false); });
+}

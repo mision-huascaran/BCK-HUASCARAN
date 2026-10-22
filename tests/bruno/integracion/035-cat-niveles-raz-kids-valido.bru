@@ -1,0 +1,29 @@
+meta {
+  name: CAT niveles Raz-Kids · válido
+  type: http
+  seq: 35
+}
+
+get {
+  url: {{baseUrl}}/niveles-razkids
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  bru.setVar('nivelesRk', JSON.stringify(Object.fromEntries(res.body.map((n) => [n.letra, n.id]))));
+}
+
+tests {
+  test("escala aa a Z (27 niveles, sin Z1 ni Z2)", function () {
+    expect(res.status).to.equal(200);
+    const letras = res.body.map((n) => n.letra);
+    expect(letras.length).to.equal(27);
+    expect(letras[0]).to.equal('aa');
+    expect(letras).to.not.include('Z1');
+  });
+}

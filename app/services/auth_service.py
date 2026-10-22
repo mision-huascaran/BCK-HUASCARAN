@@ -203,9 +203,14 @@ def cerrar_sesion(db: Session, id_usuario: int, id_sesion: uuid.UUID) -> None:
 
 
 def cerrar_sesion_anterior(
-    db: Session, id_usuario: int, id_sesion_actual: uuid.UUID, id_sesion: uuid.UUID, fin: datetime
+    db: Session,
+    id_usuario: int,
+    id_sesion_actual: uuid.UUID,
+    id_sesion: uuid.UUID,
+    fin: Optional[datetime],
+    fin_minimo: Optional[datetime] = None,
 ) -> tuple[Sesion, Optional[Actividad]]:
     """Cierre diferido de una sesión anterior (CU008), en una sola transacción."""
-    sesion, actividad = cerrar_sesion_diferida(db, id_usuario, id_sesion_actual, id_sesion, fin)
+    sesion, actividad = cerrar_sesion_diferida(db, id_usuario, id_sesion_actual, id_sesion, fin, fin_minimo)
     db.commit()
     return sesion, actividad

@@ -2,12 +2,12 @@
 
 - Solo el Supervisor los gestiona; el Docente lee los de su alcance (periodo vigente).
 - Borrado lógico: desactivar no toca alumnos, registros ni asignaciones; el colegio sale
-  del alcance operativo de su docente (`alcance_docente` excluye los inactivos).
+  del alcance operativo de su docente (las habilitaciones excluyen los inactivos).
 - Grados y programas ofrecidos viven en `colegio_grado` y `colegio_programa`; cada grado
-  con su día de clase (1 = lunes … 5 = viernes), obligatorio en la API.
+  con su día de clase (1 = lunes … 5 = viernes), obligatorio en la API, y sus secciones
+  (`seccion`): solo se agregan, y cada grado nace con "Única".
 - Cada cambio queda en `auditoria` (tabla `colegio`).
 """
-import unicodedata
 from typing import Any, Optional
 
 from fastapi import status
@@ -16,9 +16,11 @@ from sqlmodel import Session, SQLModel, col, select
 
 from app.core.errores import ErrorNegocio
 from app.core.paginacion import Paginado, pagina, paginar
+from app.core.texto import nombre_comparable
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     Alumno,
+    AlumnoPertenencia,
     Colegio,
     ColegioGrado,
     ColegioPrograma,
@@ -26,36 +28,29 @@ from app.models.organizacion import (
     Grado,
     PeriodoAcademico,
     Programa,
+    Seccion,
     Usuario,
 )
 from app.schemas.colegio import (
     ColegioCrear,
     ColegioDetalle,
     ColegioEditar,
+    ColegioEstadoCalendario,
     ColegioItem,
     GradoColegio,
+    EstadoCalendario,
     GradoOfrecido,
     Ubicaciones,
 )
 from app.schemas.comun import ItemCatalogo
-from app.services.alcance import alcance_docente
+from app.services.habilitacion import pares_visibles
 from app.services.auditoria import ACTIVAR, CREAR, EDITAR, INACTIVAR, registrar_auditoria
+from app.services.calendario import Calendarios, cargar_calendarios
+from app.services.secciones import agregar_secciones, secciones_por_grado
 
 TABLA = "colegio"
-CAMPOS_SIMPLES = ("nombre", "departamento", "distrito", "provincia", "nivel_educativo", "seccion")
+CAMPOS_SIMPLES = ("nombre", "departamento", "distrito", "provincia", "nivel_educativo")
 DIAS = {1: "lunes", 2: "martes", 3: "miércoles", 4: "jueves", 5: "viernes"}
-
-
-def nombre_comparable(nombre: str) -> str:
-    """Sin tildes, sin distinguir mayúsculas y sin espacios sobrantes: 'Amashca' = 'AMASHCÁ '.
-
-    Es la identidad de un colegio por nombre, la misma para la API (409 por duplicado) y
-    para el script de carga de los colegios iniciales.
-    """
-    sin_tildes = "".join(
-        c for c in unicodedata.normalize("NFD", nombre) if unicodedata.category(c) != "Mn"
-    )
-    return " ".join(sin_tildes.casefold().split())
 
 
 def _texto_comparable(columna):
@@ -91,7 +86,6 @@ def item_de(colegio: Colegio) -> ColegioItem:
         departamento=colegio.departamento,
         provincia=colegio.provincia,
         distrito=colegio.distrito,
-        seccion=colegio.seccion,
         activo=colegio.activo,
     )
 
@@ -120,10 +114,16 @@ def _programas_de(db: Session, id_colegio: int) -> list[Programa]:
 
 
 def detalle_de(db: Session, colegio: Colegio) -> ColegioDetalle:
+    secciones = secciones_por_grado(db, colegio.id_colegio)
     return ColegioDetalle(
         **item_de(colegio).model_dump(),
         grados=[
-            GradoColegio(id=g.id_grado, nombre=g.nombre, dia_clase=fila.dia_clase)
+            GradoColegio(
+                id=g.id_grado,
+                nombre=g.nombre,
+                dia_clase=fila.dia_clase,
+                secciones=[ItemCatalogo(id=s.id_seccion, nombre=s.nombre) for s in secciones[g.id_grado]],
+            )
             for g, fila in _grados_de(db, colegio.id_colegio)
         ],
         programas=[
@@ -135,13 +135,12 @@ def detalle_de(db: Session, colegio: Colegio) -> ColegioDetalle:
 # ── Lectura ─────────────────────────────────────────────────────────────────────────
 
 def colegios_visibles(db: Session, usuario: Usuario, es_docente: bool) -> Optional[set[int]]:
-    """Ids de los colegios que puede ver: None = todos (Supervisor); el Docente, los de su
-    alcance en el periodo vigente (vacío si no tiene)."""
+    """Ids de los colegios que puede ver: None = todos (Supervisor); el Docente, los de
+    sus habilitaciones vigentes: asignaciones del PA vigente de cada colegio,
+    retroactivas en su PR y permisos de corrección vigentes (vacío si no tiene)."""
     if not es_docente:
         return None
-    if usuario.id_docente is None:
-        return set()
-    return {id_colegio for id_colegio, _ in alcance_docente(db, usuario.id_docente)}
+    return {id_colegio for id_colegio, _ in pares_visibles(db, usuario)}
 
 
 def listar_colegios(
@@ -181,6 +180,34 @@ def ubicaciones(db: Session, visibles: Optional[set[int]], departamento: Optiona
         select(Colegio.distrito).where(*filtro_distritos).distinct().order_by(Colegio.distrito)
     ).all()
     return Ubicaciones(departamentos=list(departamentos), distritos=list(distritos))
+
+
+def _estado_de(calendarios: Calendarios, id_colegio: int, id_anio_escolar: Optional[int]) -> Optional[EstadoCalendario]:
+    hoy = hoy_lima()
+    if id_anio_escolar is None:
+        periodo = calendarios.periodo_de(id_colegio, hoy)
+    else:
+        calendario = calendarios.aplicable(id_colegio, id_anio_escolar)
+        periodo = calendario.periodo_de(hoy) if calendario is not None else None
+    if periodo is None:
+        return None
+    return EstadoCalendario(
+        tipo=periodo.tipo, numero=periodo.numero, es_pr4=not periodo.es_pa and periodo.numero == 4,
+        fecha_fin=periodo.fecha_fin,
+    )
+
+
+def estado_calendario(db: Session, id_anio_escolar: Optional[int]) -> list[ColegioEstadoCalendario]:
+    """Colegios activos, por nombre, con el periodo en que hoy está cada uno según su
+    calendario del año `id_anio_escolar` (o del que contenga hoy, si no se indica)."""
+    colegios = db.exec(select(Colegio).where(col(Colegio.activo).is_(True)).order_by(Colegio.nombre)).all()
+    calendarios = cargar_calendarios(db, id_anio_escolar, ids_colegio=[c.id_colegio for c in colegios])
+    return [
+        ColegioEstadoCalendario(
+            id=c.id_colegio, nombre=c.nombre, estado_calendario=_estado_de(calendarios, c.id_colegio, id_anio_escolar)
+        )
+        for c in colegios
+    ]
 
 
 def _colegio(db: Session, id_colegio: int) -> Colegio:
@@ -227,14 +254,24 @@ def _catalogo(db: Session, modelo: type[SQLModel], ids: list[int], motivo: str, 
     return filas
 
 
-def _grados_validos(db: Session, ofrecidos: list[GradoOfrecido]) -> list[tuple[Grado, int]]:
-    """(grado, día de clase) de cada grado ofrecido, por id. 422 si falta alguno."""
-    dias = {g.id_grado: g.dia_clase for g in ofrecidos}
-    return [(g, dias[g.id_grado]) for g in _catalogo(db, Grado, list(dias), "grado_inexistente", "grado")]
+def _grados_validos(db: Session, ofrecidos: list[GradoOfrecido]) -> list[tuple[Grado, GradoOfrecido]]:
+    """(grado, lo pedido para él) de cada grado ofrecido, por id. 422 si falta alguno."""
+    pedidos = {g.id_grado: g for g in ofrecidos}
+    return [(g, pedidos[g.id_grado]) for g in _catalogo(db, Grado, list(pedidos), "grado_inexistente", "grado")]
 
 
 def _programas_validos(db: Session, ids: list[int]) -> list[Programa]:
     return _catalogo(db, Programa, ids, "programa_inexistente", "programa")
+
+
+def _con_historial(db: Session, id_colegio: int, id_grado: int) -> bool:
+    """Si algún alumno (activo o no) está o estuvo en una sección del grado: sus secciones
+    no se pueden borrar sin perder la pertenencia histórica."""
+    en_ficha = select(Alumno.id_alumno).where(Alumno.id_colegio == id_colegio, Alumno.id_grado == id_grado)
+    en_historial = select(AlumnoPertenencia.id).where(
+        AlumnoPertenencia.id_colegio == id_colegio, AlumnoPertenencia.id_grado == id_grado
+    )
+    return db.exec(en_ficha.limit(1)).first() is not None or db.exec(en_historial.limit(1)).first() is not None
 
 
 def _uso_de_grado(db: Session, id_colegio: int, grado: Grado) -> Optional[str]:
@@ -244,24 +281,22 @@ def _uso_de_grado(db: Session, id_colegio: int, grado: Grado) -> Optional[str]:
             Alumno.id_colegio == id_colegio, Alumno.id_grado == grado.id_grado, col(Alumno.activo).is_(True)
         )
     ).one()
-    asignaciones = db.exec(
-        select(func.count())
-        .select_from(DocenteColegioGrado)
-        .join(
-            PeriodoAcademico,
-            PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico,
-        )
-        .where(
-            DocenteColegioGrado.id_colegio == id_colegio,
-            DocenteColegioGrado.id_grado == grado.id_grado,
-            PeriodoAcademico.fecha_fin >= hoy_lima(),
-        )
-    ).one()
+    periodos = db.exec(
+        select(PeriodoAcademico)
+        .join(DocenteColegioGrado, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .where(DocenteColegioGrado.id_colegio == id_colegio, DocenteColegioGrado.id_grado == grado.id_grado)
+    ).all()
+    # Vigentes o futuras: su PA no terminó en el calendario del colegio.
+    calendarios = cargar_calendarios(db, ids_colegio=[id_colegio])
+    hoy = hoy_lima()
+    asignaciones = sum(not calendarios.pa_terminado(id_colegio, p, hoy) for p in periodos)
     usos = []
     if alumnos:
         usos.append(_cantidad(alumnos, "alumno activo", "alumnos activos"))
     if asignaciones:
         usos.append(_cantidad(asignaciones, "asignación vigente", "asignaciones vigentes"))
+    if not usos and _con_historial(db, id_colegio, grado.id_grado):
+        usos.append("alumnos en su historial")
     return f"No se puede retirar {grado.nombre}: tiene {' y '.join(usos)}." if usos else None
 
 
@@ -287,6 +322,27 @@ def _grados_legibles(grados: list[tuple[Grado, Optional[int]]]) -> str:
     return ", ".join(f"{g.nombre} ({DIAS.get(dia, 'sin día')})" for g, dia in grados)
 
 
+def _secciones_legibles(db: Session, id_colegio: int) -> str:
+    """'1.º: Única; 2.º: A, B': para la auditoría (campo virtual `secciones`)."""
+    nombres = {g.id_grado: g.nombre for g, _ in _grados_de(db, id_colegio)}
+    return "; ".join(
+        f"{nombres.get(id_grado, id_grado)}: {', '.join(s.nombre for s in secciones)}"
+        for id_grado, secciones in sorted(secciones_por_grado(db, id_colegio).items())
+    )
+
+
+def _agregar_secciones(
+    db: Session, id_colegio: int, grados: list[tuple[Grado, GradoOfrecido]], auditoria: dict
+) -> bool:
+    """Agrega las secciones pedidas (y "Única" a los grados que no tengan). Devuelve si
+    agregó alguna."""
+    agrego = False
+    for grado, pedido in grados:
+        # Sin cortocircuito: se agregan las de todos los grados.
+        agrego = agregar_secciones(db, id_colegio, grado.id_grado, pedido.secciones, auditoria) or agrego
+    return agrego
+
+
 # ── Escritura ───────────────────────────────────────────────────────────────────────
 
 def crear_colegio(db: Session, data: ColegioCrear, actor: Usuario) -> ColegioDetalle:
@@ -302,19 +358,20 @@ def crear_colegio(db: Session, data: ColegioCrear, actor: Usuario) -> ColegioDet
         distrito=data.distrito,
         provincia=data.provincia,
         nivel_educativo=data.nivel_educativo,
-        seccion=data.seccion,
         activo=True,
         **auditoria,
     )
     db.add(colegio)
     db.flush()
     db.add_all(
-        ColegioGrado(id_colegio=colegio.id_colegio, id_grado=g.id_grado, dia_clase=dia, **auditoria)
-        for g, dia in grados
+        ColegioGrado(id_colegio=colegio.id_colegio, id_grado=g.id_grado, dia_clase=pedido.dia_clase, **auditoria)
+        for g, pedido in grados
     )
     db.add_all(
         ColegioPrograma(id_colegio=colegio.id_colegio, id_programa=p.id_programa, **auditoria) for p in programas
     )
+    db.flush()
+    _agregar_secciones(db, colegio.id_colegio, grados, auditoria)
     registrar_auditoria(
         db, tabla=TABLA, id_registro=colegio.id_colegio, accion=CREAR, id_usuario=actor.id_usuario, fecha=ahora
     )
@@ -324,10 +381,12 @@ def crear_colegio(db: Session, data: ColegioCrear, actor: Usuario) -> ColegioDet
 
 
 def _reemplazar_grados(
-    db: Session, colegio: Colegio, nuevos: list[tuple[Grado, int]], auditoria: dict
+    db: Session, colegio: Colegio, pedidos: list[tuple[Grado, GradoOfrecido]], auditoria: dict
 ) -> Optional[tuple[str, str]]:
-    """Deja al colegio con esos grados y días de clase. 409 si se retira uno en uso.
-    Devuelve (antes, después) legibles, o None si no cambió nada."""
+    """Deja al colegio con esos grados y días de clase. 409 si se retira uno en uso; las
+    secciones de un grado retirado (sin alumnos) se borran con él. Devuelve (antes,
+    después) legibles, o None si no cambió nada."""
+    nuevos = [(g, pedido.dia_clase) for g, pedido in pedidos]
     actuales = _grados_de(db, colegio.id_colegio)
     dias_nuevos = {g.id_grado: dia for g, dia in nuevos}
     retirados = [g for g, _ in actuales if g.id_grado not in dias_nuevos]
@@ -337,10 +396,13 @@ def _reemplazar_grados(
     antes = [(g, fila.dia_clase) for g, fila in actuales]
     if {g.id_grado: dia for g, dia in antes} == dias_nuevos:
         return None
+    ids_retirados = [g.id_grado for g in retirados]
+    db.execute(
+        delete(Seccion).where(Seccion.id_colegio == colegio.id_colegio, col(Seccion.id_grado).in_(ids_retirados))
+    )
     db.execute(
         delete(ColegioGrado).where(
-            ColegioGrado.id_colegio == colegio.id_colegio,
-            col(ColegioGrado.id_grado).in_([g.id_grado for g in retirados]),
+            ColegioGrado.id_colegio == colegio.id_colegio, col(ColegioGrado.id_grado).in_(ids_retirados)
         )
     )
     for g, fila in actuales:
@@ -381,6 +443,19 @@ def _reemplazar_programas(
     return _lista_legible(actuales), _lista_legible(nuevos)
 
 
+def _cambio_de_secciones(
+    db: Session, id_colegio: int, grados: list[tuple[Grado, GradoOfrecido]], auditoria: dict
+) -> Optional[tuple[str, str]]:
+    """Agrega las secciones pedidas y "Única" a los grados nuevos. Devuelve (antes,
+    después) legibles para la auditoría, o None si no se agregó ninguna."""
+    db.flush()
+    antes = _secciones_legibles(db, id_colegio)
+    if not _agregar_secciones(db, id_colegio, grados, auditoria):
+        return None
+    db.flush()
+    return antes, _secciones_legibles(db, id_colegio)
+
+
 def editar_colegio(db: Session, id_colegio: int, data: ColegioEditar, actor: Usuario) -> ColegioDetalle:
     colegio = _colegio(db, id_colegio)
     enviados = data.model_fields_set
@@ -400,6 +475,9 @@ def editar_colegio(db: Session, id_colegio: int, data: ColegioEditar, actor: Usu
         cambio = _reemplazar_grados(db, colegio, grados, auditoria)
         if cambio:
             cambios["grados"] = cambio
+        cambio = _cambio_de_secciones(db, colegio.id_colegio, grados, auditoria)
+        if cambio:
+            cambios["secciones"] = cambio
     if programas is not None:
         cambio = _reemplazar_programas(db, colegio, programas, auditoria)
         if cambio:
@@ -442,7 +520,7 @@ def completar_oferta(
     """Agrega al colegio los grados y programas que le falten (nunca quita). No hace commit.
 
     Para la carga de datos (seed y colegios iniciales): los grados nuevos quedan sin día
-    de clase (null). Devuelve lo que agregó.
+    de clase (null) y con la sección "Única". Devuelve lo que agregó.
     """
     tiene_grados = {g.id_grado for g, _ in _grados_de(db, colegio.id_colegio)}
     tiene_programas = {p.id_programa for p in _programas_de(db, colegio.id_colegio)}
@@ -453,4 +531,7 @@ def completar_oferta(
         ColegioPrograma(id_colegio=colegio.id_colegio, id_programa=p.id_programa, **auditoria)
         for p in nuevos_programas
     )
+    db.flush()
+    for g in nuevos_grados:
+        agregar_secciones(db, colegio.id_colegio, g.id_grado, [], auditoria)
     return nuevos_grados, nuevos_programas

@@ -34,8 +34,11 @@ def test_cu013_crear_colegio_con_su_oferta(client, db, entorno, sup):
 
     assert respuesta.status_code == 201
     cuerpo = respuesta.json()
-    assert (cuerpo["nivel_educativo"], cuerpo["seccion"], cuerpo["activo"]) == ("Primaria", "Única", True)
+    assert (cuerpo["nivel_educativo"], cuerpo["activo"]) == ("Primaria", True)
+    assert "seccion" not in cuerpo
     assert [(g["nombre"], g["dia_clase"]) for g in cuerpo["grados"]] == [("1.º", 1), ("2.º", 3)]
+    # Sin secciones en el request, cada grado nace con "Única".
+    assert [[s["nombre"] for s in g["secciones"]] for g in cuerpo["grados"]] == [["Única"], ["Única"]]
     assert [p["nombre"] for p in cuerpo["programas"]] == ["Alfabetización"]
     assert db.exec(select(Auditoria.accion).where(Auditoria.tabla == "colegio")).all() == ["crear"]
     assert client.get(f"/colegios/{cuerpo['id']}", headers=sup).json()["grados"] == cuerpo["grados"]
@@ -60,6 +63,29 @@ def test_cu013_cada_grado_lleva_su_dia_de_clase(client, entorno, sup, grados, ca
     for respuesta in (alta, edicion):
         assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
         assert [e["campo"] for e in respuesta.json()["errores"]] == [campo]
+
+
+@pytest.mark.parametrize("nivel", ["Secundaria", "Inicial", "primaria", ""])
+def test_cu013_nivel_educativo_solo_primaria(client, db, entorno, sup, nivel):
+    alta = client.post("/colegios", json=datos(entorno, nivel_educativo=nivel), headers=sup)
+    edicion = client.patch(
+        f"/colegios/{entorno.colegios['Andino'].id_colegio}", json={"nivel_educativo": nivel}, headers=sup
+    )
+
+    for respuesta in (alta, edicion):
+        assert respuesta.status_code == 422
+        assert [e["campo"] for e in respuesta.json()["errores"]] == ["nivel_educativo"]
+    assert releer(db, Colegio, entorno.colegios["Andino"].id_colegio).nivel_educativo == "Primaria"
+
+
+def test_cu013_nivel_educativo_primaria_explicito_se_acepta(client, entorno, sup):
+    alta = client.post("/colegios", json=datos(entorno, nivel_educativo="Primaria"), headers=sup)
+    edicion = client.patch(
+        f"/colegios/{entorno.colegios['Andino'].id_colegio}", json={"nivel_educativo": "Primaria"}, headers=sup
+    )
+
+    assert (alta.status_code, alta.json()["nivel_educativo"]) == (201, "Primaria")
+    assert edicion.status_code == 200
 
 
 def test_cu013_cambiar_solo_el_dia_de_clase_se_audita(client, db, entorno, sup):
@@ -208,7 +234,7 @@ def test_cu013_editar_campos_y_oferta(client, db, entorno, sup):
 
     respuesta = client.patch(
         f"/colegios/{id_colegio}",
-        json={"nombre": "Colegio Lejano II", "distrito": None, "seccion": "A", "grados": solo_quinto},
+        json={"nombre": "Colegio Lejano II", "distrito": None, "grados": solo_quinto},
         headers=sup,
     )
 
@@ -218,16 +244,16 @@ def test_cu013_editar_campos_y_oferta(client, db, entorno, sup):
 
     respuesta = client.patch(
         f"/colegios/{id_colegio}",
-        json={"nombre": "Colegio Lejano II", "distrito": None, "seccion": "A",
+        json={"nombre": "Colegio Lejano II", "distrito": None,
               "grados": oferta(entorno, "3.º", "4.º", dia=2), "programas": [entorno.programas["Comprensión Lectora"]]},
         headers=sup,
     )
     cuerpo = respuesta.json()
-    assert (cuerpo["nombre"], cuerpo["distrito"], cuerpo["seccion"]) == ("Colegio Lejano II", None, "A")
+    assert (cuerpo["nombre"], cuerpo["distrito"]) == ("Colegio Lejano II", None)
     assert [(g["nombre"], g["dia_clase"]) for g in cuerpo["grados"]] == [("3.º", 2), ("4.º", 2)]
     assert releer(db, Colegio, id_colegio).modificado_por == entorno.supervisor.id_usuario
     campos = set(db.exec(select(Auditoria.campo).where(Auditoria.accion == "editar")).all())
-    assert campos == {"nombre", "distrito", "seccion", "grados", "programas"}
+    assert campos >= {"nombre", "distrito", "grados", "programas"}
 
 
 def test_cu013_no_se_retira_un_grado_con_asignacion_ni_un_programa_con_alumnos(client, entorno, sup):

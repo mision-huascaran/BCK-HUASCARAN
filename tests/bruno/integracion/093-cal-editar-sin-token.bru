@@ -1,0 +1,26 @@
+meta {
+  name: CAL editar · sin token
+  type: http
+  seq: 93
+}
+
+put {
+  url: {{baseUrl}}/calendarios/{{idCalendarioPart}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "version": {{versionCalPart}},
+    "periodos": {{periodosGeneral}},
+    "dias_no_lectivos": []
+  }
+}
+
+tests {
+  test("401 sesion_invalida", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.motivo).to.equal('sesion_invalida');
+  });
+}

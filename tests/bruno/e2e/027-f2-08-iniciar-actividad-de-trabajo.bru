@@ -1,0 +1,41 @@
+meta {
+  name: F2-08 Iniciar actividad de trabajo
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/actividades
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_actividad": "{{idActividadF2}}"
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('idActividadF2', uuid());
+}
+
+tests {
+  test("201 en curso", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.actividad.id).to.equal(bru.getVar('idActividadF2'));
+    expect(res.body.actividad.estado).to.equal('en_curso');
+  });
+}
+
+docs {
+  CU009: el id lo genera el cliente (así también puede iniciarse sin conexión).
+}

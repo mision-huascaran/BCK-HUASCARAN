@@ -1,0 +1,29 @@
+meta {
+  name: LEC cambiar clase de referencia · 422 validacion
+  type: http
+  seq: 259
+}
+
+patch {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/clase-referencia
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "version": 1
+  }
+}
+
+tests {
+  test("422 validacion", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('id_operacion');
+  });
+}

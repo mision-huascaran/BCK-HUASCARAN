@@ -1,0 +1,24 @@
+meta {
+  name: COL listar · Docente ve solo su alcance
+  type: http
+  seq: 41
+}
+
+get {
+  url: {{baseUrl}}/colegios
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("todos los colegios listados están entre sus asignaciones", function () {
+    expect(res.status).to.equal(200);
+    const propios = JSON.parse(bru.getVar('colegiosDoc'));
+    expect(res.body.items.length).to.be.greaterThan(0);
+    expect(res.body.items.every((x) => propios.includes(x.id))).to.equal(true);
+  });
+}

@@ -1,0 +1,28 @@
+meta {
+  name: ALU editar · Directivo sin permiso
+  type: http
+  seq: 191
+}
+
+patch {
+  url: {{baseUrl}}/alumnos/{{idAlumnoInt}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDirectivo}}
+}
+
+body:json {
+  {
+    "nombres": "X"
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: SES mis actividades · válido
+  type: http
+  seq: 308
+}
+
+get {
+  url: {{baseUrl}}/actividades
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("la actividad recién finalizada encabeza la lista, con productividad en singular", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.items[0].id).to.equal(bru.getVar('idActividadInt'));
+    expect(res.body.items[0].productividad_texto).to.match(/1 Asistencia\b/);
+  });
+}
+
+docs {
+  P5 §2: productividad en singular y plural ("1 Asistencia", "2 Rúbricas").
+}

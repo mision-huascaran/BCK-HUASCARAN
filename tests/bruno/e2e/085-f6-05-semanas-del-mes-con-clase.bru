@@ -1,0 +1,33 @@
+meta {
+  name: F6-05 Semanas del mes con clase
+  type: http
+  seq: 85
+}
+
+get {
+  url: {{baseUrl}}/semanas?id_anio_escolar={{idAnio}}&mes={{mesClase}}&id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  const f = bru.getVar('fechaClase');
+  const semana = res.body.find((s) => s.fecha_inicio <= f && f <= s.fecha_fin);
+  bru.setVar('idSemana', semana ? semana.id_semana : null);
+}
+
+tests {
+  test("incluye la semana de la clase", function () {
+    expect(res.status).to.equal(200);
+    const f = bru.getVar('fechaClase');
+    expect(res.body.some((s) => s.fecha_inicio <= f && f <= s.fecha_fin)).to.equal(true);
+  });
+}
+
+docs {
+  CU023: solo aparecen las semanas con alguna clase del grupo en ese mes.
+}

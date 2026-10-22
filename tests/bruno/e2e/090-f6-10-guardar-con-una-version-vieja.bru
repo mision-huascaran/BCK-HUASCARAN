@@ -1,0 +1,40 @@
+meta {
+  name: F6-10 Guardar con una versión vieja
+  type: http
+  seq: 90
+}
+
+put {
+  url: {{baseUrl}}/lectura/tablas/{{idTabla}}/filas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  []
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  req.setBody([{ id_operacion: uuid(), version: JSON.parse(bru.getVar('filasTabla'))[bru.getVar('idAlumnoB')], id_alumno: Number(bru.getVar('idAlumnoB')), cantidad_lsl: 5 }]);
+}
+
+tests {
+  test("ítem rechazado: modificacion_concurrente", function () {
+    expect(res.status).to.equal(200);
+    const resultados = res.body.resultados || res.body;
+    expect(resultados[0].estado).to.equal('rechazada');
+    expect(['modificacion_concurrente']).to.include(resultados[0].motivo);
+  });
+}
+
+docs {
+  CU025: Lectura tiene control de versión (distinto de Asistencias): no se sobrescribe el registro vigente.
+}

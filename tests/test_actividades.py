@@ -9,7 +9,19 @@ from sqlmodel import select
 from app.core.tiempo import ahora_utc
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
-from tests.conftest import cabecera_de, crear_docente, id_sesion_de, iniciar_actividad, instante, iso, motivo, releer
+from tests.conftest import (
+    asignar,
+    cabecera_de,
+    crear_docente,
+    hoy_iso,
+    id_sesion_de,
+    iniciar_actividad,
+    instante,
+    iso,
+    motivo,
+    releer,
+    terminar_pa_vigente,
+)
 
 MANUAL = "Manual por finalización de actividad"
 FORZADO = "Forzado por cierre de sesión"
@@ -76,26 +88,27 @@ def test_cu009_sin_asignaciones_no_inicia(client, db, entorno):
 
     respuesta = post(client, cabecera_de(db, otro))
 
-    assert (respuesta.status_code, motivo(respuesta)) == (409, "sin_asignaciones")
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "sin_asignaciones")
     assert respuesta.json()["detail"] == (
-        "No puedes iniciar una actividad porque no tienes asignaciones activas, ya sea para el periodo "
-        "académico actual o de receso."
+        "No puedes iniciar una actividad porque no tienes asignaciones habilitadas ni permisos "
+        "excepcionales vigentes."
     )
 
 
-def test_cu010_fuera_de_periodo_no_inicia(client, db, entorno, doc):
-    """Entre periodos el motivo es el periodo, no las asignaciones (aunque tampoco tenga)."""
-    vigente = entorno.periodos["vigente"]
-    vigente.fecha_fin = entorno.hoy - timedelta(days=1)
-    db.add(vigente)
-    db.commit()
+def test_cu010_en_receso_sin_retroactiva_ni_permiso_no_inicia(client, db, entorno, doc):
+    """Su colegio está en el PR2 y su asignación del PA2 no es retroactiva: no tiene
+    ninguna habilitación vigente."""
+    terminar_pa_vigente(db, entorno)
 
     respuesta = post(client, doc)
 
-    assert respuesta.status_code == 409
+    assert respuesta.status_code == 422
     assert respuesta.json() == {
-        "detail": "No puedes iniciar una actividad fuera del calendario operativo.",
-        "motivo": "fuera_de_periodo",
+        "detail": (
+            "No puedes iniciar una actividad porque no tienes asignaciones habilitadas ni permisos "
+        "excepcionales vigentes."
+        ),
+        "motivo": "sin_asignaciones",
     }
 
 
@@ -271,7 +284,7 @@ def test_t71_sin_asignacion_ese_dia_no_registra(client, db, entorno):
 
     respuesta = post(client, b, inicio=iso(sesion_a.inicio), id_sesion=str(sesion_a.id_sesion))
 
-    assert (respuesta.status_code, motivo(respuesta)) == (409, "sin_asignaciones")
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "sin_asignaciones")
 
 
 # ── CU017 a CU019: consulta ─────────────────────────────────────────────────────────
@@ -280,7 +293,8 @@ def test_cu017_listado_con_productividad(client, entorno, doc, actividad):
     client.post(
         "/alumnos",
         json={"nombres": "N", "apellidos": "N", "id_colegio": entorno.colegios["Andino"].id_colegio,
-              "id_grado": entorno.grados["2.º"], "id_programa": entorno.programas["Comprensión Lectora"]},
+              "id_grado": entorno.grados["2.º"], "id_programa": entorno.programas["Comprensión Lectora"],
+              "pertenece_desde": hoy_iso()},
         headers=doc,
     )
     client.patch(f"/alumnos/{entorno.alumnos['ana'].id_alumno}", json={"nombres": "Anita"}, headers=doc)
@@ -321,7 +335,7 @@ def test_cu017_solo_el_docente_consulta(client, entorno, cabeceras):
 def test_cu019_detalle_de_la_actividad(client, entorno, doc, actividad):
     ana = entorno.alumnos["ana"].id_alumno
     client.patch(f"/alumnos/{ana}", json={"nombres": "Anita"}, headers=doc)
-    client.patch(f"/alumnos/{ana}/desactivar", headers=doc)
+    client.patch(f"/alumnos/{ana}/desactivar", json={"aplicar_desde": hoy_iso()}, headers=doc)
     finalizar(client, doc, actividad["id"])
 
     cuerpo = client.get(f"/actividades/{actividad['id']}", headers=doc).json()
@@ -338,11 +352,41 @@ def test_cu019_detalle_de_la_actividad(client, entorno, doc, actividad):
     ]
 
 
-def test_cu019_detalle_ajeno_o_inexistente(client, entorno, doc):
-    respuesta = client.get(f"/actividades/{uuid.uuid4()}", headers=doc)
+def test_cu019_detalle_ajeno_o_inexistente_misma_respuesta(client, db, entorno, doc):
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    db.commit()
+    ajena = iniciar_actividad(client, cabecera_de(db, otro))
 
-    assert (respuesta.status_code, motivo(respuesta)) == (404, "actividad_no_encontrada")
-    assert respuesta.json()["detail"] == "El detalle solicitado no se encuentra disponible."
+    de_otro = client.get(f"/actividades/{ajena['id']}", headers=doc)
+    inexistente = client.get(f"/actividades/{uuid.uuid4()}", headers=doc)
+
+    for respuesta in (de_otro, inexistente):
+        assert respuesta.status_code == 404
+        assert respuesta.json() == {
+            "detail": "El detalle solicitado no está disponible.", "motivo": "actividad_no_encontrada"
+        }
+
+
+def test_cu017_listado_trae_el_id_de_actividad(client, doc, actividad):
+    fila = client.get("/actividades", headers=doc).json()["items"][0]
+
+    assert fila["id"] == actividad["id"]
+
+
+@pytest.mark.parametrize("estado", ["sincronizada", "pendiente", "error"])
+def test_cu018_admite_los_tres_estados_de_sincronizacion(client, doc, actividad, estado):
+    respuesta = client.get("/actividades", params={"sincronizacion": estado}, headers=doc)
+
+    assert respuesta.status_code == 200
+    esperadas = [actividad["id"]] if estado == "sincronizada" else []
+    assert [a["id"] for a in respuesta.json()["items"]] == esperadas
+
+
+def test_cu018_estado_de_sincronizacion_desconocido(client, doc):
+    respuesta = client.get("/actividades", params={"sincronizacion": "al_dia"}, headers=doc)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
 
 
 def test_cu019_detalle_sin_cambios(client, entorno, doc, actividad):

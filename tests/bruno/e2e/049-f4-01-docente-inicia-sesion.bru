@@ -1,0 +1,52 @@
+meta {
+  name: F4-01 Docente inicia sesión
+  type: http
+  seq: 49
+}
+
+post {
+  url: {{baseUrl}}/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoDocente}}",
+    "password": "{{passDocente}}"
+  }
+}
+
+script:pre-request {
+  // Las credenciales llegan por variables de entorno (Jenkins Credentials o la terminal);
+  // nunca se guardan en el repo.
+  const faltan = ['correoDocente', 'passDocente'].filter((k) => {
+    const valor = bru.interpolate(bru.getEnvVar(k) || '');
+    return !valor || valor.includes('{{');
+  });
+  if (faltan.length) {
+    throw new Error('Faltan E2E_DOCENTE_USER / E2E_DOCENTE_PASS en el entorno (ver tests/bruno/README.md)');
+  }
+  if (!bru.getVar('runId')) bru.setVar('runId', String(Date.now()));
+}
+
+script:post-response {
+  bru.setVar('tokenDocente', res.body.access_token);
+}
+
+tests {
+  test("200 con token de 8 h", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.access_token).to.be.a('string');
+    expect(res.body.usuario.rol).to.equal('Docente');
+    const horas = (Date.parse(res.body.sesion.expira) - Date.parse(res.body.sesion.inicio)) / 3600e3;
+    expect(horas).to.equal(8);
+  });
+}
+
+docs {
+  # F4. Regla de actividad (CU009, CU014, CU022)
+
+  Sin actividad iniciada no se escribe nada. Con actividad, la fecha debe ser un día lectivo
+  con clase de la sección y el aula, una de las asignadas.
+}

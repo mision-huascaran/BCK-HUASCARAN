@@ -1,0 +1,43 @@
+meta {
+  name: LEC crear tabla · 422 validacion
+  type: http
+  seq: 248
+}
+
+post {
+  url: {{baseUrl}}/lectura/tablas
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "id_operacion": "{{opTabla}}",
+    "id_colegio": {{idColegioDoc}},
+    "id_programa": {{idPrograma1}},
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "id_anio_escolar": {{idAnio}},
+    "mes": {{mesClase}}
+  }
+}
+
+script:pre-request {
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+  bru.setVar('opTabla', uuid());
+}
+
+tests {
+  test("422 validacion", function () {
+    expect(res.status).to.equal(422);
+    expect(res.body.motivo).to.equal('validacion');
+    expect(res.body.errores.map((e) => e.campo).join(' ')).to.include('id_semana');
+  });
+}

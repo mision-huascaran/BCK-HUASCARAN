@@ -1,0 +1,31 @@
+meta {
+  name: ALU crear · Docente fuera de su alcance
+  type: http
+  seq: 172
+}
+
+post {
+  url: {{baseUrl}}/alumnos
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "nombres": "X",
+    "apellidos": "Y",
+    "id_colegio": {{idColegioInt}},
+    "id_grado": {{idGrado1}},
+    "id_seccion": {{idSeccionIntA}},
+    "id_programa": {{idPrograma1}},
+    "pertenece_desde": "{{hoy}}"
+  }
+}
+
+tests {
+  test("403: solo en sus colegios y grados", function () { expect(res.status).to.equal(403); });
+}

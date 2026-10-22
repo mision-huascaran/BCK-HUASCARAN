@@ -1,0 +1,23 @@
+meta {
+  name: F2-02 Datos del docente
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+script:post-response {
+  bru.setVar('idDocente', res.body.id_docente);
+}
+
+tests {
+  test("es un Docente con ficha", function () { expect(res.body.id_docente).to.be.a("number"); });
+}

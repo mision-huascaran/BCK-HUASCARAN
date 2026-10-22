@@ -1,0 +1,28 @@
+meta {
+  name: PER revocar · ya revocado
+  type: http
+  seq: 149
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos/{{idPermiso}}/revocar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "motivo": "Otra vez"
+  }
+}
+
+tests {
+  test("409 permiso_revocado", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('permiso_revocado');
+  });
+}

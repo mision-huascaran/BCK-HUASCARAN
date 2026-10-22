@@ -1,0 +1,23 @@
+meta {
+  name: F4-11 Finalizar la actividad
+  type: http
+  seq: 59
+}
+
+post {
+  url: {{baseUrl}}/actividades/{{idActividadF4}}/finalizar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("finalizada", function () { expect(res.body.actividad.estado).to.equal("finalizada"); });
+}

@@ -1,0 +1,32 @@
+meta {
+  name: ASI consultar · válido Docente
+  type: http
+  seq: 209
+}
+
+get {
+  url: {{baseUrl}}/asistencias?id_colegio={{idColegioDoc}}&id_grado={{idGradoClase}}&id_seccion={{idSeccion}}&fecha={{fechaClase}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("clase programada, editable, con el alumno sin marcar", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.escritura.permitida).to.equal(true);
+    const fila = res.body.alumnos.find((a) => a.id_alumno === Number(bru.getVar('idAlumnoInt')));
+    expect(fila.estado).to.equal(null);
+  });
+}
+
+docs {
+  # Asistencias (CU022)
+
+  Una clase es colegio + grado + sección + fecha. El Docente registra con actividad y
+  habilitación; cada registro es una operación (aceptada o rechazada por ítem). El
+  Supervisor solo lee; el Directivo no tiene acceso.
+}

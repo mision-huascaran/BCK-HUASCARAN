@@ -17,6 +17,6 @@ auth:bearer {
 tests {
   test("el colegio inactivo no aparece con el filtro por defecto", function () {
     expect(res.status).to.equal(200);
-    expect(res.body.items.map((x) => x.id)).to.not.include(bru.getVar('idColegioF1'));
+    expect(res.body.items.map((x) => x.id)).to.not.include(Number(bru.getVar('idColegioF1')));
   });
 }

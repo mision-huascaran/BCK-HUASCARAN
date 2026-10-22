@@ -1,0 +1,33 @@
+meta {
+  name: CAL crear general · ya existe
+  type: http
+  seq: 82
+}
+
+post {
+  url: {{baseUrl}}/calendarios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_anio_escolar": {{idAnio}},
+    "periodos": {{periodosGeneral}}
+  }
+}
+
+tests {
+  test("409 calendario_existente", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.motivo).to.equal('calendario_existente');
+  });
+}
+
+docs {
+  CU027: un solo calendario general por año escolar.
+}

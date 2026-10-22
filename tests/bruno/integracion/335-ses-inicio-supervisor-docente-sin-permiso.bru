@@ -1,0 +1,22 @@
+meta {
+  name: SES inicio Supervisor · Docente sin permiso
+  type: http
+  seq: 335
+}
+
+get {
+  url: {{baseUrl}}/inicio/supervisor
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

@@ -1,0 +1,25 @@
+meta {
+  name: F3-02 Historial de actividades del docente
+  type: http
+  seq: 44
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes/{{idDocente}}/actividades
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("la actividad de F2 aparece finalizada con 3 Asistencias en la productividad", function () {
+    expect(res.status).to.equal(200);
+    const act = res.body.items.find((a) => a.id === bru.getVar('idActividadF2'));
+    expect(act, 'actividad F2').to.not.equal(undefined);
+    expect(act.estado).to.equal('finalizada');
+    expect(act.productividad_texto).to.match(/3 Asistencias/);
+  });
+}

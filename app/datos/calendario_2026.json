@@ -1,5 +1,5 @@
 {
-  "_nota": "CALENDARIO FICTICIO. No es el calendario escolar real de Misión Huascarán: es un borrador para desarrollo y pruebas hasta que el equipo confirme las fechas reales. Este archivo es la fuente de verdad del calendario (no hay pantalla para editarlo): lo carga `python -m app.cli cargar-calendario` en cada arranque.",
+  "_nota": "CALENDARIO FICTICIO. No es el calendario escolar real de Misión Huascarán: es un borrador para desarrollo y pruebas hasta que el equipo confirme las fechas reales. `python -m app.cli cargar-calendario` lo usa en cada arranque para crear el calendario general del año si todavía no existe (PA1 a PA4 en `periodos` y sus recesos PR1 a PR4 en `recesos`; sin `recesos` se derivan de los huecos entre PA). Si el calendario general ya existe, no se modifica: desde CU027 lo gestiona el Supervisor en la API. Las fechas son inclusivas.",
   "ficticio": true,
   "anio": {
     "nombre": "2026",
@@ -7,9 +7,15 @@
     "fecha_fin": "2026-12-18"
   },
   "periodos": [
-    {"numero": 1, "fecha_inicio": "2026-04-06", "fecha_fin": "2026-05-29", "corte_diagnostico": "2026-04-15"},
-    {"numero": 2, "fecha_inicio": "2026-06-01", "fecha_fin": "2026-07-24", "corte_diagnostico": "2026-07-08"},
-    {"numero": 3, "fecha_inicio": "2026-08-10", "fecha_fin": "2026-10-16", "corte_diagnostico": "2026-10-07"},
-    {"numero": 4, "fecha_inicio": "2026-10-19", "fecha_fin": "2026-12-18", "corte_diagnostico": "2026-12-03"}
+    {"numero": 1, "fecha_inicio": "2026-04-06", "fecha_fin": "2026-05-29"},
+    {"numero": 2, "fecha_inicio": "2026-06-01", "fecha_fin": "2026-07-24"},
+    {"numero": 3, "fecha_inicio": "2026-08-10", "fecha_fin": "2026-10-16"},
+    {"numero": 4, "fecha_inicio": "2026-10-19", "fecha_fin": "2026-12-18"}
+  ],
+  "recesos": [
+    {"numero": 1, "fecha_inicio": "2026-05-30", "fecha_fin": "2026-05-31"},
+    {"numero": 2, "fecha_inicio": "2026-07-25", "fecha_fin": "2026-08-09"},
+    {"numero": 3, "fecha_inicio": "2026-10-17", "fecha_fin": "2026-10-18"},
+    {"numero": 4, "fecha_inicio": "2026-12-19", "fecha_fin": "2026-12-31"}
   ]
 }

@@ -1,0 +1,28 @@
+meta {
+  name: PER revocar · Docente sin permiso
+  type: http
+  seq: 151
+}
+
+post {
+  url: {{baseUrl}}/usuarios/{{idUsuarioInt}}/permisos/{{idPermiso}}/revocar
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenDocente}}
+}
+
+body:json {
+  {
+    "motivo": "x"
+  }
+}
+
+tests {
+  test("403 sin_permiso", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.motivo).to.equal('sin_permiso');
+  });
+}

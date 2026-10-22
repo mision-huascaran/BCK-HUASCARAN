@@ -1,0 +1,45 @@
+meta {
+  name: CLA reprogramar una clase · válido
+  type: http
+  seq: 202
+}
+
+post {
+  url: {{baseUrl}}/colegios/{{idColegioDoc}}/clases/reprogramaciones
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "id_grado": {{idGradoClase}},
+    "id_seccion": {{idSeccion}},
+    "fecha_original": "{{fechaFutura}}",
+    "fecha_nueva": "{{fechaReprogramada}}",
+    "motivo": "Actuación del colegio (prueba Bruno)"
+  }
+}
+
+script:pre-request {
+  // La próxima clase de la sección se traslada al día hábil siguiente (o al anterior si es viernes).
+  const f = new Date(bru.getVar('fechaFutura') + 'T12:00:00Z');
+  f.setUTCDate(f.getUTCDate() + (f.getUTCDay() === 5 ? -1 : 1));
+  bru.setVar('fechaReprogramada', f.toISOString().slice(0, 10));
+}
+
+script:post-response {
+  bru.setVar('idClaseReprogramada', res.body.id_clase);
+}
+
+tests {
+  test("201: la clase queda reprogramada a la nueva fecha", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.reprogramada).to.equal(true);
+    expect(res.body.fecha).to.equal(bru.getVar('fechaReprogramada'));
+    expect(res.body.fecha_original).to.equal(bru.getVar('fechaFutura'));
+  });
+}

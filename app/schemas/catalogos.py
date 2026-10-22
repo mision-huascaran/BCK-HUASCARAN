@@ -4,6 +4,7 @@ Fechas como días de calendario (AAAA-MM-DD). `vigente` y `cerrada` se calculan 
 día de Lima.
 """
 from datetime import date
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -32,17 +33,22 @@ class AnioEscolarResponse(BaseModel):
 
 
 class PeriodoAcademicoResponse(BaseModel):
+    """Un PA con las fechas del calendario consultado (general o el del colegio)."""
+
     id: int
     id_anio_escolar: int
     numero: int
-    fecha_inicio: date
-    fecha_fin: date
+    # Siempre "PA": los recesos no son periodos académicos (ver GET /calendarios).
+    tipo: Literal["PA"]
+    # Null si el año no tiene calendario configurado.
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
     vigente: bool
 
 
 class SemanaResponse(BaseModel):
     id: int
-    id_periodo_academico: int
+    id_semana: int
     numero_semana: int
     fecha_inicio: date
     fecha_fin: date
@@ -60,10 +66,6 @@ class NivelRubricaResponse(BaseModel):
     id_programa: int
     dimension: str
     orden: int
-    nombre_nivel: str
-
-
-class NivelGeneralResponse(BaseModel):
-    id: int
-    orden: int
+    # Código 0-4 con que se evalúa (0 Pre-inicio … 4 Avanzado).
+    valor: int
     nombre_nivel: str

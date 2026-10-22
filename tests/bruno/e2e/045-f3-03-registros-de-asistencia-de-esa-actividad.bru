@@ -1,0 +1,30 @@
+meta {
+  name: F3-03 Registros de asistencia de esa actividad
+  type: http
+  seq: 45
+}
+
+get {
+  url: {{baseUrl}}/seguimiento/docentes/{{idDocente}}/actividades/{{idActividadF2}}/registros?modulo=asistencias
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("una fila por clase, con los alumnos que cambiaron", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.items.length).to.equal(1);
+    const fila = res.body.items[0];
+    expect(fila.fecha).to.equal(bru.getVar('fechaClase'));
+    expect(fila.seccion.id).to.equal(Number(bru.getVar('idSeccion')));
+    expect(fila.cambios).to.equal(3);
+  });
+}
+
+docs {
+  CU021: atajo "Ver Asistencias", según la auditoría de la actividad (no por fecha).
+}

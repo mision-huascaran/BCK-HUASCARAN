@@ -1,0 +1,67 @@
+meta {
+  name: F5-01 Docente inicia sesión (dispositivo A)
+  type: http
+  seq: 62
+}
+
+post {
+  url: {{baseUrl}}/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "correo": "{{correoDocente}}",
+    "password": "{{passDocente}}"
+  }
+}
+
+script:pre-request {
+  // Las credenciales llegan por variables de entorno (Jenkins Credentials o la terminal);
+  // nunca se guardan en el repo.
+  const faltan = ['correoDocente', 'passDocente'].filter((k) => {
+    const valor = bru.interpolate(bru.getEnvVar(k) || '');
+    return !valor || valor.includes('{{');
+  });
+  if (faltan.length) {
+    throw new Error('Faltan E2E_DOCENTE_USER / E2E_DOCENTE_PASS en el entorno (ver tests/bruno/README.md)');
+  }
+  if (!bru.getVar('runId')) bru.setVar('runId', String(Date.now()));
+}
+
+script:post-response {
+  bru.setVar('tokenDocente', res.body.access_token);
+  bru.setVar('idSesionA', res.body.sesion.id);
+  // Sin conexión, el cliente fecha cada evento con el reloj del servidor (offset de la última
+  // conexión). Aquí se toman a partir del inicio de esta sesión, que dio el servidor.
+  const inicio = Date.parse(res.body.sesion.inicio);
+  bru.setVar('tInicioOffline', new Date(inicio + 1000).toISOString());
+  bru.setVar('tCaptura', new Date(inicio + 2000).toISOString());
+  bru.setVar('tCierreOffline', new Date(inicio + 3000).toISOString());
+}
+
+tests {
+  test("200 con token de 8 h", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.access_token).to.be.a('string');
+    expect(res.body.usuario.rol).to.equal('Docente');
+    const horas = (Date.parse(res.body.sesion.expira) - Date.parse(res.body.sesion.inicio)) / 3600e3;
+    expect(horas).to.equal(8);
+  });
+}
+
+docs {
+  # F5. Sincronización tras una caída de internet (CU007, CU008, CU009, CU017, CU022)
+
+  1. En el dispositivo A se cae internet: sin enviar nada, el Docente inicia una actividad,
+     marca a A tardanza y a B una observación, y cierra sesión. Todo queda en la cola con su
+     hora real.
+  2. Vuelve a entrar (dispositivo B): avisa los pendientes. Mientras, desde B marca a A
+     ausente (más reciente).
+  3. Se sincroniza la cola: la actividad en su sesión original, las capturas y el cierre de
+     esa sesión. La captura vieja de A no pisa la nueva (gana la más reciente); reintentar no
+     duplica; los avisos se limpian.
+
+  Usa la clase y los alumnos de F2.
+}

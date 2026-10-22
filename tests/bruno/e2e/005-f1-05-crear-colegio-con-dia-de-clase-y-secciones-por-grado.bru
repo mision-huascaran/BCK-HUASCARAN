@@ -1,0 +1,58 @@
+meta {
+  name: F1-05 Crear colegio con día de clase y secciones por grado
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/colegios
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+body:json {
+  {
+    "nombre": "{{nombreColegio}}",
+    "departamento": "Áncash",
+    "provincia": "Huaraz",
+    "distrito": "{{distritoColegio}}",
+    "grados": [
+      { "id_grado": {{idGrado1}}, "dia_clase": 1, "secciones": ["A", "B"] },
+      { "id_grado": {{idGrado2}}, "dia_clase": 2 }
+    ],
+    "programas": {{idProgramas}}
+  }
+}
+
+script:pre-request {
+  bru.setVar('nombreColegio', 'I.E. Bruno E2E ' + bru.getVar('runId'));
+  // Distrito único por corrida: permite encontrar el colegio con el filtro de la grilla.
+  bru.setVar('distritoColegio', 'Bruno ' + bru.getVar('runId'));
+}
+
+script:post-response {
+  bru.setVar('idColegioF1', res.body.id);
+  const g1 = res.body.grados.find((g) => g.id === Number(bru.getVar('idGrado1')));
+  bru.setVar('idSeccionA', g1.secciones.find((s) => s.nombre === 'A').id);
+}
+
+tests {
+  test("201 activo, con día de clase y secciones", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.activo).to.equal(true);
+    const g1 = res.body.grados.find((g) => g.id === Number(bru.getVar('idGrado1')));
+    const g2 = res.body.grados.find((g) => g.id === Number(bru.getVar('idGrado2')));
+    expect(g1.dia_clase).to.equal(1);
+    expect(g1.secciones.map((s) => s.nombre)).to.have.members(['A', 'B']);
+    // Un grado sin secciones nace con "Única".
+    expect(g2.secciones.map((s) => s.nombre)).to.deep.equal(['Única']);
+  });
+}
+
+docs {
+  CU013: día de clase y provincia obligatorios; cada grado tiene secciones (por defecto "Única").
+}

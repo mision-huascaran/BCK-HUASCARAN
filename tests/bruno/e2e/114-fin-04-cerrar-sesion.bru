@@ -1,0 +1,19 @@
+meta {
+  name: FIN-04 Cerrar sesión
+  type: http
+  seq: 114
+}
+
+post {
+  url: {{baseUrl}}/logout
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tokenSupervisor}}
+}
+
+tests {
+  test("204", function () { expect(res.status).to.equal(204); });
+}
