@@ -72,7 +72,9 @@ from app.models.organizacion import (  # noqa: E402
     Seccion,
     Usuario,
 )
+from app.models.evaluacion import Asistencia, Clase, ClaseAlumno  # noqa: E402
 from app.services import auth_service  # noqa: E402
+from app.services.calendario import periodo_de  # noqa: E402
 from app.services.sesiones import crear_sesion_y_token  # noqa: E402
 
 PASSWORD = "Clave-Valida-1"
@@ -411,6 +413,45 @@ def crear_alumno(
     return alumno
 
 
+def clase_guardada(db, alumno: Alumno, fecha: date, lista=None, tipo="habitual", fecha_original=None) -> Clase:
+    """La fila de la clase del grupo del alumno en la fecha (la crea si no existe) con su
+    lista congelada: `lista` (por defecto, solo el alumno), sin validar."""
+    clase = db.exec(select(Clase).where(
+        Clase.id_colegio == alumno.id_colegio, Clase.id_grado == alumno.id_grado,
+        Clase.id_seccion == alumno.id_seccion, Clase.fecha == fecha,
+    )).first()
+    if clase is None:
+        periodo = periodo_de(db, alumno.id_colegio, fecha)
+        id_periodo = periodo.id_periodo_academico if periodo is not None else db.exec(select(PeriodoAcademico)).first().id_periodo_academico
+        clase = Clase(
+            id_colegio=alumno.id_colegio, id_grado=alumno.id_grado, id_seccion=alumno.id_seccion,
+            id_periodo_academico=id_periodo, tipo=tipo, fecha_original=fecha_original or fecha, fecha=fecha,
+            lista_congelada_en=tiempo.ahora_utc(), creado_por=1, creado_en=tiempo.ahora_utc(),
+        )
+        db.add(clase)
+        db.flush()
+    for miembro in lista or [alumno]:
+        if db.get(ClaseAlumno, (clase.id_clase, miembro.id_alumno)) is None:
+            db.add(ClaseAlumno(id_clase=clase.id_clase, id_alumno=miembro.id_alumno, id_programa=miembro.id_programa_actual))
+    db.flush()
+    return clase
+
+
+def registrar_asistencia(db, alumno: Alumno, fecha: date, estado="presente", lista=None, id_docente=None) -> Asistencia:
+    """Asistencia del alumno en la clase de su grupo en la fecha, como la deja PUT
+    /asistencias (crea la clase y su lista si hace falta), sin validar."""
+    clase = clase_guardada(db, alumno, fecha, lista)
+    ahora = tiempo.ahora_utc()
+    asistencia = Asistencia(
+        id_clase=clase.id_clase, id_alumno=alumno.id_alumno, estado=estado,
+        id_docente=id_docente or db.exec(select(Docente)).first().id_docente,
+        fecha_registro=ahora, creado_por=1, creado_en=ahora,
+    )
+    db.add(asistencia)
+    db.commit()
+    return asistencia
+
+
 def asignar(db, id_docente, colegio, ids_grados, periodo, id_actor, creado_en=None) -> None:
     for id_grado in ids_grados:
         db.add(
@@ -516,11 +557,13 @@ def armar_entorno(db: Session) -> Entorno:
         asignar(db, ficha.id_docente, colegios["Andino"], [primero, segundo], periodos[periodo], id_actor)
 
     alfabetizacion, comprension = programas["Alfabetización"], programas["Comprensión Lectora"]
+    # Pertenecen a su grupo desde el inicio del año: tienen clases programadas en el pasado.
+    desde = anio.fecha_inicio
     alumnos = {
         # Con tilde a propósito: la búsqueda debe encontrarlo escribiendo "perez".
-        "luis": crear_alumno(db, "Luis", "Pérez Quispe", colegios["Andino"], primero, alfabetizacion, id_actor),
-        "ana": crear_alumno(db, "Ana", "Torres", colegios["Andino"], segundo, comprension, id_actor),
-        "mario": crear_alumno(db, "Mario", "Lejano", colegios["Lejano"], tercero, comprension, id_actor),
+        "luis": crear_alumno(db, "Luis", "Pérez Quispe", colegios["Andino"], primero, alfabetizacion, id_actor, desde=desde),
+        "ana": crear_alumno(db, "Ana", "Torres", colegios["Andino"], segundo, comprension, id_actor, desde=desde),
+        "mario": crear_alumno(db, "Mario", "Lejano", colegios["Lejano"], tercero, comprension, id_actor, desde=desde),
         "inactivo": crear_alumno(
             db, "Iván", "Inactivo", colegios["Andino"], segundo, comprension, id_actor, activo=False
         ),

@@ -23,7 +23,7 @@ from app.cli.supervisor import DatosSupervisor, errores_de_validacion, inicializ
 from app.core.config import Settings
 from app.core.security import verify_password
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import Asistencia, EvaluacionDiagnostica, ReporteSemanalAlumno, SemanaReporte
+from app.models.evaluacion import EvaluacionDiagnostica, ReporteSemanalAlumno, SemanaReporte
 from app.models.organizacion import (
     AnioEscolar,
     Calendario,
@@ -44,6 +44,7 @@ from tests.conftest import (
     crear_colegio,
     crear_docente,
     fijar_periodo,
+    registrar_asistencia,
     releer,
     terminar_pa_vigente,
 )
@@ -501,10 +502,7 @@ def test_cargar_feriados_no_vuelve_no_lectiva_una_fecha_con_asistencias(con_orig
     ficha = Docente(nombres="D", apellidos="D", creado_por=1, creado_en=ahora_utc())
     db.add(ficha)
     db.flush()
-    db.add(Asistencia(id_alumno=alumno.id_alumno, fecha=date(2030, 8, 30), id_programa=1, id_colegio=colegio.id_colegio,
-                      id_grado=1, estado="presente", id_docente=ficha.id_docente, fecha_registro=ahora_utc(),
-                      creado_por=1, creado_en=ahora_utc()))
-    db.commit()
+    registrar_asistencia(db, alumno, date(2030, 8, 30), id_docente=ficha.id_docente)
 
     resumen = cargar_feriados(db)
 

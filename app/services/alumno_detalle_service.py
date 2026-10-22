@@ -20,6 +20,8 @@ from app.core.tiempo import limites_lima
 from app.models.evaluacion import (
     ESTADOS_ASISTIO,
     Asistencia,
+    Clase,
+    ClaseAlumno,
     EvaluacionDiagnostica,
     EvaluacionDiagnosticaAlumno,
     LibroSubidaNivel,
@@ -45,6 +47,7 @@ from app.models.organizacion import (
 )
 from app.models.trazabilidad import Auditoria
 from app.schemas.alumno import (
+    AsistenciaDelAlumno,
     CambioHistorial,
     EventoHistorial,
     LecturaSemanal,
@@ -67,14 +70,14 @@ FILAS_RECIENTES = 5  # Rúbrica y Seguimiento de Lectura
 # ── Resumen ─────────────────────────────────────────────────────────────────────────
 
 def resumen(db: Session, alumno: Alumno) -> Resumen:
-    """Tarjetas del detalle. Sin datos: nivel colocado null, 0 libros y 0 % (CU015)."""
+    """Tarjetas del detalle. Sin datos: nivel colocado null, 0 libros y asistencia sin datos (CU015)."""
     anio = anio_de_referencia(db)
     if anio is None:
         return Resumen()
     return Resumen(
         nivel_colocado=_nivel_colocado(db, alumno, anio.id_anio_escolar),
         libros_leidos_anio=_libros_leidos(db, alumno.id_alumno, anio.id_anio_escolar),
-        asistencia_porcentaje=_asistencia(db, alumno, anio),
+        asistencia=_asistencia(db, alumno, anio),
     )
 
 
@@ -117,30 +120,39 @@ def _libros_leidos(db: Session, id_alumno: int, id_anio: int) -> int:
     return int(lsl) + lsb
 
 
-def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> float:
-    """% de asistencia del año, con 1 decimal (CU015): asistencias del alumno (presente
-    o tardanza) en su aula actual (colegio, grado y subprograma) sobre las clases
-    dictadas en esa aula (las fechas con al menos un registro con estado). El aula es la
-    guardada en cada registro: lo que el alumno registró en otra aula antes de rotar no
-    cuenta aquí. 0 si no hubo clases."""
-    de_su_aula = (
-        Asistencia.fecha >= anio.fecha_inicio,
-        Asistencia.fecha <= anio.fecha_fin,
-        Asistencia.id_colegio == alumno.id_colegio,
-        Asistencia.id_grado == alumno.id_grado,
-        Asistencia.id_programa == alumno.id_programa_actual,
+def _asistencia(db: Session, alumno: Alumno, anio: AnioEscolar) -> AsistenciaDelAlumno:
+    """% de asistencia del año (CU015): (presente + tardanza) / clases contabilizadas.
+    Cuentan las clases de los PA del año con la lista completa (todos sus alumnos con
+    estado) en cuya lista está el alumno; una reprogramada es una sola clase y las
+    adicionales también cuentan. Sin clases contabilizadas, porcentaje null."""
+    incompletas = (
+        select(ClaseAlumno.id_clase)
+        .outerjoin(
+            Asistencia,
+            (Asistencia.id_clase == ClaseAlumno.id_clase) & (Asistencia.id_alumno == ClaseAlumno.id_alumno),
+        )
+        .where(col(Asistencia.estado).is_(None))
     )
-    clases = db.exec(
-        select(func.count(func.distinct(Asistencia.fecha))).where(*de_su_aula, col(Asistencia.estado).is_not(None))
-    ).one()
-    if not clases:
-        return 0.0
-    asistidas = db.exec(
+    contabilizadas = (
         select(func.count())
-        .select_from(Asistencia)
-        .where(*de_su_aula, Asistencia.id_alumno == alumno.id_alumno, col(Asistencia.estado).in_(ESTADOS_ASISTIO))
+        .select_from(ClaseAlumno)
+        .join(Clase, Clase.id_clase == ClaseAlumno.id_clase)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == Clase.id_periodo_academico)
+        .where(
+            ClaseAlumno.id_alumno == alumno.id_alumno,
+            PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
+            col(ClaseAlumno.id_clase).not_in(incompletas),
+        )
+    )
+    total = db.exec(contabilizadas).one()
+    asistidas = db.exec(
+        contabilizadas.join(
+            Asistencia,
+            (Asistencia.id_clase == ClaseAlumno.id_clase) & (Asistencia.id_alumno == ClaseAlumno.id_alumno),
+        ).where(col(Asistencia.estado).in_(ESTADOS_ASISTIO))
     ).one()
-    return round(100 * asistidas / clases, 1)
+    porcentaje = round(100 * asistidas / total, 1) if total else None
+    return AsistenciaDelAlumno(porcentaje=porcentaje, asistidas=asistidas, contabilizadas=total)
 
 
 # ── Registro de Vuelo, Rúbrica y Seguimiento de Lectura ─────────────────────────────

@@ -4,8 +4,6 @@ from datetime import date, timedelta
 import pytest
 from sqlmodel import select
 
-from app.core.tiempo import ahora_utc
-from app.models.evaluacion import Asistencia
 from app.models.organizacion import ColegioGrado, DocenteColegioGrado
 from app.services.registros_vencidos import estado_de_registros
 from tests.conftest import (
@@ -13,11 +11,13 @@ from tests.conftest import (
     agregar_no_lectivo,
     asignar,
     cabecera_de,
+    clase_guardada,
     crear_alumno,
     crear_docente,
     crear_particular,
     rangos_en_receso,
     rangos_relativos,
+    registrar_asistencia,
     terminar_pa_vigente,
 )
 
@@ -53,16 +53,20 @@ def dias_de_clase(db, entorno, colegio="Andino", **dias) -> None:
     db.commit()
 
 
-def registrar(db, entorno, alumno, fecha, estado="presente") -> None:
-    """Registro en el aula actual del alumno, como lo crea PUT /asistencias."""
+def registrar(db, entorno, alumno, fecha, estado="presente", lista=None) -> None:
+    """Asistencia en la clase del grupo del alumno, como la deja PUT /asistencias: la
+    clase con su lista congelada (`lista`, por defecto solo el alumno)."""
     alumno = entorno.alumnos[alumno] if isinstance(alumno, str) else alumno
-    ahora = ahora_utc()
-    db.add(Asistencia(
-        id_alumno=alumno.id_alumno, fecha=fecha, id_programa=alumno.id_programa_actual, estado=estado,
-        id_colegio=alumno.id_colegio, id_grado=alumno.id_grado,
-        id_docente=entorno.id_docente, fecha_registro=ahora, creado_por=1, creado_en=ahora,
-    ))
+    registrar_asistencia(db, alumno, fecha, estado, lista=lista, id_docente=entorno.id_docente)
+
+
+def beto_en_primero(db, entorno):
+    """Otro alumno de 1.º del Andino, en el grupo desde el inicio del PA vigente."""
+    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["1.º"],
+                        entorno.programas["Alfabetización"], entorno.supervisor.id_usuario,
+                        desde=entorno.inicio("vigente"))
     db.commit()
+    return beto
 
 
 def inicio(client, cabecera) -> dict:
@@ -106,10 +110,8 @@ def test_cu011_un_feriado_no_vence_y_la_clase_de_hoy_aun_no(client, db, entorno,
 
 def test_cu011_un_registro_cumple_la_clase_y_uno_a_medias_la_deja_incompleta(client, db, entorno, sup):
     dias_de_clase(db, entorno, primero=1, segundo=2)
-    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["1.º"],
-                        entorno.programas["Alfabetización"], entorno.supervisor.id_usuario)
-    db.commit()
-    registrar(db, entorno, "luis", LUNES)
+    beto = beto_en_primero(db, entorno)
+    registrar(db, entorno, "luis", LUNES, lista=[entorno.alumnos["luis"], beto])
     registrar(db, entorno, "ana", MARTES)
 
     assert indicadores(client, sup) == (8, 1)  # al 1.º del lunes le falta Beto
@@ -118,14 +120,13 @@ def test_cu011_un_registro_cumple_la_clase_y_uno_a_medias_la_deja_incompleta(cli
     assert indicadores(client, sup) == (8, 1)
 
 
-def test_cu011_la_clase_de_hoy_a_medias_ya_es_incompleta(client, db, entorno, sup):
+def test_cu011_la_clase_de_hoy_todavia_no_se_exige(client, db, entorno, sup):
+    """Las obligaciones llegan hasta ayer: la clase de hoy a medias aún no es incompleta."""
     dias_de_clase(db, entorno, primero=3)
-    crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["1.º"],
-                 entorno.programas["Alfabetización"], entorno.supervisor.id_usuario)
-    db.commit()
-    registrar(db, entorno, "luis", HOY)
+    beto = beto_en_primero(db, entorno)
+    registrar(db, entorno, "luis", HOY, lista=[entorno.alumnos["luis"], beto])
 
-    assert indicadores(client, sup) == (4, 1)
+    assert indicadores(client, sup) == (4, 0)
 
 
 def test_cu011_los_inactivos_no_se_exigen(client, db, entorno, sup):
@@ -170,50 +171,39 @@ def rotar(db, entorno, alumno, colegio="Andino", grado="2.º") -> None:
     db.commit()
 
 
-@pytest.mark.parametrize("colegio, grado", [("Andino", "2.º"), ("Lejano", "1.º")], ids=["de_grado", "de_colegio"])
-def test_cu011_rotar_a_un_alumno_no_vuelve_vencida_ni_incompleta_el_aula_original(client, db, entorno, sup,
-                                                                                    colegio, grado):
-    """Luis y Beto (1.º) se registraron el lunes. Luis rota: su registro sigue en 1.º, que
-    queda con la clase del lunes completa (Beto) y solo los 4 lunes anteriores vencidos."""
+def test_cu011_mover_a_un_alumno_despues_no_altera_la_clase_registrada(client, db, entorno, sup):
+    """La lista del lunes de 1.º quedó congelada con Luis y Beto: que Luis cambie de
+    colegio después no la vuelve vencida ni incompleta."""
     dias_de_clase(db, entorno, primero=1)
-    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["1.º"],
-                        entorno.programas["Alfabetización"], entorno.supervisor.id_usuario)
-    db.commit()
-    registrar(db, entorno, "luis", LUNES)
+    beto = beto_en_primero(db, entorno)
+    registrar(db, entorno, "luis", LUNES, lista=[entorno.alumnos["luis"], beto])
     registrar(db, entorno, beto, LUNES)
     assert indicadores(client, sup) == (4, 0)
 
-    rotar(db, entorno, "luis", colegio, grado)
+    rotar(db, entorno, "luis", "Lejano", "1.º")
 
     assert indicadores(client, sup) == (4, 0)
-    assert db.exec(select(Asistencia.id_colegio, Asistencia.id_grado).where(
-        Asistencia.id_alumno == entorno.alumnos["luis"].id_alumno)).one() == (
-        entorno.colegios["Andino"].id_colegio, entorno.grados["1.º"])
 
 
-def test_cu011_quien_rota_ya_registrado_ese_dia_no_se_exige_en_su_aula_nueva(client, db, entorno, sup):
-    """1.º y 2.º los lunes. Luis se registró el lunes en 1.º y después pasó a 2.º: la clase
-    del lunes de 2.º está completa con Ana, y la de 1.º con el registro de Luis."""
-    dias_de_clase(db, entorno, primero=1, segundo=1)
-    registrar(db, entorno, "luis", LUNES)
-    registrar(db, entorno, "ana", LUNES)
-    rotar(db, entorno, "luis", grado="2.º")
-
-    # 1.º se queda sin alumnos activos: ya no se exige. 2.º: los 4 lunes anteriores.
-    assert indicadores(client, sup) == (4, 0)
-
-
-def test_cu011_un_registro_sin_estado_deja_incompleta_su_clase_aunque_el_alumno_rote(client, db, entorno, sup):
+def test_cu011_un_alumno_de_la_lista_sin_estado_deja_incompleta_la_clase(client, db, entorno, sup):
     dias_de_clase(db, entorno, primero=1)
-    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["1.º"],
-                        entorno.programas["Alfabetización"], entorno.supervisor.id_usuario)
-    db.commit()
-    registrar(db, entorno, "luis", LUNES, estado=None)
+    beto = beto_en_primero(db, entorno)
+    registrar(db, entorno, "luis", LUNES, estado=None, lista=[entorno.alumnos["luis"], beto])
     registrar(db, entorno, beto, LUNES)
-
-    rotar(db, entorno, "luis", grado="2.º")
 
     assert indicadores(client, sup) == (4, 1)
+
+
+def test_cu011_una_clase_reprogramada_se_exige_en_su_fecha_nueva(client, db, entorno, sup):
+    """El lunes 15 de 1.º se trasladó al martes 16: ese día vence (y no el lunes)."""
+    dias_de_clase(db, entorno, primero=1)
+    clase_guardada(db, entorno.alumnos["luis"], MARTES, fecha_original=LUNES).lista_congelada_en = None
+    db.commit()
+
+    estado = estado_de_registros(db)
+
+    assert sorted(c.fecha for c in estado.vencidas)[-1] == MARTES
+    assert LUNES not in {c.fecha for c in estado.vencidas}
 
 
 def test_cu011_los_vencidos_miran_el_aula_guardada_en_el_registro(client, db, entorno, sup):
@@ -222,7 +212,7 @@ def test_cu011_los_vencidos_miran_el_aula_guardada_en_el_registro(client, db, en
     registrar(db, entorno, "ana", LUNES)
     rotar(db, entorno, "ana", grado="1.º")
 
-    # Los 5 lunes de 1.º vencidos: el registro de Ana es de 2.º.
+    # Los 5 lunes de 1.º vencidos: la asistencia de Ana es de una clase de 2.º.
     assert indicadores(client, sup) == (5, 0)
 
 

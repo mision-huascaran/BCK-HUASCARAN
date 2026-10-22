@@ -85,14 +85,21 @@ class NivelColocado(BaseModel):
     nivel_descriptivo: Optional[str] = None
 
 
+class AsistenciaDelAlumno(BaseModel):
+    """% de asistencia del año (CU015): asistidas (presente o tardanza) sobre las clases
+    contabilizadas, con 1 decimal; null ("Sin datos de asistencia") si no hay ninguna."""
+
+    porcentaje: Optional[float] = None
+    asistidas: int = 0
+    contabilizadas: int = 0
+
+
 class Resumen(BaseModel):
     # Del Registro de Vuelo más reciente del año que lo tenga; null si ninguno.
     nivel_colocado: Optional[NivelColocado] = None
     # LSL + LSB del año; 0 si el alumno no tiene reportes semanales en el año.
     libros_leidos_anio: int = 0
-    # Asistencias (presente o tardanza) sobre clases dictadas a su colegio, grado y
-    # subprograma en el año, en %, con 1 decimal; 0 sin clases dictadas.
-    asistencia_porcentaje: float = 0
+    asistencia: AsistenciaDelAlumno = AsistenciaDelAlumno()
 
 
 class RegistroVuelo(BaseModel):

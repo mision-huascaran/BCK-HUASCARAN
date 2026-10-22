@@ -1,38 +1,47 @@
-"""Asistencia por clase de los alumnos (CU022) y su % en el detalle del alumno (CU015)."""
+"""Asistencia por clase (CU022), su % en el detalle del alumno (CU015), el hook de listas
+históricas (CU014) y el contador de Salud del Sistema de Asistencias (CU012)."""
+import uuid
 from datetime import date, timedelta
 
 import pytest
 from sqlmodel import select
 
-from app.core.tiempo import ahora_utc
-from app.models.evaluacion import Asistencia
-from app.models.organizacion import Alumno
-from app.models.trazabilidad import Auditoria
-from app.services import asistencia_service
+from app.core import tiempo
+from app.models.evaluacion import Asistencia, Clase, ClaseAlumno
+from app.models.organizacion import AlumnoPertenencia, ColegioGrado, DocenteColegioGrado
+from app.models.trazabilidad import Auditoria, OperacionSincronizacion
+from app.services import pertenencia, salud_sistema
+from app.services.calendario import pa_actual_de_colegios
+from app.core.errores import ErrorNegocio
 from tests.conftest import (
     a_las,
     agregar_no_lectivo,
     asignar,
     cabecera_de,
+    clase_guardada,
     crear_alumno,
-    crear_colegio,
+    crear_docente,
     crear_particular,
     crear_permiso,
+    iniciar_actividad,
     iso,
     motivo,
     rangos_en_receso,
-    releer,
-    terminar_pa_vigente,
+    registrar_asistencia,
 )
 
-# Miércoles. El periodo vigente va del lunes 18 de mayo al viernes 17 de julio; el pasado
-# termina el 18 de abril.
+# Miércoles. El PA2 del general va del lunes 18 de mayo al viernes 17 de julio; el PA1,
+# del 18 de enero al 18 de abril; el PR1, del 19 de abril al 17 de mayo.
 HOY = date(2026, 6, 17)
 LUNES, MARTES = date(2026, 6, 15), date(2026, 6, 16)
+LUNES_ANTERIOR = date(2026, 6, 8)
 SABADO, FERIADO, MANANA = date(2026, 6, 13), date(2026, 6, 12), date(2026, 6, 18)
-DEL_PERIODO_PASADO = date(2026, 3, 10)  # martes
-ENTRE_PERIODOS = date(2026, 5, 5)  # martes
-NO_LECTIVA = "La fecha seleccionada no corresponde a un día lectivo válido del periodo vigente."
+LUNES_DEL_PA1 = date(2026, 4, 13)
+EN_RECESO = date(2026, 5, 5)
+FUERA_DE_PERIODO = date(2026, 1, 5)
+SIN_HABILITACION = (
+    "No tienes una habilitación vigente para registrar o corregir asistencias en la fecha seleccionada."
+)
 
 
 @pytest.fixture(autouse=True)
@@ -43,31 +52,50 @@ def miercoles(reloj):
 
 
 @pytest.fixture(autouse=True)
-def feriado(miercoles, db, entorno):
-    """El viernes 12 es un día no lectivo del calendario general."""
+def calendario(miercoles, db, entorno):
+    """El viernes 12 es feriado; 1.º y 2.º del Andino y 3.º del Lejano tienen clase los lunes."""
     agregar_no_lectivo(db, entorno.calendario, FERIADO)
+    for colegio, grado in (("Andino", "1.º"), ("Andino", "2.º"), ("Lejano", "3.º")):
+        fila = db.get(ColegioGrado, (entorno.colegios[colegio].id_colegio, entorno.grados[grado]))
+        fila.dia_clase = 1
+        db.add(fila)
+    db.commit()
 
 
-def clase(entorno, fecha=HOY, colegio="Andino", grado="2.º", programa="Comprensión Lectora") -> dict:
-    return {
-        "id_colegio": entorno.colegios[colegio].id_colegio,
-        "id_grado": entorno.grados[grado],
-        "id_programa": entorno.programas[programa],
-        "fecha": fecha.isoformat(),
-    }
+@pytest.fixture
+def doc(cabeceras):
+    return cabeceras["Docente"]
 
 
-def consultar(client, cabecera, params):
+def grupo(db, entorno, colegio="Andino", grado="2.º") -> dict:
+    alumno = next(a for a in entorno.alumnos.values()
+                  if a.id_colegio == entorno.colegios[colegio].id_colegio and a.id_grado == entorno.grados[grado])
+    return {"id_colegio": alumno.id_colegio, "id_grado": alumno.id_grado, "id_seccion": alumno.id_seccion}
+
+
+def consultar(client, cabecera, db, entorno, fecha, **grupo_):
+    params = {**grupo(db, entorno, **grupo_), "fecha": fecha.isoformat()}
     return client.get("/asistencias", params=params, headers=cabecera)
 
 
-def guardar(client, cabecera, registros, fecha=HOY, **extra):
-    cuerpo = {"fecha": fecha.isoformat(), "registros": registros, **extra}
+def registro(entorno, alumno="ana", estado="presente", **campos) -> dict:
+    return {"id_operacion": str(uuid.uuid4()), "version": None, "id_alumno": entorno.alumnos[alumno].id_alumno,
+            "estado": estado, **campos}
+
+
+def guardar(client, cabecera, db, entorno, fecha, registros, grupo_=None, **extra):
+    cuerpo = {**grupo(db, entorno, **(grupo_ or {})), "fecha": fecha.isoformat(), "registros": registros, **extra}
     return client.put("/asistencias", json=cuerpo, headers=cabecera)
 
 
-def marca(entorno, alumno, estado="presente", **campos) -> dict:
-    return {"id_alumno": entorno.alumnos[alumno].id_alumno, "estado": estado, **campos}
+def reprogramar(client, cabeceras, db, entorno, original, nueva, **grupo_):
+    datos = grupo(db, entorno, **grupo_)
+    cuerpo = {"id_grado": datos["id_grado"], "id_seccion": datos["id_seccion"], "fecha_original": original.isoformat(),
+              "fecha_nueva": nueva.isoformat(), "motivo": "Actuación"}
+    respuesta = client.post(f"/colegios/{datos['id_colegio']}/clases/reprogramaciones", json=cuerpo,
+                            headers=cabeceras["Supervisor"])
+    assert respuesta.status_code == 201, respuesta.text
+    return respuesta.json()
 
 
 def filas(db) -> list[Asistencia]:
@@ -75,526 +103,370 @@ def filas(db) -> list[Asistencia]:
     return db.exec(select(Asistencia).order_by(Asistencia.id)).all()
 
 
-def alumno_de_la_clase(cuerpo, entorno, alumno) -> dict:
-    return next(a for a in cuerpo["alumnos"] if a["id_alumno"] == entorno.alumnos[alumno].id_alumno)
-
-
-# ── Consulta ────────────────────────────────────────────────────────────────────────
-
-def test_cu022_docente_lee_su_clase_sin_actividad(client, entorno, cabeceras):
-    respuesta = consultar(client, cabeceras["Docente"], clase(entorno))
-
-    assert respuesta.status_code == 200
-    # Solo activos del colegio, grado y subprograma (Iván está inactivo y sin registro).
-    assert respuesta.json() == {
-        "fecha": HOY.isoformat(),
-        "editable": True,
-        "alumnos": [{
-            "id_alumno": entorno.alumnos["ana"].id_alumno, "nombres": "Ana", "apellidos": "Torres",
-            "activo": True, "en_aula": True, "estado": None, "observacion": None,
-        }],
-    }
-
-
-def test_cu022_ordena_por_apellidos_y_muestra_lo_registrado(client, db, entorno, cabeceras, actividad):
-    crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["2.º"],
-                 entorno.programas["Comprensión Lectora"], entorno.supervisor.id_usuario)
-    db.commit()
-    guardar(client, cabeceras["Docente"], [marca(entorno, "ana", "tardanza", observacion="Llegó 8:20")])
-
-    alumnos = consultar(client, cabeceras["Docente"], clase(entorno)).json()["alumnos"]
-
-    assert [(a["apellidos"], a["estado"], a["observacion"]) for a in alumnos] == [
-        ("Abad", None, None), ("Torres", "tardanza", "Llegó 8:20"),
-    ]
-
-
-def test_cu022_docente_fuera_de_su_alcance(client, entorno, cabeceras):
-    respuesta = consultar(client, cabeceras["Docente"], clase(entorno, colegio="Lejano", grado="3.º"))
-
-    assert (respuesta.status_code, motivo(respuesta)) == (403, "aula_fuera_de_alcance")
-
-
-def test_t4_asistencias_sigue_igual_con_un_permiso_vigente(client, db, entorno, cabeceras):
-    """Asistencias todavía no usa `habilitacion_escritura` (se rehace en T6): sigue
-    funcionando con la asignación vigente y un permiso de Asistencias no le abre otra aula."""
-    crear_permiso(db, entorno, entorno.id_docente, "Lejano", "3.º", periodo="vigente", modulo="asistencias")
-
-    propia = consultar(client, cabeceras["Docente"], clase(entorno))
-    con_permiso = consultar(client, cabeceras["Docente"], clase(entorno, colegio="Lejano", grado="3.º"))
-
-    assert propia.status_code == 200
-    assert (con_permiso.status_code, motivo(con_permiso)) == (403, "aula_fuera_de_alcance")
-
-
-def test_cu022_supervisor_solo_lee_y_directivo_no_tiene_acceso(client, entorno, cabeceras):
-    params = clase(entorno, colegio="Lejano", grado="3.º")
-
-    supervisor = consultar(client, cabeceras["Supervisor"], params)
-
-    assert supervisor.status_code == 200
-    assert supervisor.json()["editable"] is False
-    assert [a["nombres"] for a in supervisor.json()["alumnos"]] == ["Mario"]
-    assert consultar(client, cabeceras["Directivo"], params).status_code == 403
-
-
-@pytest.mark.parametrize("caso", ["colegio_inexistente", "grado_no_ofrecido", "programa_no_ofrecido"])
-def test_cu022_consulta_invalida(client, db, entorno, cabeceras, caso):
-    params = clase(entorno)
-    if caso == "colegio_inexistente":
-        params["id_colegio"] = 999
-    else:
-        chico = crear_colegio(db, "Colegio Chico", [entorno.grados["1.º"]], [entorno.programas["Alfabetización"]],
-                              entorno.supervisor.id_usuario)
-        db.commit()
-        params["id_colegio"] = chico.id_colegio
-        if caso == "programa_no_ofrecido":
-            params["id_grado"] = entorno.grados["1.º"]
-
-    respuesta = consultar(client, cabeceras["Supervisor"], params)
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, caso)
-
-
-@pytest.mark.parametrize("filtro", ["fecha", "id_programa"])
-def test_cu022_los_cuatro_filtros_son_obligatorios(client, entorno, cabeceras, filtro):
-    params = clase(entorno)
-    del params[filtro]
-
-    respuesta = consultar(client, cabeceras["Supervisor"], params)
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
-    assert respuesta.json()["errores"][0]["campo"] == filtro
-
-
-@pytest.mark.parametrize(
-    "fecha",
-    [SABADO, FERIADO, MANANA, DEL_PERIODO_PASADO, ENTRE_PERIODOS],
-    ids=["fin_de_semana", "feriado", "futura", "periodo_pasado", "entre_periodos"],
-)
-def test_cu022_docente_solo_lee_dias_lectivos_del_periodo_vigente(client, entorno, cabeceras, fecha):
-    respuesta = consultar(client, cabeceras["Docente"], clase(entorno, fecha))
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, "fecha_no_lectiva")
-    assert respuesta.json()["detail"] == NO_LECTIVA
-
-
-@pytest.mark.parametrize("fecha", [LUNES, MARTES, HOY], ids=["lunes", "martes", "hoy"])
-def test_cu022_dias_lectivos_del_periodo_vigente_son_editables(client, entorno, cabeceras, fecha):
-    assert consultar(client, cabeceras["Docente"], clase(entorno, fecha)).json()["editable"] is True
-
-
-@pytest.mark.parametrize(
-    "fecha, codigo",
-    [(DEL_PERIODO_PASADO, 200), (LUNES, 200), (SABADO, 422), (FERIADO, 422), (MANANA, 422), (ENTRE_PERIODOS, 422)],
-)
-def test_cu022_supervisor_lee_cualquier_dia_lectivo_pasado(client, entorno, cabeceras, fecha, codigo):
-    respuesta = consultar(client, cabeceras["Supervisor"], clase(entorno, fecha))
-
-    assert respuesta.status_code == codigo
-    if codigo == 200:
-        assert respuesta.json()["editable"] is False
-    else:
-        assert motivo(respuesta) == "fecha_no_lectiva"
-
-
-def test_cu022_sin_periodo_vigente_el_docente_no_lee_ni_registra(client, db, entorno, cabeceras, actividad):
-    terminar_pa_vigente(db, entorno)
-
-    # Con el colegio en receso el docente no tiene alcance (como en Alumnos): 403 antes que la fecha.
-    assert motivo(consultar(client, cabeceras["Docente"], clase(entorno, MARTES))) == "aula_fuera_de_alcance"
-    assert motivo(guardar(client, cabeceras["Docente"], [marca(entorno, "ana")], fecha=MARTES)) == "fecha_no_lectiva"
-    assert consultar(client, cabeceras["Supervisor"], clase(entorno, MARTES)).status_code == 200
-
-
-def test_cu022_incluye_a_quien_tiene_registro_aunque_hoy_este_inactivo_o_en_otro_subprograma(
-    client, db, entorno, cabeceras, actividad
-):
-    docente = cabeceras["Docente"]
-    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["2.º"],
-                        entorno.programas["Comprensión Lectora"], entorno.supervisor.id_usuario)
-    db.commit()
-    guardar(client, docente, [marca(entorno, "ana", "ausente"), {"id_alumno": beto.id_alumno, "estado": "presente"}],
-            fecha=LUNES)
-    ana = releer(db, Alumno, entorno.alumnos["ana"].id_alumno)
-    ana.activo = False
-    beto = releer(db, Alumno, beto.id_alumno)
-    beto.id_programa_actual = entorno.programas["Alfabetización"]
-    db.add_all([ana, beto])
-    db.commit()
-
-    del_lunes = consultar(client, docente, clase(entorno, LUNES)).json()["alumnos"]
-    de_hoy = consultar(client, docente, clase(entorno)).json()["alumnos"]
-
-    assert [(a["nombres"], a["activo"], a["en_aula"], a["estado"]) for a in del_lunes] == [
-        ("Beto", True, False, "presente"), ("Ana", False, True, "ausente"),
-    ]
-    assert de_hoy == []
-
-
-# ── Registro ────────────────────────────────────────────────────────────────────────
-
-def test_cu022_registrar_exige_actividad(client, entorno, cabeceras):
-    respuesta = guardar(client, cabeceras["Docente"], [marca(entorno, "ana")])
-
-    assert (respuesta.status_code, motivo(respuesta)) == (409, "actividad_requerida")
-    assert respuesta.json()["detail"] == "Debe iniciar una actividad para realizar cambios."
-
-
-@pytest.mark.parametrize("rol", ["Supervisor", "Directivo"])
-def test_cu022_solo_el_docente_registra(client, entorno, cabeceras, rol):
-    respuesta = guardar(client, cabeceras[rol], [marca(entorno, "ana")])
-
-    assert (respuesta.status_code, motivo(respuesta)) == (403, "sin_permiso")
-
-
-def test_cu022_marcar_todos_y_cambiar_uno_cuenta_un_cambio_por_alumno(client, db, entorno, cabeceras, actividad):
-    docente = cabeceras["Docente"]
-    luis, ana = entorno.alumnos["luis"], entorno.alumnos["ana"]
-
-    respuesta = guardar(client, docente, [marca(entorno, "luis"), marca(entorno, "ana")])
-
-    assert respuesta.status_code == 200
-    assert respuesta.json() == {
-        "fecha": HOY.isoformat(),
-        "registros": [
-            {"id_alumno": luis.id_alumno, "aplicado": True, "estado": "presente", "observacion": None},
-            {"id_alumno": ana.id_alumno, "aplicado": True, "estado": "presente", "observacion": None},
-        ],
-    }
-    # Cada uno en la clase de su subprograma actual.
-    assert [(f.id_alumno, f.fecha, f.id_programa, f.estado, f.id_docente) for f in filas(db)] == [
-        (luis.id_alumno, HOY, entorno.programas["Alfabetización"], "presente", entorno.id_docente),
-        (ana.id_alumno, HOY, entorno.programas["Comprensión Lectora"], "presente", entorno.id_docente),
-    ]
-
-    guardar(client, docente, [marca(entorno, "ana", "ausente")])
-    guardar(client, docente, [marca(entorno, "ana", "presente")])
-    guardar(client, docente, [marca(entorno, "ana", "presente")])  # sin cambio: no audita
-
-    auditoria = db.exec(select(Auditoria.accion, Auditoria.campo).where(Auditoria.tabla == "asistencia")).all()
-    assert sorted(auditoria, key=str) == sorted(
-        [("crear", None), ("crear", None), ("editar", "estado"), ("editar", "estado")], key=str
-    )
-    fila_ana = next(f for f in filas(db) if f.id_alumno == ana.id_alumno)
-    assert (fila_ana.estado, fila_ana.modificado_por) == ("presente", entorno.docente.id_usuario)
-
-    detalle = client.get(f"/actividades/{actividad['id']}", headers=docente).json()
-    assert detalle["cambios"] == 2
-    assert [(m["modulo"], m["total"]) for m in detalle["cambios_por_modulo"]] == [("asistencia", 2)]
-
-
-def test_cu021_productividad_en_plural_aunque_sea_uno(client, db, entorno, cabeceras, actividad):
-    guardar(client, cabeceras["Docente"], [marca(entorno, "ana")])
-    sup = cabeceras["Supervisor"]
-
-    historial = client.get(f"/seguimiento/docentes/{entorno.id_docente}/actividades", headers=sup).json()
-
-    assert historial["items"][0]["productividad_texto"] == "1 Asistencias"
-
-
-def test_cu022_observacion_del_modal_sin_tocar_el_estado(client, db, entorno, cabeceras, actividad):
-    docente = cabeceras["Docente"]
-    ana = entorno.alumnos["ana"].id_alumno
-
-    solo_observacion = guardar(client, docente, [{"id_alumno": ana, "observacion": "  Vino con su mamá "}])
-    estado = guardar(client, docente, [{"id_alumno": ana, "estado": "ausente"}])
-
-    assert solo_observacion.json()["registros"][0] == {
-        "id_alumno": ana, "aplicado": True, "estado": None, "observacion": "Vino con su mamá",
-    }
-    assert (filas(db)[0].estado, filas(db)[0].observacion) == ("ausente", "Vino con su mamá")
-    assert estado.json()["registros"][0]["observacion"] == "Vino con su mamá"
-
-    guardar(client, docente, [{"id_alumno": ana, "observacion": "  "}])
-    assert filas(db)[0].observacion is None
-    guardar(client, docente, [{"id_alumno": ana, "observacion": "Otra"}])
-    guardar(client, docente, [{"id_alumno": ana, "observacion": None}])
-    assert (filas(db)[0].estado, filas(db)[0].observacion) == ("ausente", None)
-    campos = db.exec(select(Auditoria.campo).where(Auditoria.accion == "editar").order_by(Auditoria.id_auditoria)).all()
-    assert campos == ["estado", "observacion", "observacion", "observacion"]
-
-
-@pytest.mark.parametrize(
-    "registro, campo",
-    [
-        ({}, "registros.0"),
-        ({"estado": None}, "registros.0.estado"),
-        ({"estado": "justificado"}, "registros.0.estado"),
-    ],
-    ids=["sin_estado_ni_observacion", "estado_null", "estado_no_permitido"],
-)
-def test_cu022_registro_invalido(client, db, entorno, cabeceras, actividad, registro, campo):
-    respuesta = guardar(client, cabeceras["Docente"], [{"id_alumno": entorno.alumnos["ana"].id_alumno, **registro}])
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
-    assert [e["campo"] for e in respuesta.json()["errores"]] == [campo]
-    assert filas(db) == []
-
-
-@pytest.mark.parametrize("fecha", [SABADO, FERIADO, MANANA, DEL_PERIODO_PASADO])
-def test_cu022_fecha_no_lectiva_no_se_registra(client, db, entorno, cabeceras, actividad, fecha):
-    respuesta = guardar(client, cabeceras["Docente"], [marca(entorno, "ana")], fecha=fecha)
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, "fecha_no_lectiva")
-    assert filas(db) == []
-
-
-def test_cu022_registra_una_clase_pasada_del_periodo_vigente(client, db, entorno, cabeceras, actividad):
-    respuesta = guardar(client, cabeceras["Docente"], [marca(entorno, "ana", "tardanza")], fecha=LUNES)
-
-    assert respuesta.status_code == 200
-    assert (filas(db)[0].fecha, filas(db)[0].estado) == (LUNES, "tardanza")
-
-
-def test_cu022_todo_o_nada_con_un_error_por_alumno(client, db, entorno, cabeceras, actividad):
-    registros = [
-        marca(entorno, "ana"),
-        marca(entorno, "mario"),  # fuera del alcance
-        marca(entorno, "inactivo"),
-        {"id_alumno": 999, "estado": "presente"},
-        marca(entorno, "ana", "ausente"),  # repetido
-    ]
-
-    respuesta = guardar(client, cabeceras["Docente"], registros)
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
-    assert [e["campo"] for e in respuesta.json()["errores"]] == [
-        "registros.1.id_alumno", "registros.2.id_alumno", "registros.3.id_alumno", "registros.4.id_alumno",
-    ]
-    assert filas(db) == []
-
-
-def test_cu022_registros_vacios(client, entorno, cabeceras, actividad):
-    respuesta = guardar(client, cabeceras["Docente"], [])
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
-
-
-def test_cu022_fecha_de_registro_en_el_futuro(client, db, entorno, cabeceras, actividad):
-    respuesta = guardar(client, cabeceras["Docente"], [marca(entorno, "ana")],
-                        fecha_registro=iso(ahora_utc() + timedelta(minutes=3)))
-
-    assert (respuesta.status_code, respuesta.json()["errores"][0]["campo"]) == (422, "fecha_registro")
-    assert filas(db) == []
-
-
-def test_cu022_gana_la_captura_mas_reciente(client, db, entorno, cabeceras, actividad):
-    """Dos dispositivos: llega primero la captura de las 8:30 y después una de las 8:10
-    (sincronizada tarde). La de las 8:10 no se aplica; una de las 8:45 sí."""
-    docente = cabeceras["Docente"]
-    reciente, vieja = a_las(HOY, 8, 30), a_las(HOY, 8, 10)
-    guardar(client, docente, [marca(entorno, "ana", "tardanza")], fecha_registro=iso(reciente))
-
-    tarde = guardar(client, docente, [marca(entorno, "ana", "ausente", observacion="No vino")], fecha_registro=iso(vieja))
-
-    assert tarde.status_code == 200
-    assert tarde.json()["registros"] == [{
-        "id_alumno": entorno.alumnos["ana"].id_alumno, "aplicado": False, "estado": "tardanza", "observacion": None,
+# ── GET: fecha ──────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(("fecha", "codigo", "mensaje"), [
+    (MANANA, "fecha_futura", "No se pueden registrar asistencias para fechas futuras."),
+    (EN_RECESO, "fecha_en_receso", "La fecha seleccionada corresponde a un periodo de receso."),
+    (FERIADO, "fecha_no_lectiva", "Día no lectivo: Feriado. No se permite registrar asistencias para esta fecha."),
+    (SABADO, "fecha_no_lectiva", "Día no lectivo: fin de semana. No se permite registrar asistencias para esta fecha."),
+    (FUERA_DE_PERIODO, "fecha_fuera_de_periodo", "La fecha seleccionada no pertenece a un periodo académico configurado."),
+])
+def test_get_valida_la_fecha_con_el_calendario_del_colegio(client, db, entorno, cabeceras, fecha, codigo, mensaje):
+    respuesta = consultar(client, cabeceras["Supervisor"], db, entorno, fecha)
+
+    assert (respuesta.status_code, motivo(respuesta), respuesta.json()["detail"]) == (422, codigo, mensaje)
+
+
+def test_get_roles_y_alcance(client, db, entorno, cabeceras):
+    assert consultar(client, {}, db, entorno, LUNES).status_code == 401
+    assert consultar(client, cabeceras["Directivo"], db, entorno, LUNES).status_code == 403
+    ajeno = consultar(client, cabeceras["Docente"], db, entorno, LUNES, colegio="Lejano", grado="3.º")
+    assert (ajeno.status_code, motivo(ajeno)) == (403, "aula_fuera_de_alcance")
+
+
+# ── GET: la clase ───────────────────────────────────────────────────────────────────
+
+def test_get_clase_programada_con_la_lista_del_grupo(client, db, entorno, doc):
+    cuerpo = consultar(client, doc, db, entorno, LUNES).json()
+
+    assert cuerpo["clase"] == {"id_clase": None, "tipo": "habitual", "etiqueta": "Clase programada",
+                               "fecha_original": LUNES.isoformat(), "fecha": LUNES.isoformat(), "aviso": None}
+    assert cuerpo["alumnos"] == [{
+        "id_alumno": entorno.alumnos["ana"].id_alumno, "nombre": "Ana Torres",
+        "id_programa": entorno.programas["Comprensión Lectora"], "inactivo": False, "estado": None,
+        "observacion": None, "version": None,
     }]
-    fila = filas(db)[0]
-    assert (fila.estado, fila.observacion, fila.fecha_registro) == ("tardanza", None, reciente)
-    assert db.exec(select(Auditoria).where(Auditoria.accion == "editar")).all() == []
-
-    posterior = guardar(client, docente, [marca(entorno, "ana", "presente")], fecha_registro=iso(a_las(HOY, 8, 45)))
-
-    assert posterior.json()["registros"][0]["aplicado"] is True
-    assert (filas(db)[0].estado, filas(db)[0].fecha_registro) == ("presente", a_las(HOY, 8, 45))
 
 
-def test_cu022_creada_a_la_vez_por_otra_peticion_se_trata_como_edicion(client, db, entorno, cabeceras,
-                                                                       actividad, monkeypatch):
-    """Si la fila aparece entre la lectura y el INSERT, el INSERT no choca: se edita."""
-    guardar(client, cabeceras["Docente"], [marca(entorno, "ana", "presente")])
-    reales = asistencia_service._existentes
-    llamadas = []
+def test_get_sin_clase_programada(client, db, entorno, doc):
+    clase = consultar(client, doc, db, entorno, MARTES).json()["clase"]
 
-    def sin_ver_la_primera_vez(*args):
-        llamadas.append(args)
-        return {} if len(llamadas) == 1 else reales(*args)
-
-    monkeypatch.setattr(asistencia_service, "_existentes", sin_ver_la_primera_vez)
-    respuesta = guardar(client, cabeceras["Docente"], [marca(entorno, "ana", "ausente")])
-
-    assert respuesta.status_code == 200
-    assert [f.estado for f in filas(db)] == ["ausente"]
+    assert (clase["etiqueta"], clase["tipo"], clase["aviso"]) == (None, None, "No hay una clase programada para esta fecha.")
 
 
-# ── CU015: % de asistencia ──────────────────────────────────────────────────────────
+def test_get_clase_reprogramada_y_su_fecha_original(client, db, entorno, cabeceras, doc):
+    reprogramar(client, cabeceras, db, entorno, LUNES, MARTES)
 
-def test_cu015_porcentaje_sobre_las_clases_dictadas_y_la_tardanza_cuenta(client, db, entorno, cabeceras, actividad):
-    """Clases dictadas a 2.º de Comprensión Lectora del Andino: lunes, martes y hoy (el
-    10, con solo una observación, no es una clase dictada). Ana: tardanza el lunes,
-    ausente el martes y sin registro hoy -> 1 de 3."""
-    docente = cabeceras["Docente"]
-    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["2.º"],
-                        entorno.programas["Comprensión Lectora"], entorno.supervisor.id_usuario).id_alumno
-    db.commit()
-    guardar(client, docente, [marca(entorno, "ana", "tardanza"), {"id_alumno": beto, "estado": "presente"}], fecha=LUNES)
-    guardar(client, docente, [marca(entorno, "ana", "ausente"), {"id_alumno": beto, "estado": "presente"}], fecha=MARTES)
-    guardar(client, docente, [{"id_alumno": beto, "estado": "presente"}])
-    guardar(client, docente, [{"id_alumno": beto, "observacion": "Solo observación"}], fecha=date(2026, 6, 10))
+    trasladada = consultar(client, doc, db, entorno, MARTES).json()["clase"]
+    original = consultar(client, doc, db, entorno, LUNES).json()["clase"]
 
-    resumen = client.get(f"/alumnos/{entorno.alumnos['ana'].id_alumno}/resumen", headers=docente).json()
-    de_beto = client.get(f"/alumnos/{beto}/resumen", headers=docente).json()
-
-    assert (resumen["asistencia_porcentaje"], de_beto["asistencia_porcentaje"]) == (33.3, 100.0)
-
-
-def test_cu015_sin_clases_dictadas_es_cero(client, entorno, cabeceras):
-    resumen = client.get(f"/alumnos/{entorno.alumnos['ana'].id_alumno}/resumen", headers=cabeceras["Docente"]).json()
-
-    assert resumen["asistencia_porcentaje"] == 0.0
-
-
-def test_cu022_la_supervisora_ve_lo_que_registro_el_docente_en_otra_sesion(client, db, entorno, cabeceras, actividad):
-    guardar(client, cabeceras["Docente"], [marca(entorno, "ana", "ausente")], fecha=MARTES)
-
-    cuerpo = consultar(client, cabecera_de(db, entorno.supervisor), clase(entorno, MARTES)).json()
-
-    assert alumno_de_la_clase(cuerpo, entorno, "ana")["estado"] == "ausente"
-
-
-# ── El registro guarda su aula: rotar a un alumno no muda sus asistencias ──────────
-
-def rotar(db, entorno, alumno, colegio="Andino", grado="1.º") -> None:
-    """El Supervisor cambia de colegio o de grado al alumno (CU014)."""
-    fila = releer(db, Alumno, entorno.alumnos[alumno].id_alumno)
-    fila.id_colegio, fila.id_grado = entorno.colegios[colegio].id_colegio, entorno.grados[grado]
-    db.add(fila)
-    db.commit()
-
-
-def test_cu022_el_registro_guarda_el_aula_del_alumno(client, db, entorno, cabeceras, actividad):
-    guardar(client, cabeceras["Docente"], [marca(entorno, "ana")], fecha=LUNES)
-
-    fila = filas(db)[0]
-    assert (fila.id_colegio, fila.id_grado, fila.id_programa) == (
-        entorno.colegios["Andino"].id_colegio, entorno.grados["2.º"], entorno.programas["Comprensión Lectora"],
+    assert (trasladada["etiqueta"], trasladada["fecha_original"], trasladada["fecha"]) == (
+        "Clase reprogramada", LUNES.isoformat(), MARTES.isoformat())
+    assert trasladada["aviso"] == "Esta clase estaba programada para el 15/06/2026 y fue trasladada al 16/06/2026."
+    assert original["etiqueta"] is None
+    assert original["aviso"] == (
+        "No hay una clase programada para esta fecha. La clase prevista para esta fecha fue trasladada al "
+        "16/06/2026. Registrar una clase adicional no completa la asistencia de la clase trasladada."
     )
 
 
-@pytest.mark.parametrize("colegio, grado", [("Andino", "1.º"), ("Lejano", "2.º")], ids=["de_grado", "de_colegio"])
-def test_cu022_al_rotar_el_aula_original_lo_muestra_fuera_del_aula(client, db, entorno, cabeceras, actividad,
-                                                                     colegio, grado):
-    """Ana se registró el lunes en 2.º y rota: el lunes de 2.º la sigue mostrando
-    (`en_aula: false`) y hoy ya no la lista; su aula nueva sí, desde hoy."""
-    docente, sup = cabeceras["Docente"], cabeceras["Supervisor"]
-    guardar(client, docente, [marca(entorno, "ana", "tardanza")], fecha=LUNES)
+def test_get_clase_adicional(client, db, entorno, doc, actividad):
+    guardar(client, doc, db, entorno, MARTES, [registro(entorno)], adicional=True)
 
-    rotar(db, entorno, "ana", colegio, grado)
+    clase = consultar(client, doc, db, entorno, MARTES).json()["clase"]
 
-    del_lunes = consultar(client, sup, clase(entorno, LUNES)).json()["alumnos"]
-    de_hoy = consultar(client, sup, clase(entorno)).json()["alumnos"]
-    nueva_hoy = consultar(client, sup, clase(entorno, colegio=colegio, grado=grado)).json()["alumnos"]
-    assert [(a["nombres"], a["activo"], a["en_aula"], a["estado"]) for a in del_lunes] == [("Ana", True, False, "tardanza")]
-    assert de_hoy == []
-    assert ("Ana", True, None) in [(a["nombres"], a["en_aula"], a["estado"]) for a in nueva_hoy]
+    assert (clase["tipo"], clase["etiqueta"], clase["aviso"]) == ("adicional", "Clase adicional", None)
 
 
-def test_cu022_quien_ya_tiene_registro_ese_dia_en_otra_aula_no_aparece_en_la_nueva(client, db, entorno, cabeceras,
-                                                                                     actividad):
-    """Ana se registró el lunes en 2.º y ese mismo día pasó a 1.º: en el lunes de 1.º no
-    aparece (su asistencia de ese día ya se tomó en 2.º)."""
-    guardar(client, cabeceras["Docente"], [marca(entorno, "ana")], fecha=LUNES)
-    rotar(db, entorno, "ana", grado="1.º")
-
-    lunes_de_primero = consultar(client, cabeceras["Docente"], clase(entorno, LUNES, grado="1.º")).json()["alumnos"]
-
-    assert [a["nombres"] for a in lunes_de_primero] == []
-
-
-def test_cu022_editar_un_registro_existente_no_lo_muda(client, db, entorno, cabeceras, actividad):
-    docente = cabeceras["Docente"]
-    guardar(client, docente, [marca(entorno, "ana", "presente")], fecha=LUNES)
-    rotar(db, entorno, "ana", grado="1.º")
-
-    respuesta = guardar(client, docente, [marca(entorno, "ana", "ausente")], fecha=LUNES)
-
-    assert respuesta.json()["registros"][0]["aplicado"] is True
-    fila = filas(db)[0]
-    assert (len(filas(db)), fila.estado, fila.id_grado) == (1, "ausente", entorno.grados["2.º"])
-
-
-def test_cu022_el_alcance_se_valida_contra_el_aula_del_registro(client, db, entorno, cabeceras, actividad):
-    """Ana rota al Lejano (fuera del alcance): su registro del lunes (Andino 2.º) se puede
-    corregir, pero no puede registrarse una clase nueva suya. Al revés, un registro del
-    Lejano no lo puede tocar aunque Ana vuelva al Andino."""
-    docente = cabeceras["Docente"]
-    guardar(client, docente, [marca(entorno, "ana", "presente")], fecha=LUNES)
-    rotar(db, entorno, "ana", colegio="Lejano", grado="2.º")
-
-    corregir = guardar(client, docente, [marca(entorno, "ana", "tardanza")], fecha=LUNES)
-    nueva = guardar(client, docente, [marca(entorno, "ana")], fecha=MARTES)
-
-    assert corregir.status_code == 200
-    assert (nueva.status_code, nueva.json()["errores"][0]["mensaje"]) == (
-        422, "El alumno no pertenece a un colegio y grado que tenga asignados.",
-    )
-    guardar_en_otra_aula = Asistencia(
-        id_alumno=entorno.alumnos["ana"].id_alumno, fecha=MARTES, id_programa=entorno.programas["Comprensión Lectora"],
-        id_colegio=entorno.colegios["Lejano"].id_colegio, id_grado=entorno.grados["2.º"], estado="presente",
-        id_docente=entorno.id_docente, fecha_registro=ahora_utc(), creado_por=1, creado_en=ahora_utc(),
-    )
-    db.add(guardar_en_otra_aula)
+def test_get_lista_congelada_no_cambia_con_la_pertenencia(client, db, entorno, doc, actividad):
+    """Después de la primera asistencia, un alumno que entra al grupo no aparece en esa
+    clase, y uno de la lista que hoy está inactivo sigue (con `inactivo`)."""
+    guardar(client, doc, db, entorno, LUNES, [registro(entorno)])
+    nora = crear_alumno(db, "Nora", "Zea", entorno.colegios["Andino"], entorno.grados["2.º"],
+                        entorno.programas["Alfabetización"], 1, desde=LUNES_ANTERIOR)
+    ana = entorno.alumnos["ana"]
+    ana.activo = False
+    db.add(ana)
     db.commit()
-    rotar(db, entorno, "ana", colegio="Andino", grado="2.º")
 
-    ajena = guardar(client, docente, [marca(entorno, "ana", "ausente")], fecha=MARTES)
+    congelada = consultar(client, doc, db, entorno, LUNES).json()["alumnos"]
+    calculada = consultar(client, doc, db, entorno, LUNES_ANTERIOR).json()["alumnos"]
 
-    assert (ajena.status_code, ajena.json()["errores"][0]["mensaje"]) == (
-        422, "Su asistencia de esa fecha es de un colegio y grado que no tiene asignados.",
-    )
+    assert [(a["nombre"], a["inactivo"], a["estado"]) for a in congelada] == [("Ana Torres", True, "presente")]
+    assert {a["id_alumno"] for a in calculada} == {ana.id_alumno, nora.id_alumno}
 
 
-def test_cu015_el_porcentaje_usa_el_aula_guardada(client, db, entorno, cabeceras, actividad):
-    """Ana y Beto (2.º): lunes Ana tardanza y Beto presente; martes solo Beto. Ana: 1 de 2.
-    Ana rota a 1.º: allí no hubo clases (0 %), y en 2.º siguen siendo 2 clases para Beto."""
-    docente = cabeceras["Docente"]
-    beto = crear_alumno(db, "Beto", "Abad", entorno.colegios["Andino"], entorno.grados["2.º"],
-                        entorno.programas["Comprensión Lectora"], entorno.supervisor.id_usuario).id_alumno
+# ── GET: escritura ──────────────────────────────────────────────────────────────────
+
+def test_escritura_con_asignacion_y_actividad(client, db, entorno, doc):
+    sin_actividad = consultar(client, doc, db, entorno, LUNES).json()["escritura"]
+    iniciar_actividad(client, doc)
+    con_actividad = consultar(client, doc, db, entorno, LUNES).json()["escritura"]
+
+    assert (sin_actividad["permitida"], sin_actividad["motivo"]) == (
+        False, "Inicia una actividad de trabajo para registrar asistencias.")
+    assert con_actividad == {"permitida": True, "motivo": None, "id_permiso": None, "aviso_permiso": None}
+
+
+def test_escritura_supervisor_siempre_solo_lectura(client, db, entorno, cabeceras):
+    escritura = consultar(client, cabeceras["Supervisor"], db, entorno, LUNES).json()["escritura"]
+
+    assert escritura["permitida"] is False
+
+
+def test_escritura_sin_habilitacion_en_un_pa_pasado(client, db, entorno, doc, actividad):
+    escritura = consultar(client, doc, db, entorno, LUNES_DEL_PA1).json()["escritura"]
+
+    assert escritura == {"permitida": False, "motivo": SIN_HABILITACION, "id_permiso": None, "aviso_permiso": None}
+
+
+def test_escritura_con_permiso_de_correccion(client, db, entorno, doc, actividad):
+    fin = a_las(HOY, 18, 30)
+    permiso = crear_permiso(db, entorno, entorno.id_docente, "Andino", "2.º", modulo="asistencias", fin=fin)
+
+    escritura = consultar(client, doc, db, entorno, LUNES_DEL_PA1).json()["escritura"]
+
+    assert escritura == {
+        "permitida": True, "motivo": None, "id_permiso": permiso.id_permiso,
+        "aviso_permiso": "Corrección excepcional habilitada para PA1 hasta el 17/06/2026 a las 18:30.",
+    }
+
+
+def test_escritura_con_asignacion_retroactiva(client, db, entorno):
+    crear_particular(db, entorno, rangos_en_receso(HOY))
+    otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
+    asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    fila = db.exec(select(DocenteColegioGrado).where(DocenteColegioGrado.id_docente == otro.id_docente)).one()
+    fila.retroactiva = True
     db.commit()
-    guardar(client, docente, [marca(entorno, "ana", "tardanza"), {"id_alumno": beto, "estado": "presente"}], fecha=LUNES)
-    guardar(client, docente, [{"id_alumno": beto, "estado": "presente"}], fecha=MARTES)
-    porcentaje = lambda a: client.get(f"/alumnos/{a}/resumen", headers=docente).json()["asistencia_porcentaje"]  # noqa: E731
-    ana = entorno.alumnos["ana"].id_alumno
-    assert (porcentaje(ana), porcentaje(beto)) == (50.0, 100.0)
+    cabecera = cabecera_de(db, otro)
+    iniciar_actividad(client, cabecera)
 
-    rotar(db, entorno, "ana", grado="1.º")
+    escritura = consultar(client, cabecera, db, entorno, LUNES, colegio="Lejano", grado="3.º").json()["escritura"]
+    guardado = guardar(client, cabecera, db, entorno, LUNES, [registro(entorno, "mario")],
+                       grupo_={"colegio": "Lejano", "grado": "3.º"}).json()
 
-    assert (porcentaje(ana), porcentaje(beto)) == (0.0, 100.0)
-
-
-# ── Calendario de cada colegio (CU027) ──────────────────────────────────────────────
-
-def calendario_de_lejano(db, entorno, en_receso=False):
-    """Calendario particular de Lejano; con `en_receso`, su PA2 terminó ayer (hoy es PR2)."""
-    return crear_particular(db, entorno, rangos_en_receso(HOY) if en_receso else None)
+    assert escritura["permitida"] is True
+    assert guardado["resultados"][0]["estado"] == "aceptada"
 
 
-def test_cu022_cada_clase_usa_el_calendario_de_su_colegio(client, db, entorno, cabeceras, actividad):
-    """El mismo día Andino (general) está en el PA2 y Lejano (particular) en el PR2: el
-    docente asignado a ambos solo lee y registra en Andino."""
-    asignar(db, entorno.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
-    calendario_de_lejano(db, entorno, en_receso=True)
-    doc = cabeceras["Docente"]
+# ── PUT ─────────────────────────────────────────────────────────────────────────────
 
-    assert motivo(consultar(client, doc, clase(entorno, colegio="Lejano", grado="3.º"))) == "aula_fuera_de_alcance"
-    assert motivo(guardar(client, doc, [marca(entorno, "mario")])) == "validacion"
-    assert guardar(client, doc, [marca(entorno, "ana")]).status_code == 200
+def test_put_crea_la_clase_y_congela_la_lista(client, db, entorno, doc, actividad):
+    respuesta = guardar(client, doc, db, entorno, LUNES, [registro(entorno)])
+
+    assert respuesta.status_code == 200, respuesta.text
+    cuerpo = respuesta.json()
+    [resultado] = cuerpo["resultados"]
+    assert (resultado["estado"], resultado["registro"]["estado"], resultado["registro"]["version"]) == (
+        "aceptada", "presente", 1)
+    db.expire_all()
+    clase = db.get(Clase, cuerpo["clase"]["id_clase"])
+    assert (clase.tipo, clase.fecha, clase.lista_congelada_en is not None) == ("habitual", LUNES, True)
+    assert [c.id_alumno for c in db.exec(select(ClaseAlumno)).all()] == [entorno.alumnos["ana"].id_alumno]
+    [fila] = filas(db)
+    assert (str(fila.id_actividad), fila.id_permiso) == (actividad["id"], None)
 
 
-def test_cu022_un_dia_no_lectivo_solo_afecta_a_su_calendario(client, db, entorno, cabeceras):
-    """El lunes es no lectivo solo en el particular de Lejano; el feriado del viernes 12
-    es del general y no le afecta a Lejano."""
-    particular = calendario_de_lejano(db, entorno)
-    agregar_no_lectivo(db, particular, LUNES, motivo="Aniversario del colegio")
-    sup = cabeceras["Supervisor"]
+def test_put_por_id_clase(client, db, entorno, doc, actividad):
+    id_clase = guardar(client, doc, db, entorno, LUNES, [registro(entorno)]).json()["clase"]["id_clase"]
 
-    def codigo(fecha, **aula):
-        return consultar(client, sup, clase(entorno, fecha, **aula)).status_code
+    respuesta = client.put("/asistencias", json={"id_clase": id_clase, "registros": [registro(entorno, estado="ausente")]},
+                           headers=doc)
 
-    assert codigo(LUNES, colegio="Lejano", grado="3.º") == 422
-    assert codigo(LUNES) == 200
-    assert codigo(FERIADO, colegio="Lejano", grado="3.º") == 200
-    assert codigo(FERIADO) == 422
+    assert respuesta.json()["resultados"][0]["registro"]["estado"] == "ausente"
+    assert filas(db)[0].version == 2
+
+
+def test_put_adicional_exige_la_marca(client, db, entorno, doc, actividad):
+    sin_marca = guardar(client, doc, db, entorno, MARTES, [registro(entorno)]).json()
+    con_marca = guardar(client, doc, db, entorno, MARTES, [registro(entorno)], adicional=True).json()
+
+    assert sin_marca["resultados"][0]["motivo"] == "sin_clase_programada"
+    assert con_marca["resultados"][0]["estado"] == "aceptada"
+    assert (con_marca["clase"]["tipo"], con_marca["clase"]["etiqueta"]) == ("adicional", "Clase adicional")
+
+
+def test_put_idempotente_por_id_de_operacion(client, db, entorno, doc, actividad):
+    marca = registro(entorno)
+
+    primera = guardar(client, doc, db, entorno, LUNES, [marca]).json()
+    segunda = guardar(client, doc, db, entorno, LUNES, [{**marca, "estado": "ausente"}]).json()
+
+    assert primera["resultados"] == segunda["resultados"]
+    assert [f.estado for f in filas(db)] == ["presente"]
+    assert len(db.exec(select(Auditoria).where(Auditoria.tabla == "asistencia")).all()) == 1
+
+
+def test_put_gana_la_captura_mas_reciente(client, db, entorno, doc, actividad, miercoles):
+    miercoles.avanzar(minutes=30)
+    reciente = registro(entorno, realizado_en=iso(a_las(HOY, 9, 20)))
+    antigua = registro(entorno, estado="ausente", realizado_en=iso(a_las(HOY, 9, 10)))
+
+    guardar(client, doc, db, entorno, LUNES, [reciente])
+    [resultado] = guardar(client, doc, db, entorno, LUNES, [antigua]).json()["resultados"]
+
+    assert (resultado["estado"], resultado["motivo"], resultado["registro"]["estado"]) == (
+        "aceptada", "registro_mas_reciente", "presente")
+    assert [f.estado for f in filas(db)] == ["presente"]
+    operacion = db.get(OperacionSincronizacion, uuid.UUID(antigua["id_operacion"]))
+    assert operacion.estado == "descartada"
+
+
+def test_put_version_es_informativa(client, db, entorno, doc, actividad):
+    guardar(client, doc, db, entorno, LUNES, [registro(entorno)])
+
+    [resultado] = guardar(client, doc, db, entorno, LUNES, [registro(entorno, "ana", "tardanza", version=7)]).json()[
+        "resultados"]
+
+    assert (resultado["estado"], resultado["registro"]["estado"]) == ("aceptada", "tardanza")
+
+
+def test_put_alumno_fuera_de_la_clase(client, db, entorno, doc, actividad):
+    [resultado] = guardar(client, doc, db, entorno, LUNES, [registro(entorno, "luis")]).json()["resultados"]
+
+    assert (resultado["estado"], resultado["motivo"]) == ("rechazada", "alumno_fuera_de_la_clase")
+
+
+def test_put_rechazos_de_fecha_y_de_habilitacion(client, db, entorno, doc, actividad):
+    futura = guardar(client, doc, db, entorno, MANANA, [registro(entorno)]).json()["resultados"][0]
+    pasada = guardar(client, doc, db, entorno, LUNES_DEL_PA1, [registro(entorno)]).json()["resultados"][0]
+
+    assert (futura["estado"], futura["motivo"]) == ("rechazada", "fecha_futura")
+    assert (pasada["motivo"], pasada["detail"]) == ("sin_habilitacion", SIN_HABILITACION)
+    assert db.exec(select(Clase)).all() == []
+
+
+def test_put_guarda_el_permiso_usado(client, db, entorno, doc, actividad):
+    permiso = crear_permiso(db, entorno, entorno.id_docente, "Andino", "2.º", modulo="asistencias")
+
+    [resultado] = guardar(client, doc, db, entorno, LUNES_DEL_PA1, [registro(entorno)]).json()["resultados"]
+
+    assert resultado["estado"] == "aceptada"
+    assert filas(db)[0].id_permiso == permiso.id_permiso
+    auditoria = db.exec(select(Auditoria).where(Auditoria.tabla == "asistencia")).one()
+    assert auditoria.id_permiso == permiso.id_permiso
+
+
+def test_put_observacion_sin_estado_no_completa_la_fila(client, db, entorno, doc, actividad):
+    marca = {"id_operacion": str(uuid.uuid4()), "id_alumno": entorno.alumnos["ana"].id_alumno, "observacion": "Llegó"}
+
+    [resultado] = guardar(client, doc, db, entorno, LUNES, [marca]).json()["resultados"]
+
+    assert (resultado["estado"], resultado["registro"]["estado"], resultado["registro"]["observacion"]) == (
+        "aceptada", None, "Llegó")
+
+
+def test_put_sin_actividad_rechaza_cada_registro(client, db, entorno, doc):
+    [resultado] = guardar(client, doc, db, entorno, LUNES, [registro(entorno)]).json()["resultados"]
+
+    assert resultado["motivo"] == "actividad_requerida"
+
+
+def test_put_roles_y_validacion(client, db, entorno, cabeceras, doc):
+    assert guardar(client, {}, db, entorno, LUNES, [registro(entorno)]).status_code == 401
+    supervisor = guardar(client, cabeceras["Supervisor"], db, entorno, LUNES, [registro(entorno)])
+    sin_clase = client.put("/asistencias", json={"registros": [registro(entorno)]}, headers=doc)
+    vacio = guardar(client, doc, db, entorno, LUNES, [])
+    ajeno = guardar(client, doc, db, entorno, LUNES, [registro(entorno, "mario")], grupo_={"colegio": "Lejano", "grado": "3.º"})
+
+    assert (supervisor.status_code, motivo(supervisor)) == (403, "sin_permiso")
+    assert (sin_clase.status_code, motivo(sin_clase)) == (422, "validacion")
+    assert (vacio.status_code, motivo(vacio)) == (422, "validacion")
+    assert (ajeno.status_code, motivo(ajeno)) == (403, "aula_fuera_de_alcance")
+
+
+def test_put_clase_inexistente(client, doc, actividad):
+    respuesta = client.put("/asistencias", json={"id_clase": 999, "registros": [{"id_operacion": str(uuid.uuid4()),
+                                                                                  "id_alumno": 1, "estado": "presente"}]},
+                           headers=doc)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (404, "clase_no_encontrada")
+
+
+def test_put_cuenta_en_la_productividad_por_clase_y_alumno(client, db, entorno, doc, actividad):
+    guardar(client, doc, db, entorno, LUNES, [registro(entorno)])
+    guardar(client, doc, db, entorno, LUNES, [registro(entorno, estado="ausente")])
+
+    detalle = client.get(f"/actividades/{actividad['id']}", headers=doc).json()
+
+    assert detalle["cambios_por_modulo"] == [
+        {"modulo": "asistencia", "total": 1, "creados": 1, "editados": 1, "activados": 0, "inactivados": 0}
+    ]
+
+
+# ── Hook de listas históricas (CU014) ───────────────────────────────────────────────
+
+@pytest.fixture
+def lista_del_lunes(client, db, entorno, doc, actividad):
+    """La clase del lunes de 2.º con su lista congelada: solo Ana."""
+    guardar(client, doc, db, entorno, LUNES, [registro(entorno)])
+
+
+def editar(client, cabeceras, entorno, alumno, **cambios):
+    return client.patch(f"/alumnos/{entorno.alumnos[alumno].id_alumno}", json=cambios, headers=cabeceras["Supervisor"])
+
+
+def test_hook_sacar_del_grupo_a_quien_figura_en_una_lista(client, db, entorno, cabeceras, lista_del_lunes):
+    cambio = editar(client, cabeceras, entorno, "ana", id_grado=entorno.grados["3.º"],
+                    cambio_grupo_desde=LUNES_ANTERIOR.isoformat())
+    inactivar = client.patch(f"/alumnos/{entorno.alumnos['ana'].id_alumno}/desactivar",
+                             json={"aplicar_desde": LUNES.isoformat()}, headers=cabeceras["Supervisor"])
+    despues = editar(client, cabeceras, entorno, "ana", id_grado=entorno.grados["3.º"], cambio_grupo_desde=HOY.isoformat())
+
+    assert (cambio.status_code, motivo(cambio)) == (409, "conflicto_listas_historicas")
+    [clase] = cambio.json()["clases"]
+    assert (clase["fecha"], clase["colegio"], clase["grado"], clase["seccion"]) == (
+        LUNES.isoformat(), "Colegio Andino", "2.º", "Única")
+    assert (inactivar.status_code, motivo(inactivar)) == (409, "conflicto_listas_historicas")
+    assert despues.status_code == 200
+
+
+def test_hook_entrar_a_un_grupo_con_listas_donde_no_figura(client, db, entorno, cabeceras, lista_del_lunes):
+    respuesta = editar(client, cabeceras, entorno, "luis", id_grado=entorno.grados["2.º"],
+                       id_programa=entorno.programas["Comprensión Lectora"], cambio_grupo_desde=LUNES.isoformat())
+
+    assert (respuesta.status_code, motivo(respuesta)) == (409, "conflicto_listas_historicas")
+
+
+def test_hook_inicio_de_pertenencia_posterior_a_una_lista(db, entorno, lista_del_lunes):
+    ana = entorno.alumnos["ana"]
+    intervalo = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == ana.id_alumno)).one()
+    intervalo.desde = MARTES
+    db.add(intervalo)
+
+    with pytest.raises(ErrorNegocio) as error:
+        pertenencia.validar_contra_listas_historicas(db, ana.id_alumno)
+
+    assert error.value.motivo == "conflicto_listas_historicas"
+    db.rollback()
+
+
+# ── % de asistencia del alumno (CU015) ──────────────────────────────────────────────
+
+def asistencia_de(client, cabecera, alumno) -> dict:
+    return client.get(f"/alumnos/{alumno.id_alumno}/resumen", headers=cabecera).json()["asistencia"]
+
+
+def test_porcentaje_excluye_listas_incompletas_y_cuenta_una_vez_la_reprogramada(client, db, entorno, cabeceras):
+    ana = entorno.alumnos["ana"]
+    nora = crear_alumno(db, "Nora", "Zea", entorno.colegios["Andino"], entorno.grados["2.º"],
+                        entorno.programas["Alfabetización"], 1, desde=LUNES_ANTERIOR - timedelta(days=30))
+    registrar_asistencia(db, ana, LUNES_ANTERIOR, "presente", lista=[ana, nora])
+    registrar_asistencia(db, nora, LUNES_ANTERIOR, "ausente")
+    registrar_asistencia(db, ana, LUNES - timedelta(days=14), "tardanza", lista=[ana, nora])  # a Nora le falta
+    reprogramada = clase_guardada(db, ana, MARTES, fecha_original=LUNES)
+    db.add(Asistencia(id_clase=reprogramada.id_clase, id_alumno=ana.id_alumno, estado="ausente",
+                      id_docente=entorno.id_docente, fecha_registro=tiempo.ahora_utc(), creado_por=1,
+                      creado_en=tiempo.ahora_utc()))
+    db.commit()
+
+    de_ana = asistencia_de(client, cabeceras["Supervisor"], ana)
+    de_nora = asistencia_de(client, cabeceras["Supervisor"], nora)
+
+    assert de_ana == {"porcentaje": 50.0, "asistidas": 1, "contabilizadas": 2}
+    assert de_nora == {"porcentaje": 0.0, "asistidas": 0, "contabilizadas": 1}
+    assert asistencia_de(client, cabeceras["Supervisor"], entorno.alumnos["luis"]) == {
+        "porcentaje": None, "asistidas": 0, "contabilizadas": 0}
+
+
+# ── Salud del Sistema (CU012) ───────────────────────────────────────────────────────
+
+def test_salud_cuenta_alumno_por_clase_con_estado_del_pa_vigente(db, entorno):
+    ana = entorno.alumnos["ana"]
+    registrar_asistencia(db, ana, LUNES)
+    registrar_asistencia(db, ana, LUNES_ANTERIOR, estado=None)
+    registrar_asistencia(db, ana, LUNES_DEL_PA1)
+
+    assert salud_sistema.asistencias_confirmadas(db, pa_actual_de_colegios(db, solo_activos=True)) == 1

@@ -16,12 +16,14 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
 
+from fastapi import status
 from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
-from app.core.errores import error_de_campo
+from app.core.errores import ErrorNegocio, error_de_campo
 from app.core.tiempo import hoy_lima
-from app.models.organizacion import Alumno, AlumnoPertenencia
+from app.models.evaluacion import Clase, ClaseAlumno
+from app.models.organizacion import Alumno, AlumnoPertenencia, Colegio, Grado, Seccion
 
 MENSAJE_FECHA_FUTURA = "Selecciona la fecha de hoy o una fecha anterior."
 MENSAJE_ANTES_DEL_GRUPO_ACTUAL = "Selecciona el {fecha} o una fecha posterior: ese día empezó su grupo actual."
@@ -92,6 +94,22 @@ def alumnos_del_grupo(
     return _alumnos(db, [*_del_grupo(id_colegio, id_grado, id_seccion, id_programa), *_vigente_en(fecha)])
 
 
+def lista_del_grupo(
+    db: Session, id_colegio: int, id_grado: int, id_seccion: int, fecha: date
+) -> list[tuple[Alumno, int]]:
+    """Como `alumnos_del_grupo`, con el subprograma de cada alumno en esa fecha (la lista
+    que se congela en una clase)."""
+    return [
+        (alumno, id_programa)
+        for alumno, id_programa in db.exec(
+            select(Alumno, AlumnoPertenencia.id_programa)
+            .join(AlumnoPertenencia, AlumnoPertenencia.id_alumno == Alumno.id_alumno)
+            .where(*_del_grupo(id_colegio, id_grado, id_seccion, None), *_vigente_en(fecha))
+            .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+        ).all()
+    ]
+
+
 def alumnos_del_grupo_en_rango(
     db: Session,
     id_colegio: int,
@@ -131,11 +149,94 @@ def _ultima(db: Session, id_alumno: int) -> Optional[AlumnoPertenencia]:
 
 # ── Validaciones ────────────────────────────────────────────────────────────────────
 
-def validar_contra_listas_historicas(db: Session, id_alumno: int, desde: date, hasta: Optional[date]) -> None:
-    """Punto de extensión de CU014 para T6: rechazar un cambio de pertenencia que
-    contradiga una lista de clase ya guardada (`clase_alumno`) entre `desde` (inclusivo) y
-    `hasta` (exclusivo; None = sin fin). Hoy no hay listas guardadas, así que no rechaza
-    nada. T6 lo implementa con un 409 que nombre las clases afectadas."""
+MENSAJE_CONFLICTO_LISTAS = (
+    "No se puede aplicar el cambio desde esa fecha: contradice la lista de alumnos de clases que ya "
+    "tienen asistencias registradas."
+)
+
+
+def _clases_donde_figura_sin_pertenecer(db: Session, id_alumno: int, intervalos: list[AlumnoPertenencia]) -> list[Clase]:
+    """Clases con el alumno en su lista congelada en cuya fecha ya no pertenece a ese
+    grupo (cambio de grupo o inactivación desde una fecha anterior, o inicio posterior)."""
+    clases = db.exec(
+        select(Clase).join(ClaseAlumno, ClaseAlumno.id_clase == Clase.id_clase).where(ClaseAlumno.id_alumno == id_alumno)
+    ).all()
+
+    def pertenece(clase: Clase) -> bool:
+        return any(
+            (i.id_colegio, i.id_grado, i.id_seccion) == (clase.id_colegio, clase.id_grado, clase.id_seccion)
+            and i.desde <= clase.fecha and (i.hasta is None or i.hasta > clase.fecha)
+            for i in intervalos
+        )
+
+    return [c for c in clases if not pertenece(c)]
+
+
+def _clases_donde_pertenece_sin_figurar(db: Session, id_alumno: int, intervalos: list[AlumnoPertenencia]) -> list[Clase]:
+    """Clases con lista congelada de un grupo al que el alumno pertenecía en su fecha,
+    pero en cuya lista no figura (pasarlo a un grupo con listas ya guardadas)."""
+    en_sus_listas = select(ClaseAlumno.id_clase).where(ClaseAlumno.id_alumno == id_alumno)
+    clases: list[Clase] = []
+    for intervalo in intervalos:
+        en_el_intervalo = [Clase.fecha >= intervalo.desde]
+        if intervalo.hasta is not None:
+            en_el_intervalo.append(Clase.fecha < intervalo.hasta)
+        clases.extend(db.exec(
+            select(Clase).where(
+                Clase.id_colegio == intervalo.id_colegio,
+                Clase.id_grado == intervalo.id_grado,
+                Clase.id_seccion == intervalo.id_seccion,
+                col(Clase.lista_congelada_en).is_not(None),
+                col(Clase.id_clase).not_in(en_sus_listas),
+                *en_el_intervalo,
+            )
+        ).all())
+    return clases
+
+
+def _descripcion(db: Session, clases: list[Clase]) -> list[dict]:
+    nombres = {
+        (c, g, s): (colegio, grado, seccion)
+        for c, g, s, colegio, grado, seccion in db.exec(
+            select(Seccion.id_colegio, Seccion.id_grado, Seccion.id_seccion, Colegio.nombre, Grado.nombre, Seccion.nombre)
+            .join(Colegio, Colegio.id_colegio == Seccion.id_colegio)
+            .join(Grado, Grado.id_grado == Seccion.id_grado)
+            .where(col(Seccion.id_seccion).in_({c.id_seccion for c in clases}))
+        ).all()
+    }
+    salida = []
+    for clase in sorted({c.id_clase: c for c in clases}.values(), key=lambda c: (c.fecha, c.id_clase)):
+        colegio, grado, seccion = nombres[(clase.id_colegio, clase.id_grado, clase.id_seccion)]
+        salida.append({
+            "id_clase": clase.id_clase, "fecha": clase.fecha.isoformat(), "colegio": colegio, "grado": grado,
+            "seccion": seccion,
+        })
+    return salida
+
+
+def validar_contra_listas_historicas(db: Session, id_alumno: int) -> None:
+    """Rechaza (409 `conflicto_listas_historicas`, con las `clases` afectadas) un cambio
+    de pertenencia que contradiga una lista de clase congelada (`clase_alumno`). Se llama
+    con el cambio ya aplicado (sin commit) y compara el historial resultante con las
+    listas:
+
+    - el alumno figura en una lista y en su fecha ya no pertenecería a ese grupo (cambio
+      de grupo o inactivación desde una fecha anterior, o inicio posterior a la lista);
+    - el alumno pertenecería a un grupo en la fecha de una lista congelada en la que no
+      figura (cambio a un grupo que ya tiene listas desde esa fecha).
+
+    La petición termina en error y nada se guarda."""
+    db.flush()
+    intervalos = list(db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == id_alumno)).all())
+    conflictos = [
+        *_clases_donde_figura_sin_pertenecer(db, id_alumno, intervalos),
+        *_clases_donde_pertenece_sin_figurar(db, id_alumno, intervalos),
+    ]
+    if conflictos:
+        raise ErrorNegocio(
+            status.HTTP_409_CONFLICT, MENSAJE_CONFLICTO_LISTAS, motivo="conflicto_listas_historicas",
+            extra={"clases": _descripcion(db, conflictos)},
+        )
 
 
 def validar_fecha_efectiva(fecha: date, campo: str) -> None:
@@ -177,8 +278,8 @@ def abrir(db: Session, alumno: Alumno, desde: date, campo: str, movimiento: Movi
     ultima = _ultima(db, alumno.id_alumno)
     if ultima is not None:
         _no_antes_de(desde, ultima.hasta or ultima.desde, MENSAJE_ANTES_DE_LA_SALIDA, campo)
-    validar_contra_listas_historicas(db, alumno.id_alumno, desde, None)
     db.add(_nuevo_intervalo(alumno, desde, movimiento))
+    validar_contra_listas_historicas(db, alumno.id_alumno)
 
 
 def cerrar(db: Session, id_alumno: int, hasta: date, campo: str, movimiento: Movimiento) -> None:
@@ -190,13 +291,13 @@ def cerrar(db: Session, id_alumno: int, hasta: date, campo: str, movimiento: Mov
     if actual is None:
         return
     _no_antes_de(hasta, actual.desde, MENSAJE_ANTES_DEL_GRUPO_ACTUAL, campo)
-    validar_contra_listas_historicas(db, id_alumno, hasta, None)
     if hasta == actual.desde:
         db.delete(actual)
-        return
-    actual.hasta = hasta
-    _modificado(actual, movimiento)
-    db.add(actual)
+    else:
+        actual.hasta = hasta
+        _modificado(actual, movimiento)
+        db.add(actual)
+    validar_contra_listas_historicas(db, id_alumno)
 
 
 def cambiar_grupo(db: Session, alumno: Alumno, desde: date, campo: str, movimiento: Movimiento) -> None:
@@ -209,17 +310,17 @@ def cambiar_grupo(db: Session, alumno: Alumno, desde: date, campo: str, movimien
         abrir(db, alumno, desde, campo, movimiento)
         return
     _no_antes_de(desde, actual.desde, MENSAJE_ANTES_DEL_GRUPO_ACTUAL, campo)
-    validar_contra_listas_historicas(db, alumno.id_alumno, desde, None)
     if desde == actual.desde:
         nuevo = _nuevo_intervalo(alumno, desde, movimiento)
         for atributo in ("id_colegio", "id_grado", "id_seccion", "id_programa", "id_actividad"):
             setattr(actual, atributo, getattr(nuevo, atributo))
         _modificado(actual, movimiento)
         db.add(actual)
-        return
-    actual.hasta = desde
-    _modificado(actual, movimiento)
-    db.add(actual)
-    # El vigente se cierra antes de insertar el nuevo: un solo intervalo con hasta NULL.
-    db.flush()
-    db.add(_nuevo_intervalo(alumno, desde, movimiento))
+    else:
+        actual.hasta = desde
+        _modificado(actual, movimiento)
+        db.add(actual)
+        # El vigente se cierra antes de insertar el nuevo: un solo intervalo con hasta NULL.
+        db.flush()
+        db.add(_nuevo_intervalo(alumno, desde, movimiento))
+    validar_contra_listas_historicas(db, alumno.id_alumno)

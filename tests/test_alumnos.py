@@ -2,12 +2,11 @@
 from datetime import timedelta
 
 import pytest
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.core.paginacion import TAMANO_PAGINA
 from app.core.tiempo import ahora_utc
 from app.models.evaluacion import (
-    Asistencia,
     EvaluacionDiagnostica,
     EvaluacionDiagnosticaAlumno,
     LibroSubidaNivel,
@@ -26,7 +25,10 @@ from tests.conftest import (
     crear_colegio,
     hoy_iso,
     motivo,
+    registrar_asistencia,
 )
+
+SIN_ASISTENCIA = {"porcentaje": None, "asistidas": 0, "contabilizadas": 0}
 
 
 def nuevo(entorno, colegio="Andino", grado="2.º", programa="Comprensión Lectora", **cambios):
@@ -213,7 +215,8 @@ def test_cu014_editar_y_cambiar_subprograma_cambia_la_pertenencia(client, db, en
     )
 
     assert respuesta.json()["programa"]["nombre"] == "Alfabetización"
-    intervalo = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == ana)).one()
+    intervalo = db.exec(select(AlumnoPertenencia).where(
+        AlumnoPertenencia.id_alumno == ana, col(AlumnoPertenencia.hasta).is_(None))).one()
     assert intervalo.id_programa == entorno.programas["Alfabetización"]
     campos = set(db.exec(select(Auditoria.campo).where(Auditoria.accion == "editar")).all())
     assert campos == {"apellidos", "id_programa", "pertenencia"}
@@ -331,10 +334,8 @@ def registros(db, entorno):
     db.add(ReporteSemanalAlumno(id_semana=semanas[1].id_semana, cantidad_lsl=None, **claves, **captura))
     db.flush()
     db.add(LibroSubidaNivel(id_reporte_semanal=reporte.id, titulo_libro="El zorro", aciertos=4, total_preguntas=5, **base))
-    alfabetizacion = entorno.programas["Alfabetización"]
     for semana, estado in zip(semanas, ("presente", "ausente")):
-        db.add(Asistencia(id_alumno=luis, fecha=semana.fecha_inicio, id_programa=alfabetizacion, estado=estado,
-                          id_colegio=entorno.colegios["Andino"].id_colegio, id_grado=entorno.grados["1.º"], **captura))
+        registrar_asistencia(db, entorno.alumnos["luis"], semana.fecha_inicio, estado)
     nivel_rubrica = db.exec(select(NivelRubrica).order_by(NivelRubrica.id_nivel_rubrica)).first()
     db.add(RubricaRegistroSemanal(id_semana=semanas[1].id_semana, id_nivel_fluidez=nivel_rubrica.id_nivel_rubrica,
                                   observacion="Lee fluido", **claves, **captura))
@@ -359,7 +360,7 @@ def test_cu015_resumen_con_registros(client, entorno, cabeceras, registros):
     assert cuerpo == {
         "nivel_colocado": {"letra": "B", "id_nivel_rk": 3, "numero_periodo": 2, "nivel_descriptivo": "En proceso"},
         "libros_leidos_anio": 4,
-        "asistencia_porcentaje": 50.0,
+        "asistencia": {"porcentaje": 50.0, "asistidas": 1, "contabilizadas": 2},
     }
 
 
@@ -498,7 +499,7 @@ def test_cu015_pestanas_vacias(client, entorno, cabeceras):
     cabecera = cabeceras["Supervisor"]
 
     assert client.get(f"{url}/resumen", headers=cabecera).json() == {
-        "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia_porcentaje": 0.0,
+        "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
     assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
     assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"semanales": [], "mensuales": []}
@@ -511,7 +512,7 @@ def test_cu015_sin_anio_escolar_las_pestanas_salen_vacias(client, entorno, cabec
     cabecera = cabeceras["Supervisor"]
 
     assert client.get(f"{url}/resumen", headers=cabecera).json() == {
-        "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia_porcentaje": 0.0,
+        "nivel_colocado": None, "libros_leidos_anio": 0, "asistencia": SIN_ASISTENCIA,
     }
     assert client.get(f"{url}/registro-vuelo", headers=cabecera).json() == []
     assert client.get(f"{url}/rubrica", headers=cabecera).json() == {"semanales": [], "mensuales": []}

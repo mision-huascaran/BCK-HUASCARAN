@@ -381,7 +381,3 @@ def test_alumnos_del_grupo_segun_la_fecha(client, db, entorno, sup, con_dos_secc
     assert [a.nombres for a in en_rango] == ["Nora"]
     assert pertenencia.pertenencia_en(db, nora, entorno.hoy - timedelta(days=11)) is None
     assert pertenencia.pertenencia_en(db, nora, hace_tres).id_seccion == b
-
-
-def test_el_hook_de_listas_historicas_no_rechaza_nada_todavia(db, entorno):
-    assert pertenencia.validar_contra_listas_historicas(db, entorno.alumnos["ana"].id_alumno, entorno.hoy, None) is None

@@ -28,7 +28,7 @@ from sqlmodel import Session, col, select
 from app.core.errores import ErrorNegocio
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
-from app.models.evaluacion import Asistencia
+from app.models.evaluacion import Asistencia, Clase
 from app.models.organizacion import (
     ORIGEN_MANUAL,
     TIPO_PA,
@@ -298,28 +298,36 @@ def _errores_con_vecinos(
 class _Registro:
     id_colegio: int
     fecha: date
+    id_periodo_academico: int
     tipo: str
 
 
-def _registros(db: Session, ids_colegio: set[int], desde: date, hasta: date) -> list[_Registro]:
-    """Fechas con registros de esos colegios en el rango. Hoy, solo asistencias (los demás
-    módulos se suman aquí cuando existan)."""
+def _registros(db: Session, ids_colegio: set[int], id_anio: int) -> list[_Registro]:
+    """Fechas con registros de esos colegios en los PA del año, con su PA. Hoy, las
+    clases con asistencias, en su fecha vigente (los demás módulos se suman aquí cuando
+    existan)."""
     if not ids_colegio:
         return []
+    con_asistencias = select(Asistencia.id_clase)
     filas = db.exec(
-        select(Asistencia.id_colegio, Asistencia.fecha)
-        .where(col(Asistencia.id_colegio).in_(ids_colegio), Asistencia.fecha >= desde, Asistencia.fecha <= hasta)
+        select(Clase.id_colegio, Clase.fecha, Clase.id_periodo_academico)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == Clase.id_periodo_academico)
+        .where(
+            col(Clase.id_colegio).in_(ids_colegio),
+            PeriodoAcademico.id_anio_escolar == id_anio,
+            col(Clase.id_clase).in_(con_asistencias),
+        )
         .distinct()
-        .order_by(Asistencia.id_colegio, Asistencia.fecha)
+        .order_by(Clase.id_colegio, Clase.fecha)
     ).all()
-    return [_Registro(id_colegio, fecha, REGISTRO_ASISTENCIA) for id_colegio, fecha in filas]
+    return [_Registro(id_colegio, fecha, id_periodo, REGISTRO_ASISTENCIA) for id_colegio, fecha, id_periodo in filas]
 
 
-def _motivo_incompatible(antes: PeriodoCalendario, propuesta: CalendarioResuelto, fecha: date) -> Optional[str]:
+def _motivo_incompatible(id_periodo: int, propuesta: CalendarioResuelto, fecha: date) -> Optional[str]:
     despues = propuesta.periodo_de(fecha)
     if despues is None or not despues.es_pa:
         return FUERA_DE_PA
-    if despues.numero != antes.numero:
+    if despues.id_periodo_academico != id_periodo:
         return CAMBIA_DE_PA
     if not propuesta.es_lectivo(fecha):
         return NO_LECTIVA
@@ -327,21 +335,14 @@ def _motivo_incompatible(antes: PeriodoCalendario, propuesta: CalendarioResuelto
 
 
 def _incompatibilidades(
-    db: Session, calendarios: Calendarios, id_anio: int, ids_colegio: set[int], propuesta: CalendarioResuelto
+    db: Session, id_anio: int, ids_colegio: set[int], propuesta: CalendarioResuelto
 ) -> list[dict]:
     """Registros de esos colegios que el cambio dejaría en un día no lectivo, fuera de su
-    PA o en otro PA. Solo se evalúan los que hoy pertenecen a un PA de ese año."""
-    actuales = [c for c in (calendarios.aplicable(i, id_anio) for i in ids_colegio) if c is not None]
-    if not actuales:
-        return []
-    desde = min(c.fecha_inicio for c in actuales)
-    hasta = max(c.fecha_fin for c in actuales)
+    PA o en otro PA. Solo se evalúan los de los PA de ese año."""
     nombres = dict(db.exec(select(Colegio.id_colegio, Colegio.nombre).where(col(Colegio.id_colegio).in_(ids_colegio))).all())
     incompatibles = []
-    for registro in _registros(db, ids_colegio, desde, hasta):
-        actual = calendarios.aplicable(registro.id_colegio, id_anio)
-        antes = actual.periodo_de(registro.fecha) if actual is not None else None
-        motivo = _motivo_incompatible(antes, propuesta, registro.fecha) if antes is not None and antes.es_pa else None
+    for registro in _registros(db, ids_colegio, id_anio):
+        motivo = _motivo_incompatible(registro.id_periodo_academico, propuesta, registro.fecha)
         if motivo is not None:
             incompatibles.append({
                 "colegio": {"id": registro.id_colegio, "nombre": nombres.get(registro.id_colegio, "")},
@@ -353,10 +354,8 @@ def _incompatibilidades(
     return incompatibles
 
 
-def _exigir_compatible(
-    db: Session, calendarios: Calendarios, id_anio: int, ids_colegio: set[int], propuesta: CalendarioResuelto
-) -> None:
-    incompatibles = _incompatibilidades(db, calendarios, id_anio, ids_colegio, propuesta)
+def _exigir_compatible(db: Session, id_anio: int, ids_colegio: set[int], propuesta: CalendarioResuelto) -> None:
+    incompatibles = _incompatibilidades(db, id_anio, ids_colegio, propuesta)
     if incompatibles:
         raise _conflicto(
             "No se puede guardar el calendario: el cambio afecta registros existentes.",
@@ -727,9 +726,7 @@ def editar(db: Session, id_calendario: int, data: CalendarioEditar, actor: Usuar
     ids_periodo = _ids_periodo(db, anio.id_anio_escolar)
     propuesta = resolver_propuesta(calendario, data.periodos, data.dias_no_lectivos, _origenes(antes), ids_periodo)
     _exigir_sin_errores(_errores_con_vecinos(db, calendarios, anio, calendario.id_colegio, data.periodos))
-    _exigir_compatible(
-        db, calendarios, anio.id_anio_escolar, _colegios_afectados(db, calendarios, calendario), propuesta
-    )
+    _exigir_compatible(db, anio.id_anio_escolar, _colegios_afectados(db, calendarios, calendario), propuesta)
     colegio = db.get(Colegio, calendario.id_colegio) if calendario.id_colegio is not None else None
     cambios = _cambios(antes, propuesta)
     if not cambios:
@@ -784,7 +781,7 @@ def crear_particular(db: Session, data: CalendarioParticularCrear, actor: Usuari
     borrador = Calendario(id_calendario=0, id_anio_escolar=anio.id_anio_escolar, id_colegio=colegio.id_colegio, version=1)
     propuesta = resolver_propuesta(borrador, data.periodos, dias, _origenes(general), _ids_periodo(db, anio.id_anio_escolar))
     _exigir_sin_errores(_errores_con_vecinos(db, calendarios, anio, colegio.id_colegio, data.periodos))
-    _exigir_compatible(db, calendarios, anio.id_anio_escolar, {colegio.id_colegio}, propuesta)
+    _exigir_compatible(db, anio.id_anio_escolar, {colegio.id_colegio}, propuesta)
     ahora = ahora_utc()
     calendario = insertar_calendario(db, anio.id_anio_escolar, colegio.id_colegio, propuesta, actor.id_usuario, ahora)
     _auditar(db, calendario, CREAR, actor, ahora)
@@ -808,7 +805,7 @@ def usar_general(db: Session, id_calendario: int, version: Optional[int], actor:
     general = calendarios.generales.get(calendario.id_anio_escolar)
     if general is None:
         raise no_configurado()
-    _exigir_compatible(db, calendarios, calendario.id_anio_escolar, {calendario.id_colegio}, general)
+    _exigir_compatible(db, calendario.id_anio_escolar, {calendario.id_colegio}, general)
     ahora = ahora_utc()
     calendario.activo = False
     calendario.version += 1

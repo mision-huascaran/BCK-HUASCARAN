@@ -8,7 +8,6 @@ import pytest
 from sqlmodel import select
 
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import Asistencia
 from app.models.organizacion import ORIGEN_AUTOMATICO, AnioEscolar, Calendario, PeriodoAcademico
 from app.models.trazabilidad import Auditoria
 from tests.conftest import (
@@ -18,6 +17,7 @@ from tests.conftest import (
     crear_calendario,
     motivo,
     rangos_relativos,
+    registrar_asistencia,
     releer,
 )
 
@@ -78,12 +78,7 @@ def editar(client, cabecera, id_calendario, rangos, version=1, dias=()):
 
 def asistencia_en(db, entorno, fecha, colegio="Andino"):
     alumno = entorno.alumnos["ana"] if colegio == "Andino" else entorno.alumnos["mario"]
-    db.add(Asistencia(
-        id_alumno=alumno.id_alumno, fecha=fecha, id_programa=alumno.id_programa_actual, id_colegio=alumno.id_colegio,
-        id_grado=alumno.id_grado, estado="presente", id_docente=entorno.id_docente, fecha_registro=ahora_utc(),
-        creado_por=1, creado_en=ahora_utc(),
-    ))
-    db.commit()
+    registrar_asistencia(db, alumno, fecha)
 
 
 def auditoria(db, id_calendario) -> list[Auditoria]:

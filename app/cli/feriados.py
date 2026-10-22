@@ -20,7 +20,7 @@ from sqlmodel import Session, col, select
 
 from app.cli.comun import Resumen, id_supervisor_original
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import Asistencia
+from app.models.evaluacion import Asistencia, Clase
 from app.models.organizacion import ORIGEN_AUTOMATICO, Calendario, Colegio, DiaNoLectivo
 from app.services.calendario import CalendarioResuelto, Calendarios, cargar_calendarios
 
@@ -51,10 +51,11 @@ def _fechas_con_asistencias(db: Session, calendarios: Calendarios, general: Cale
     usan_general = select(Colegio.id_colegio).where(col(Colegio.id_colegio).not_in(particulares))
     return set(
         db.exec(
-            select(Asistencia.fecha).where(
-                col(Asistencia.id_colegio).in_(usan_general),
-                Asistencia.fecha >= general.fecha_inicio,
-                Asistencia.fecha <= general.fecha_fin,
+            select(Clase.fecha).where(
+                col(Clase.id_colegio).in_(usan_general),
+                Clase.fecha >= general.fecha_inicio,
+                Clase.fecha <= general.fecha_fin,
+                col(Clase.id_clase).in_(select(Asistencia.id_clase)),
             )
         ).all()
     )

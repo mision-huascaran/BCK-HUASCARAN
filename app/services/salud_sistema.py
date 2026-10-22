@@ -12,12 +12,12 @@ suma ahí sin tocar la fórmula.
 """
 from typing import Callable, Optional
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.models.evaluacion import Asistencia
+from app.models.evaluacion import Asistencia, Clase
 from app.models.trazabilidad import OperacionPendiente
-from app.services.calendario import PeriodoCalendario, pa_actual_de_colegios
+from app.services.calendario import PeriodoCalendario, en_pa_de_su_colegio, pa_actual_de_colegios
 
 PaPorColegio = dict[int, PeriodoCalendario]
 ContadorModulo = Callable[[Session, PaPorColegio], int]
@@ -27,16 +27,14 @@ MODULOS_SALUD = ("asistencias", "lectura", "rubrica", "registro_vuelo")
 
 def asistencias_confirmadas(db: Session, pa_por_colegio: PaPorColegio) -> int:
     """Asistencia: una unidad por alumno y clase del PA vigente de su colegio con estado."""
-    if not pa_por_colegio:
-        return 0
-    en_pa = or_(
-        *(
-            and_(Asistencia.id_colegio == id_colegio, Asistencia.fecha.between(pa.fecha_inicio, pa.fecha_fin))
-            for id_colegio, pa in pa_por_colegio.items()
-        )
-    )
     return db.exec(
-        select(func.count()).select_from(Asistencia).where(col(Asistencia.estado).is_not(None), en_pa)
+        select(func.count())
+        .select_from(Asistencia)
+        .join(Clase, Clase.id_clase == Asistencia.id_clase)
+        .where(
+            col(Asistencia.estado).is_not(None),
+            en_pa_de_su_colegio(Clase.id_colegio, Clase.id_periodo_academico, pa_por_colegio),
+        )
     ).one()
 
 

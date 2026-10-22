@@ -4,14 +4,15 @@ Los catálogos del Grupo 2 (salvo `evaluacion_diagnostica`) no llevan auditoría
 (diseño v3, §1.2). Las tablas de captura guardan en `fecha_registro` el momento real de
 captura enviado por el cliente, y en `creado_en` cuándo la guardó el servidor (§1.3).
 """
+import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Text, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, Text, UniqueConstraint, Uuid, text
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
-from app.models.organizacion import FK_ANIO, FK_COLEGIO, FK_GRADO, FK_PROGRAMA, FK_USUARIO
+from app.models.organizacion import COLUMNAS_GRUPO, FK_ANIO, FK_GRADO, FK_GRUPO, FK_PROGRAMA, FK_USUARIO
 
 FK_ALUMNO = "alumno.id_alumno"
 FK_DOCENTE = "docente.id_docente"
@@ -143,38 +144,114 @@ ESTADOS_ASISTENCIA = ("presente", "tardanza", "ausente")
 ESTADOS_ASISTIO = ("presente", "tardanza")
 
 
-class Asistencia(SQLModel, table=True):
-    """Asistencia de un alumno a una clase (CU022): una fila por alumno, fecha y
-    subprograma. Una clase es fecha + colegio + grado + subprograma, y la fila guarda su
-    aula (la del alumno al crearla): si después el alumno rota, el registro no se muda.
-    Fuente única de asistencia para la rúbrica y el seguimiento de lectura."""
+TIPO_HABITUAL = "habitual"
+TIPO_ADICIONAL = "adicional"
+TIPOS_CLASE = (TIPO_HABITUAL, TIPO_ADICIONAL)
+FK_CLASE = "clase.id_clase"
 
-    __tablename__ = "asistencia"
+
+class Clase(SQLModel, table=True):
+    """Una clase de un grupo (colegio × grado × sección) en una fecha (CU013, CU022).
+
+    Habitual: cada fecha lectiva de un PA en que cae el `dia_clase` del grado; se
+    calcula y solo tiene fila cuando hace falta (primera asistencia, reprogramación o
+    tabla de lectura). Reprogramada: una habitual con `fecha` distinta de su
+    `fecha_original` (la obligación pasa a `fecha`). Adicional: registrada por el Docente
+    en una fecha lectiva sin clase programada (`fecha_original = fecha`).
+    El subprograma es del alumno, no de la clase.
+    """
+
+    __tablename__ = "clase"
     __table_args__ = (
-        UniqueConstraint("id_alumno", "fecha", "id_programa", name="uq_asistencia_alumno_fecha_programa"),
-        CheckConstraint(
-            "estado IS NULL OR estado IN ('presente', 'tardanza', 'ausente')", name="ck_asistencia_estado"
+        ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_clase_seccion"),
+        CheckConstraint("tipo IN ('habitual', 'adicional')", name="ck_clase_tipo"),
+        UniqueConstraint("id_colegio", "id_grado", "id_seccion", "fecha", name="uq_clase_grupo_fecha"),
+        # Una habitual por fecha programada, aunque se haya trasladado.
+        Index(
+            "uq_clase_habitual_fecha_original", "id_colegio", "id_grado", "id_seccion", "fecha_original",
+            unique=True, postgresql_where=text("tipo = 'habitual'"), sqlite_where=text("tipo = 'habitual'"),
         ),
-        # Clases de una fecha o de un periodo (vencidos e incompletos de CU011).
-        Index("ix_asistencia_fecha", "fecha"),
-        # La clase de un aula (CU022) y sus clases dictadas (CU015).
-        Index("ix_asistencia_aula_fecha", "id_colegio", "id_grado", "fecha"),
+        Index("ix_clase_colegio_fecha", "id_colegio", "fecha"),
+    )
+
+    id_clase: Optional[int] = Field(default=None, primary_key=True)
+    id_colegio: int
+    id_grado: int
+    id_seccion: int
+    id_periodo_academico: int = Field(foreign_key=FK_PERIODO)
+    tipo: str = Field(sa_type=Text)
+    fecha_original: date
+    # La vigente (después de reprogramar).
+    fecha: date
+    # Cuándo se congeló la lista de alumnos (primera asistencia); null = todavía no.
+    lista_congelada_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+    version: int = Field(default=1, sa_column_kwargs={"server_default": text("1")})
+
+    creado_por: int = Field(foreign_key=FK_USUARIO)
+    creado_en: datetime = Field(sa_type=UTCDateTime)
+    modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
+    modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
+
+class ClaseAlumno(SQLModel, table=True):
+    """Lista histórica de una clase: los alumnos que pertenecían al grupo en su fecha,
+    congelada al guardar la primera asistencia. No cambia con la pertenencia posterior."""
+
+    __tablename__ = "clase_alumno"
+
+    id_clase: int = Field(foreign_key=FK_CLASE, primary_key=True)
+    id_alumno: int = Field(foreign_key=FK_ALUMNO, primary_key=True)
+    # Subprograma del alumno en la fecha de la clase.
+    id_programa: int = Field(foreign_key=FK_PROGRAMA)
+
+
+class ClaseReprogramacion(SQLModel, table=True):
+    """Historial de traslados de una clase (CU013)."""
+
+    __tablename__ = "clase_reprogramacion"
+    __table_args__ = (
+        CheckConstraint("length(trim(motivo)) > 0", name="ck_clase_reprogramacion_motivo"),
+        Index("ix_clase_reprogramacion_clase", "id_clase", "fecha"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    id_alumno: int = Field(foreign_key=FK_ALUMNO)
-    # Día de la clase (no el de la captura).
-    fecha: date
-    # Aula de la clase: colegio y grado del alumno al crear el registro.
-    id_colegio: int = Field(foreign_key=FK_COLEGIO)
-    id_grado: int = Field(foreign_key=FK_GRADO)
-    # Subprograma del alumno al registrar.
-    id_programa: int = Field(foreign_key=FK_PROGRAMA)
+    id_clase: int = Field(foreign_key=FK_CLASE)
+    fecha_anterior: date
+    fecha_nueva: date
+    motivo: str = Field(sa_type=Text)
+    id_usuario: int = Field(foreign_key=FK_USUARIO)
+    fecha: datetime = Field(sa_type=UTCDateTime)
+
+
+class Asistencia(SQLModel, table=True):
+    """Asistencia de un alumno de la lista de una clase (CU022). Fuente única de
+    asistencia para la rúbrica y el seguimiento de lectura. `estado` null = sin marcar
+    (una observación sola no completa la fila)."""
+
+    __tablename__ = "asistencia"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["id_clase", "id_alumno"], ["clase_alumno.id_clase", "clase_alumno.id_alumno"],
+            name="fk_asistencia_clase_alumno",
+        ),
+        UniqueConstraint("id_clase", "id_alumno", name="uq_asistencia_clase_alumno"),
+        CheckConstraint(
+            "estado IS NULL OR estado IN ('presente', 'tardanza', 'ausente')", name="ck_asistencia_estado"
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    id_clase: int
+    id_alumno: int
     estado: Optional[str] = Field(default=None, sa_type=Text)
     observacion: Optional[str] = Field(default=None, sa_type=Text)
     id_docente: int = Field(foreign_key=FK_DOCENTE)
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key="actividad.id_actividad")
+    # Permiso de corrección (CU028) con que se registró; null si fue con una asignación.
+    id_permiso: Optional[int] = Field(default=None, foreign_key="permiso_correccion.id_permiso")
     # Momento real de la captura: con dos dispositivos, gana el más reciente.
     fecha_registro: datetime = Field(sa_type=UTCDateTime)
+    version: int = Field(default=1, sa_column_kwargs={"server_default": text("1")})
 
     creado_por: int = Field(foreign_key=FK_USUARIO)
     creado_en: datetime = Field(sa_type=UTCDateTime)

@@ -39,7 +39,7 @@ from app.services.calendario import (
     pa_actual_de_colegios,
 )
 from app.services.permiso_service import vigentes_del_docente
-from app.services.registros_vencidos import Clase, EstadoRegistros, estado_de_registros
+from app.services.registros_vencidos import ClaseObligatoria, EstadoRegistros, estado_de_registros
 from app.services.salud_sistema import salud_sistema
 from app.services.sincronizacion import pendientes_del_usuario
 from app.services.usuario_service import DOCENTE
@@ -196,7 +196,7 @@ def alertas_inactividad(
 
 
 def alertas_sincronizacion(
-    db: Session, docentes: list[tuple[Usuario, datetime]], vencidas: list[Clase], ahora: datetime
+    db: Session, docentes: list[tuple[Usuario, datetime]], vencidas: list[ClaseObligatoria], ahora: datetime
 ) -> list[AlertaOperativa]:
     """`sincronizacion_olvidada`: docentes con al menos una clase vencida en sus grados
     cuyo último inicio de sesión fue hace más de SIN_SESION_SINCRONIZACION, o que nunca
