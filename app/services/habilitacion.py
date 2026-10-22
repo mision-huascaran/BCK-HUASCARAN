@@ -182,3 +182,10 @@ def pares_visibles(db: Session, usuario: Usuario) -> set[tuple[int, int]]:
     """(colegio, grado) que el Docente puede consultar hoy: los de sus asignaciones
     habilitadas y los cubiertos por un permiso vigente (CU028)."""
     return {(h.id_colegio, h.id_grado) for h in habilitaciones_vigentes(db, usuario)}
+
+
+def pares_a_cargo(db: Session, usuario: Usuario) -> set[tuple[int, int]]:
+    """(colegio, grado) de las asignaciones habilitadas hoy (CU010): las del PA vigente de
+    cada colegio y las retroactivas durante su PR. No los grupos que solo se ven por un
+    permiso. Que sumen al Inicio no habilita escribir en Alumnos (`alcance_docente`)."""
+    return {(h.id_colegio, h.id_grado) for h in habilitaciones_vigentes(db, usuario) if h.origen != ORIGEN_PERMISO}

@@ -6,7 +6,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Index, Integer, Text, Uuid, text
+from sqlalchemy import JSON, BigInteger, CheckConstraint, Index, Integer, Text, Uuid, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
@@ -18,6 +19,13 @@ TIPOS_CIERRE_ACTIVIDAD = (
 )
 
 ACCIONES_AUDITORIA = ("crear", "editar", "activar", "inactivar")
+
+# Módulos que generan operaciones offline (CU017-CU021).
+MODULOS_SINCRONIZACION = ("asistencias", "lectura", "rubrica", "registro_vuelo", "alumnos", "actividad")
+ACEPTADA = "aceptada"
+RECHAZADA = "rechazada"
+DESCARTADA = "descartada"
+ESTADOS_OPERACION = (ACEPTADA, RECHAZADA, DESCARTADA)
 
 
 def _valores(valores: tuple[str, ...]) -> str:
@@ -91,3 +99,56 @@ class Auditoria(SQLModel, table=True):
     # El permiso de corrección (CU028) con que se hizo el cambio, o con que se otorgó o
     # revocó ese permiso; null en lo demás.
     id_permiso: Optional[int] = Field(default=None, foreign_key="permiso_correccion.id_permiso")
+
+
+def _check_modulo(tabla: str) -> CheckConstraint:
+    return CheckConstraint(f"modulo IN ({_valores(MODULOS_SINCRONIZACION)})", name=f"ck_{tabla}_modulo")
+
+
+class OperacionSincronizacion(SQLModel, table=True):
+    """Resultado de cada operación recibida (CU017-CU021). Su id lo genera el cliente: un
+    reintento con el mismo id devuelve la `respuesta` guardada sin volver a aplicar nada."""
+
+    __tablename__ = "operacion_sincronizacion"
+    __table_args__ = (
+        _check_modulo("operacion_sincronizacion"),
+        CheckConstraint(f"estado IN ({_valores(ESTADOS_OPERACION)})", name="ck_operacion_sincronizacion_estado"),
+        Index("ix_operacion_sincronizacion_actividad", "id_actividad"),
+        Index("ix_operacion_sincronizacion_usuario_estado", "id_usuario", "estado"),
+    )
+
+    id_operacion: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
+    id_usuario: int = Field(foreign_key="usuario.id_usuario")
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key="actividad.id_actividad")
+    modulo: str = Field(sa_type=Text)
+    entidad: str = Field(sa_type=Text)
+    id_entidad: str = Field(sa_type=Text)
+    # La versión del registro que veía el usuario; null si era nuevo.
+    version_origen: Optional[int] = None
+    estado: str = Field(sa_type=Text)
+    motivo: Optional[str] = Field(default=None, sa_type=Text)
+    # El resultado devuelto al cliente, tal cual (idempotencia).
+    respuesta: Optional[dict] = Field(default=None, sa_type=JSON().with_variant(JSONB(), "postgresql"))
+    fecha_realizacion: datetime = Field(sa_type=UTCDateTime)
+    recibida_en: datetime = Field(sa_type=UTCDateTime)
+
+
+class OperacionPendiente(SQLModel, table=True):
+    """Aviso de que un dispositivo tiene una operación offline todavía sin enviar. Se borra
+    al procesarla (aceptada o rechazada)."""
+
+    __tablename__ = "operacion_pendiente"
+    __table_args__ = (
+        _check_modulo("operacion_pendiente"),
+        Index("ix_operacion_pendiente_usuario", "id_usuario"),
+        Index("ix_operacion_pendiente_actividad", "id_actividad"),
+    )
+
+    id_operacion: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
+    id_usuario: int = Field(foreign_key="usuario.id_usuario")
+    id_dispositivo: str = Field(sa_type=Text)
+    # Sin FK: la actividad pudo crearse sin conexión y llegar al servidor después.
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid)
+    modulo: str = Field(sa_type=Text)
+    fecha_realizacion: datetime = Field(sa_type=UTCDateTime)
+    informado_en: datetime = Field(sa_type=UTCDateTime)

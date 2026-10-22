@@ -4,6 +4,7 @@ Gestiona solo el Supervisor, con conexión y sin actividad de trabajo. El Docent
 leer (solo GET) el calendario aplicable a sus colegios, para validar fechas sin conexión.
 Directivo: 403.
 """
+from datetime import date
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Body, Depends, status
@@ -17,6 +18,7 @@ from app.schemas.calendario import (
     CalendarioEditar,
     CalendarioParticularCrear,
     CalendarioRespuesta,
+    PeriodoEnFecha,
     UsarGeneral,
 )
 from app.services import calendario_gestion
@@ -45,6 +47,23 @@ def consultar_calendario(
     con `id_colegio`).
     """
     return calendario_gestion.consultar(db, usuario, id_anio_escolar, id_colegio)
+
+
+@router.get("/periodo", response_model=PeriodoEnFecha)
+def periodo_en_fecha(
+    db: Db,
+    usuario: Annotated[Usuario, Depends(require_role(SUPERVISOR, DOCENTE))],
+    id_colegio: int,
+    fecha: date,
+):
+    """Periodo (PA o PR) que contiene la fecha en el calendario del colegio y si es
+    lectiva. `motivo_no_lectivo`: `fuera_de_periodo`, `receso`, `fin_de_semana` o el
+    motivo del día no lectivo (null si es lectiva).
+
+    Errores: 422 `colegio_inexistente`, 403 `colegio_fuera_de_alcance` (Docente: solo
+    los colegios de su alcance de lectura).
+    """
+    return calendario_gestion.periodo_en_fecha(db, usuario, id_colegio, fecha)
 
 
 @router.post("", response_model=CalendarioRespuesta, status_code=status.HTTP_201_CREATED)

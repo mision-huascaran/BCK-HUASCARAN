@@ -16,6 +16,7 @@ from app.routers import (
     password,
     permisos,
     seguimiento,
+    sincronizacion,
     usuarios,
 )
 
@@ -43,6 +44,7 @@ app.include_router(actividades.router)
 app.include_router(asistencias.router)
 app.include_router(inicio.router)
 app.include_router(seguimiento.router)
+app.include_router(sincronizacion.router)
 
 
 @app.get("/")

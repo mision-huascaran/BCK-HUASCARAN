@@ -189,6 +189,17 @@ def vigentes_del_docente(db: Session, usuario: Usuario) -> list[PermisoVigente]:
     ]
 
 
+def mis_permisos_vigentes(db: Session, usuario: Usuario) -> list[PermisoItem]:
+    """GET /me/permisos: los permisos vigentes del Docente, con la forma de los ítems de
+    GET /usuarios/{id}/permisos, por fin de vigencia."""
+    ids = [h.id_permiso for h in habilitaciones_vigentes(db, usuario) if h.origen == ORIGEN_PERMISO]
+    if not ids:
+        return []
+    ahora = ahora_utc()
+    filas = db.exec(_consulta().where(col(PermisoCorreccion.id_permiso).in_(ids)).order_by(PermisoCorreccion.fin)).all()
+    return [PermisoItem(**_item(fila, ahora)) for fila in filas]
+
+
 def _calendario_de(db: Session, id_colegio: int, id_anio_escolar: int) -> Optional[CalendarioResuelto]:
     return cargar_calendarios(db, id_anio_escolar, ids_colegio=[id_colegio]).aplicable(id_colegio, id_anio_escolar)
 

@@ -6,12 +6,14 @@ nunca del token.
 """
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import Depends, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
-from sqlmodel import Session
+from sqlalchemy import or_, update
+from sqlmodel import Session, col
 
 from app.core.database import get_db
 from app.core.errores import ErrorNegocio
@@ -31,6 +33,8 @@ MENSAJE_SESION_INVALIDA = "La sesión no es válida. Inicie sesión nuevamente."
 MENSAJE_SESION_EXPIRADA = "La sesión ha expirado. Inicie sesión nuevamente."
 MOTIVO_SIN_PERMISO = "sin_permiso"
 MENSAJE_SIN_PERMISO = "No tienes permisos para realizar esta acción"
+# `sesion.ultima_peticion_en` se escribe a lo sumo una vez por este lapso.
+INTERVALO_ULTIMA_PETICION = timedelta(minutes=1)
 
 
 def _no_autenticado(mensaje: str, motivo: str) -> ErrorNegocio:
@@ -73,6 +77,29 @@ def _cerrar_vencidas_aparte(db: Session, id_usuario: int) -> None:
         aparte.commit()
 
 
+def _marcar_ultima_peticion(db: Session, sesion: Sesion) -> None:
+    """Guarda la hora de esta petición en la sesión (cota inferior de su cierre, CU008),
+    como máximo una vez por minuto y en una transacción propia: queda guardada aunque la
+    petición falle o sea de solo lectura. El UPDATE condicional evita escribir dos veces
+    si llegan peticiones simultáneas."""
+    ahora = ahora_utc()
+    if sesion.ultima_peticion_en is not None and ahora - sesion.ultima_peticion_en < INTERVALO_ULTIMA_PETICION:
+        return
+    with Session(db.get_bind()) as aparte:
+        aparte.exec(
+            update(Sesion)
+            .where(
+                Sesion.id_sesion == sesion.id_sesion,
+                or_(
+                    col(Sesion.ultima_peticion_en).is_(None),
+                    col(Sesion.ultima_peticion_en) <= ahora - INTERVALO_ULTIMA_PETICION,
+                ),
+            )
+            .values(ultima_peticion_en=ahora)
+        )
+        aparte.commit()
+
+
 @dataclass(frozen=True)
 class SesionActual:
     usuario: Usuario
@@ -100,6 +127,7 @@ def get_sesion_actual(
     usuario = db.get(Usuario, id_usuario)
     if usuario is None or not usuario.activo:
         raise sesion_invalida()
+    _marcar_ultima_peticion(db, sesion)
     return SesionActual(usuario=usuario, sesion=sesion)
 
 

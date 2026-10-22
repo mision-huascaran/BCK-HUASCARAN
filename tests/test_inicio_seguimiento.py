@@ -72,7 +72,7 @@ def test_cu010_inicio_del_docente(client, entorno, cabeceras):
     assert cuerpo["actividad_activa"] is None
     assert cuerpo["totales"] == {"ciclos": ["III"], "subprogramas": ["Alfabetización", "Comprensión Lectora"], "cantidad_alumnos": 2}
     assert [a["colegio"] for a in cuerpo["asignaciones"]] == ["Colegio Andino"]
-    assert cuerpo["registros_offline_pendientes"] is None
+    assert cuerpo["registros_offline_pendientes"] == 0
 
 
 def test_cu010_con_actividad_en_curso(client, entorno, cabeceras, actividad):
@@ -351,7 +351,7 @@ def test_cu020_tabla_de_seguimiento(client, entorno, cabeceras):
     cuerpo = client.get("/seguimiento/docentes", headers=cabeceras["Supervisor"]).json()
 
     fila = cuerpo["items"][0]
-    # Sin información de la cola offline (llega en T5): ni "al día" ni 0 pendientes.
+    # Nunca registró una actividad: sin información, ni "al día" ni 0 pendientes.
     assert (fila["id_docente"], fila["sincronizacion"], fila["registros_pendientes"]) == (
         entorno.id_docente, "sin_informacion", None
     )

@@ -49,6 +49,7 @@ from app.schemas.calendario import (
     CalendarioRespuesta,
     DiaNoLectivoEntrada,
     DiaNoLectivoSalida,
+    PeriodoEnFecha,
     PeriodoEntrada,
     PeriodoSalida,
 )
@@ -60,13 +61,14 @@ from app.services.calendario import (
     CalendarioResuelto,
     Calendarios,
     PeriodoCalendario,
+    VIERNES,
     RangoNoLectivo,
     anio_de_referencia,
     cargar_calendarios,
     nombre_periodo,
     resolver,
 )
-from app.services.habilitacion import ORIGEN_PERMISO, habilitaciones_vigentes
+from app.services.habilitacion import ORIGEN_PERMISO, habilitaciones_vigentes, pares_visibles
 from app.services.usuario_service import DOCENTE, nombre_rol
 
 TABLA = "calendario"
@@ -619,11 +621,15 @@ def _exigir_lectura_docente(db: Session, usuario: Usuario, id_anio: int, id_cole
     if nombre_rol(db, usuario.id_rol) != DOCENTE:
         return
     if id_colegio is None or id_colegio not in _colegios_del_docente(db, usuario, id_anio):
-        raise ErrorNegocio(
-            status.HTTP_403_FORBIDDEN,
-            "Solo puedes consultar el calendario de los colegios que tienes asignados.",
-            motivo="colegio_fuera_de_alcance",
-        )
+        raise _fuera_de_alcance()
+
+
+def _fuera_de_alcance() -> ErrorNegocio:
+    return ErrorNegocio(
+        status.HTTP_403_FORBIDDEN,
+        "Solo puedes consultar el calendario de los colegios que tienes asignados.",
+        motivo="colegio_fuera_de_alcance",
+    )
 
 
 def consultar(
@@ -640,6 +646,41 @@ def consultar(
     colegio = _colegio_existente(db, id_colegio) if id_colegio is not None else None
     _exigir_lectura_docente(db, usuario, anio.id_anio_escolar, id_colegio)
     return _respuesta_de(db, anio.id_anio_escolar, colegio)
+
+
+FUERA_DE_PERIODO = "fuera_de_periodo"
+RECESO = "receso"
+FIN_DE_SEMANA = "fin_de_semana"
+
+
+def _motivo_no_lectivo(calendario: Optional[CalendarioResuelto], fecha: date) -> Optional[str]:
+    """Por qué la fecha no es lectiva en ese calendario (None si lo es), en este orden:
+    fuera de todo periodo, receso, fin de semana o el motivo del día no lectivo."""
+    periodo = calendario.periodo_de(fecha) if calendario is not None else None
+    if periodo is None:
+        return FUERA_DE_PERIODO
+    if not periodo.es_pa:
+        return RECESO
+    if fecha.weekday() > VIERNES:
+        return FIN_DE_SEMANA
+    no_lectivo = calendario.no_lectivo_de(fecha)
+    return no_lectivo.motivo if no_lectivo is not None else None
+
+
+def periodo_en_fecha(db: Session, usuario: Usuario, id_colegio: int, fecha: date) -> PeriodoEnFecha:
+    """El periodo y si es lectiva una fecha en el calendario de un colegio. Supervisor:
+    cualquier colegio; Docente: los de su alcance de lectura (403 si no)."""
+    _colegio_existente(db, id_colegio)
+    if nombre_rol(db, usuario.id_rol) == DOCENTE and id_colegio not in {c for c, _ in pares_visibles(db, usuario)}:
+        raise _fuera_de_alcance()
+    calendario = cargar_calendarios(db, ids_colegio=[id_colegio]).calendario_en(id_colegio, fecha)
+    periodo = calendario.periodo_de(fecha) if calendario is not None else None
+    motivo = _motivo_no_lectivo(calendario, fecha)
+    datos = {} if periodo is None else {
+        "tipo": periodo.tipo, "numero": periodo.numero, "id_periodo_academico": periodo.id_periodo_academico,
+        "fecha_inicio": periodo.fecha_inicio, "fecha_fin": periodo.fecha_fin,
+    }
+    return PeriodoEnFecha(fecha=fecha, es_lectivo=motivo is None, motivo_no_lectivo=motivo, **datos)
 
 
 # ── Crear el general ────────────────────────────────────────────────────────────────

@@ -341,7 +341,7 @@ def test_cu019_detalle_de_la_actividad(client, entorno, doc, actividad):
     cuerpo = client.get(f"/actividades/{actividad['id']}", headers=doc).json()
 
     assert (cuerpo["estado"], cuerpo["tipo_cierre"], cuerpo["registros_pendientes"], cuerpo["cambios"]) == (
-        "finalizada", MANUAL, None, 1
+        "finalizada", MANUAL, 0, 1
     )
     assert cuerpo["cambios_por_modulo"] == [
         {"modulo": "alumnos", "total": 1, "creados": 0, "editados": 1, "activados": 0, "inactivados": 1}

@@ -98,3 +98,25 @@ class CalendarioRespuesta(BaseModel):
     # Periodo que contiene hoy (hora de Lima); null = "Sin periodo aplicable a la fecha actual".
     periodo_actual: Optional[PeriodoSalida] = None
     fecha_referencia: date
+
+
+class PeriodoEnFecha(BaseModel):
+    """Qué es una fecha en el calendario de un colegio (GET /calendarios/periodo)."""
+
+    fecha: date
+    # null fuera de todo periodo.
+    tipo: Optional[TipoPeriodo] = None
+    numero: Optional[int] = None
+    id_periodo_academico: Optional[int] = None
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+    es_lectivo: bool
+    # null si es lectivo; "fuera_de_periodo", "receso", "fin_de_semana" o el motivo del
+    # día no lectivo.
+    motivo_no_lectivo: Optional[str] = None
+
+
+class CalendarioDeColegio(CalendarioRespuesta):
+    """El calendario aplicable a un colegio en un año (GET /me/habilitaciones)."""
+
+    id_colegio: int

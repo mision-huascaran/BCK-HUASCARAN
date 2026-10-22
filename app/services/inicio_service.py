@@ -40,6 +40,8 @@ from app.services.calendario import (
 )
 from app.services.permiso_service import vigentes_del_docente
 from app.services.registros_vencidos import Clase, EstadoRegistros, estado_de_registros
+from app.services.salud_sistema import salud_sistema
+from app.services.sincronizacion import pendientes_del_usuario
 from app.services.usuario_service import DOCENTE
 
 MENSAJES_NO_PUEDE_INICIAR = {
@@ -61,7 +63,7 @@ SIN_SESION_SINCRONIZACION = timedelta(hours=72)
 
 def inicio_docente(db: Session, usuario: Usuario, sesion: Sesion) -> InicioDocente:
     cerrar_vencidas_y_confirmar(db, usuario.id_usuario)
-    asignaciones, totales = a_cargo(db, usuario.id_docente)
+    asignaciones, totales = a_cargo(db, usuario)
     activa = actividad_activa(db, usuario.id_docente)
     # El mismo criterio y orden que `iniciar_actividad`: el botón se habilita justo
     # cuando el inicio se aceptaría, y si no, el front muestra el mensaje del motivo.
@@ -75,6 +77,7 @@ def inicio_docente(db: Session, usuario: Usuario, sesion: Sesion) -> InicioDocen
         motivo_no_puede_iniciar=motivo,
         motivo_no_puede=MENSAJES_NO_PUEDE_INICIAR.get(motivo),
         permisos_vigentes=vigentes_del_docente(db, usuario),
+        registros_offline_pendientes=pendientes_del_usuario(db, usuario.id_usuario),
     )
 
 
@@ -325,4 +328,8 @@ def colegios_operando(db: Session) -> int:
 
 
 def inicio_directivo(db: Session) -> InicioDirectivo:
-    return InicioDirectivo(beneficiarios_activos=beneficiarios_activos(db), colegios_operando=colegios_operando(db))
+    return InicioDirectivo(
+        beneficiarios_activos=beneficiarios_activos(db),
+        colegios_operando=colegios_operando(db),
+        salud_sistema=salud_sistema(db),
+    )

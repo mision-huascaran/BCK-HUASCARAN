@@ -65,4 +65,9 @@ class Sesion(SQLModel, table=True):
     # null mientras la sesión está abierta.
     fin: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
     tipo_cierre: Optional[str] = Field(default=None, sa_type=Text)
+    # Última petición autenticada (se escribe a lo sumo una vez por minuto): cota inferior
+    # del cierre cuando el reloj del cliente no es confiable (CU008).
+    ultima_peticion_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+    # False si `fin` se estimó con `fin_minimo` en vez de una hora verificada.
+    fin_verificado: bool = Field(default=True, sa_column_kwargs={"server_default": text("true")})
 

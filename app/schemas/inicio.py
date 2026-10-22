@@ -1,8 +1,4 @@
-"""Pantalla de Inicio de cada rol (CU010, CU011, CU012).
-
-Los indicadores que dependen de la sincronización sin conexión (registros offline
-pendientes, salud del sistema) se devuelven en null hasta que exista.
-"""
+"""Pantalla de Inicio de cada rol (CU010, CU011, CU012)."""
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -30,7 +26,8 @@ class InicioDocente(BaseModel):
     # Permisos de corrección vigentes (CU028). Los grupos a los que solo llega por un
     # permiso no suman a `asignaciones` ni a `totales`.
     permisos_vigentes: list[PermisoVigente] = []
-    registros_offline_pendientes: Optional[int] = None
+    # Avisos de operaciones sin enviar que informó el Docente (POST /sincronizacion/pendientes).
+    registros_offline_pendientes: int = 0
 
 
 TipoAlerta = Literal["sincronizacion_olvidada", "inactividad_operativa", "incumplimiento_sede"]
@@ -62,4 +59,5 @@ class InicioDirectivo(BaseModel):
 
     beneficiarios_activos: int
     colegios_operando: int
-    salud_sistema: None = None
+    # % de registros sincronizados; null = "Sin datos disponibles".
+    salud_sistema: Optional[int] = None

@@ -17,8 +17,9 @@ from app.schemas.permiso import (
     PermisoItem,
     PermisoRevocar,
 )
-from app.services import permiso_service
-from app.services.usuario_service import SUPERVISOR
+from app.schemas.habilitacion import MisHabilitaciones
+from app.services import habilitaciones_offline, permiso_service
+from app.services.usuario_service import DOCENTE, SUPERVISOR
 
 router = APIRouter(tags=["permisos"])
 
@@ -70,3 +71,18 @@ def opciones_de_permiso(id_colegio: int, id_anio_escolar: int, db: Db, _: Superv
     """PA del colegio cuyo plazo ordinario ya terminó y grados que ofrece, para el modal.
     No se limita a las asignaciones del docente."""
     return permiso_service.opciones(db, id_colegio, id_anio_escolar)
+
+
+@router.get("/me/permisos", response_model=list[PermisoItem])
+def mis_permisos(db: Db, docente: Annotated[Usuario, Depends(require_role(DOCENTE))]):
+    """Permisos de corrección vigentes del Docente autenticado (misma forma que los ítems
+    de GET /usuarios/{id}/permisos), por fin de vigencia."""
+    return permiso_service.mis_permisos_vigentes(db, docente)
+
+
+@router.get("/me/habilitaciones", response_model=MisHabilitaciones)
+def mis_habilitaciones(db: Db, docente: Annotated[Usuario, Depends(require_role(DOCENTE))]):
+    """Lo que el front guarda para validar sin conexión: asignaciones de PA en curso o
+    futuros, retroactivas cuyo PR no terminó, permisos programados o vigentes y el
+    calendario de cada (colegio, año escolar) que aparece en ellos."""
+    return habilitaciones_offline.mis_habilitaciones(db, docente)

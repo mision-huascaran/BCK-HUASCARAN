@@ -1,6 +1,7 @@
 """Asignaciones docente-colegio-grado-periodo (solo lectura; se editan con PATCH /usuarios)."""
 from pydantic import BaseModel
 
+from app.schemas.comun import ItemCatalogo
 from app.schemas.usuario import GradoAsignado
 
 
@@ -23,10 +24,12 @@ class AsignacionItem(BaseModel):
 
 class GradoACargo(GradoAsignado):
     """Una asignación (colegio + grado) con lo que tiene en la práctica: sus alumnos
-    activos, los subprogramas de esos alumnos y sus ciclos (misma regla que Alumnos)."""
+    activos, los subprogramas de esos alumnos, sus ciclos (misma regla que Alumnos) y las
+    secciones activas del grado."""
 
     ciclos: list[str]
-    subprogramas: list[str]
+    subprogramas: list[ItemCatalogo]
+    secciones: list[ItemCatalogo]
     cantidad_alumnos: int
 
 

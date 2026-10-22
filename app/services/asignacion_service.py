@@ -38,11 +38,13 @@ from app.models.organizacion import (
     Grado,
     PeriodoAcademico,
     Programa,
+    Seccion,
+    Usuario,
 )
 from app.schemas.asignacion import AsignacionItem, GradoACargo, MiAsignacion, TotalesACargo
 from app.schemas.comun import ItemCatalogo
 from app.schemas.usuario import AsignacionDetalle, GradoAsignado, PeriodoAsignado
-from app.services.alcance import alcance_docente
+from app.services.habilitacion import pares_a_cargo
 from app.services.calendario import (
     CalendarioResuelto,
     PeriodoCalendario,
@@ -60,6 +62,10 @@ CAMPO_INICIO = "asignacion.inicio_asignacion"
 MENSAJE_SIN_PROXIMO = (
     "Este año escolar ya no tiene otro periodo académico. Para asignar al Docente al "
     "siguiente año, selecciona ese año escolar."
+)
+MENSAJE_INICIO_AMBIGUO = (
+    "Indica el periodo desde el que aplica el cambio o cómo empieza la asignación en el "
+    "receso, pero no ambos."
 )
 ULTIMO_PA = 4
 
@@ -204,10 +210,13 @@ def inicio_de(
 ) -> Inicio:
     """Desde qué PA del año aplica una asignación, según el calendario del colegio (CU016).
 
-    Con `id_periodo`, ese (del año y no terminado). Sin él: si hoy el colegio está en un
+    Con `id_periodo`, ese (del año y no terminado); con él y `inicio` a la vez, 422: no
+    hay prioridad silenciosa. Sin él: si hoy el colegio está en un
     PA, ese; si está en un PR, lo que diga `inicio` ("retroactivo" o "proximo"); si hoy
     no cae en ese año (p. ej. todavía no empezó), desde el primer PA no terminado.
     """
+    if id_periodo is not None and inicio is not None:
+        raise _no_procesable(MENSAJE_INICIO_AMBIGUO, "inicio_asignacion_ambiguo")
     if id_periodo is not None:
         return Inicio(periodo_de_inicio(anio, id_periodo))
     actual = anio.calendario.periodo_de(hoy_lima())
@@ -634,13 +643,13 @@ def listar_asignaciones(
 
 @dataclass
 class _Alumnado:
-    """Acumula alumnos activos, ciclos y subprogramas de un grupo de asignaciones."""
+    """Acumula alumnos activos, ciclos y subprogramas (id, nombre) de un grupo de asignaciones."""
 
     ciclos: set[str] = field(default_factory=set)
-    subprogramas: set[str] = field(default_factory=set)
+    subprogramas: set[tuple[int, str]] = field(default_factory=set)
     cantidad: int = 0
 
-    def sumar(self, ciclo: str, subprograma: str, cantidad: int) -> None:
+    def sumar(self, ciclo: str, subprograma: tuple[int, str], cantidad: int) -> None:
         self.ciclos.add(ciclo)
         self.subprogramas.add(subprograma)
         self.cantidad += cantidad
@@ -648,30 +657,40 @@ class _Alumnado:
     def campos(self) -> dict:
         return {
             "ciclos": ordenar_ciclos(self.ciclos),
-            "subprogramas": sorted(self.subprogramas),
+            "subprogramas": sorted({nombre for _, nombre in self.subprogramas}),
             "cantidad_alumnos": self.cantidad,
         }
 
+    def campos_de_grado(self) -> dict:
+        """Como `campos`, con los subprogramas como `{id, nombre}`."""
+        subprogramas = sorted(self.subprogramas, key=lambda s: s[1])
+        return {**self.campos(), "subprogramas": [ItemCatalogo(id=i, nombre=n) for i, n in subprogramas]}
 
-def a_cargo(db: Session, id_docente: Optional[int]) -> tuple[list[MiAsignacion], TotalesACargo]:
-    """Lo que el docente tiene a cargo en el periodo vigente (CU010): por colegio, por
-    asignación (colegio + grado) y en total.
 
-    Los subprogramas y ciclos se deducen de sus alumnos activos en esos colegio y grados
-    (diseño v3: el docente atiende ambos subprogramas). Tres consultas más el alcance.
-    """
-    alcance = alcance_docente(db, id_docente) if id_docente is not None else set()
-    total = _Alumnado()
-    if not alcance:
-        return [], TotalesACargo(**total.campos())
+def _secciones_activas(db: Session, alcance: set[tuple[int, int]]) -> dict[tuple[int, int], list[ItemCatalogo]]:
+    """{(colegio, grado): secciones activas}, en el orden en que se crearon."""
+    filas = db.exec(
+        select(Seccion)
+        .where(col(Seccion.activo).is_(True), or_(*(and_(Seccion.id_colegio == c, Seccion.id_grado == g) for c, g in alcance)))
+        .order_by(Seccion.id_seccion)
+    ).all()
+    por_grupo: dict[tuple[int, int], list[ItemCatalogo]] = defaultdict(list)
+    for seccion in filas:
+        por_grupo[(seccion.id_colegio, seccion.id_grado)].append(ItemCatalogo(id=seccion.id_seccion, nombre=seccion.nombre))
+    return por_grupo
 
-    ids_colegio = {c for c, _ in alcance}
-    ids_grado = {g for _, g in alcance}
-    colegios = {c.id_colegio: c for c in db.exec(select(Colegio).where(col(Colegio.id_colegio).in_(ids_colegio))).all()}
-    grados = {g.id_grado: g for g in db.exec(select(Grado).where(col(Grado.id_grado).in_(ids_grado))).all()}
 
+def _alumnado(db: Session, alcance: set[tuple[int, int]]) -> tuple[_Alumnado, dict, dict]:
+    """Alumnos activos de esos colegio y grados: en total, por colegio y por (colegio, grado)."""
     alumnos = db.exec(
-        select(Alumno.id_colegio, Alumno.id_grado, Programa.nombre, CicloEbr.nombre, func.count(Alumno.id_alumno))
+        select(
+            Alumno.id_colegio,
+            Alumno.id_grado,
+            Programa.id_programa,
+            Programa.nombre,
+            CicloEbr.nombre,
+            func.count(Alumno.id_alumno),
+        )
         .join(Programa, Programa.id_programa == Alumno.id_programa_actual)
         .join(Grado, Grado.id_grado == Alumno.id_grado)
         .join(CicloEbr, CicloEbr.id_ciclo == Grado.id_ciclo)
@@ -679,21 +698,48 @@ def a_cargo(db: Session, id_docente: Optional[int]) -> tuple[list[MiAsignacion],
             col(Alumno.activo).is_(True),
             or_(*(and_(Alumno.id_colegio == c, Alumno.id_grado == g) for c, g in alcance)),
         )
-        .group_by(Alumno.id_colegio, Alumno.id_grado, Programa.nombre, CicloEbr.nombre)
+        .group_by(Alumno.id_colegio, Alumno.id_grado, Programa.id_programa, Programa.nombre, CicloEbr.nombre)
     ).all()
+    total = _Alumnado()
     por_colegio: dict[int, _Alumnado] = defaultdict(_Alumnado)
     por_grado: dict[tuple[int, int], _Alumnado] = defaultdict(_Alumnado)
-    for id_colegio, id_grado, programa, ciclo_grado, cantidad in alumnos:
+    for id_colegio, id_grado, id_programa, programa, ciclo_grado, cantidad in alumnos:
         ciclo = calcular_ciclo(programa, ciclo_grado)
         for grupo in (total, por_colegio[id_colegio], por_grado[(id_colegio, id_grado)]):
-            grupo.sumar(ciclo, programa, cantidad)
+            grupo.sumar(ciclo, (id_programa, programa), cantidad)
+    return total, por_colegio, por_grado
+
+
+def a_cargo(db: Session, usuario: Usuario) -> tuple[list[MiAsignacion], TotalesACargo]:
+    """Lo que el docente tiene a cargo hoy (CU010): por colegio, por asignación (colegio +
+    grado) y en total. Cuentan sus asignaciones habilitadas: las del PA vigente de cada
+    colegio y las retroactivas durante su PR; no los grupos que solo ve por un permiso.
+
+    Los subprogramas y ciclos se deducen de sus alumnos activos en esos colegio y grados
+    (diseño v3: el docente atiende ambos subprogramas). Cuatro consultas más el alcance.
+    """
+    alcance = pares_a_cargo(db, usuario)
+    if not alcance:
+        return [], TotalesACargo(**_Alumnado().campos())
+
+    ids_colegio = {c for c, _ in alcance}
+    ids_grado = {g for _, g in alcance}
+    colegios = {c.id_colegio: c for c in db.exec(select(Colegio).where(col(Colegio.id_colegio).in_(ids_colegio))).all()}
+    grados = {g.id_grado: g for g in db.exec(select(Grado).where(col(Grado.id_grado).in_(ids_grado))).all()}
+    total, por_colegio, por_grado = _alumnado(db, alcance)
+    secciones = _secciones_activas(db, alcance)
 
     asignaciones = [
         MiAsignacion(
             id_colegio=id_colegio,
             colegio=colegios[id_colegio].nombre,
             grados=[
-                GradoACargo(id_grado=g, nombre=grados[g].nombre, **por_grado[(id_colegio, g)].campos())
+                GradoACargo(
+                    id_grado=g,
+                    nombre=grados[g].nombre,
+                    secciones=secciones[(id_colegio, g)],
+                    **por_grado[(id_colegio, g)].campos_de_grado(),
+                )
                 for g in sorted(g for c, g in alcance if c == id_colegio)
             ],
             **por_colegio[id_colegio].campos(),
@@ -703,6 +749,6 @@ def a_cargo(db: Session, id_docente: Optional[int]) -> tuple[list[MiAsignacion],
     return asignaciones, TotalesACargo(**total.campos())
 
 
-def mis_asignaciones(db: Session, id_docente: int) -> list[MiAsignacion]:
-    """Lo que el docente tiene a cargo en el periodo vigente, agrupado por colegio."""
-    return a_cargo(db, id_docente)[0]
+def mis_asignaciones(db: Session, usuario: Usuario) -> list[MiAsignacion]:
+    """Lo que el docente tiene a cargo hoy, agrupado por colegio."""
+    return a_cargo(db, usuario)[0]
