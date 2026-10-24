@@ -347,7 +347,7 @@ def test_sin_actividad(client, entorno, doc):
     [sin_actividad] = guardar(client, doc, item(entorno, fluidez=2)).json()
 
     assert (sin_actividad["motivo"], sin_actividad["detail"]) == (
-        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar las rúbricas.",
+        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar información.",
     )
 
 

@@ -283,7 +283,7 @@ def test_crear_sin_habilitacion_sin_actividad_y_roles(client, db, entorno, cabec
     directivo = crear(client, cabeceras["Directivo"], db, entorno)
 
     assert (sin_actividad.status_code, motivo(sin_actividad), sin_actividad.json()["detail"]) == (
-        422, "actividad_requerida", "Actividad no iniciada. Inicie su jornada para registrar información.",
+        422, "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar información.",
     )
     assert (supervisor.status_code, directivo.status_code) == (403, 403)
 
@@ -436,7 +436,7 @@ def test_fila_sin_actividad_y_roles(client, db, entorno, cabeceras, tabla, activ
     [sin_actividad] = guardar(client, doc, tabla["id"], fila(entorno, cantidad_lsl=1)).json()
 
     assert (sin_actividad["motivo"], sin_actividad["detail"]) == (
-        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar la lectura semanal.",
+        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar información.",
     )
     assert guardar(client, cabeceras["Supervisor"], tabla["id"], fila(entorno)).status_code == 403
     assert guardar(client, cabeceras["Directivo"], tabla["id"], fila(entorno)).status_code == 403
@@ -555,7 +555,7 @@ def test_no_realizada_sin_actividad(client, db, entorno, cabeceras, tabla, activ
     respuesta = marcar(client, doc, tabla["id"], motivo_="Paro")
 
     assert (respuesta.status_code, respuesta.json()["detail"]) == (
-        422, "Debes iniciar una actividad de trabajo para marcar la lectura semanal como no realizada.",
+        422, "Debes iniciar una actividad de trabajo para registrar o modificar información.",
     )
 
 

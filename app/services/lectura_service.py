@@ -72,6 +72,7 @@ from app.services.programacion import (
     fila_de_programada,
 )
 from app.services.sincronizacion import (
+    MENSAJE_ACTIVIDAD_REQUERIDA,
     OPERACION_AJENA,
     RECHAZADA,
     ContextoOperacion,
@@ -139,7 +140,7 @@ MENSAJE_FILA_CONCURRENTE = (
     "nuevamente."
 )
 MENSAJE_SIN_HABILITACION_CREAR = "No tienes una habilitación vigente para crear la tabla de lectura de esta semana."
-MENSAJE_SIN_ACTIVIDAD_CREAR = "Actividad no iniciada. Inicie su jornada para registrar información."
+MENSAJE_SIN_ACTIVIDAD_CREAR = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SIN_ASISTENCIA = (
     "El estudiante debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
 )
@@ -149,7 +150,7 @@ MENSAJE_ALUMNO_FUERA = "El estudiante no corresponde a la clase de referencia de
 MENSAJE_SIN_HABILITACION_FILAS = (
     "No tienes una habilitación vigente para registrar o corregir la lectura de esta semana."
 )
-MENSAJE_SIN_ACTIVIDAD_FILAS = "Debes iniciar una actividad de trabajo para registrar o modificar la lectura semanal."
+MENSAJE_SIN_ACTIVIDAD_FILAS = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_NO_REALIZADA = "La lectura semanal de esta tabla fue marcada como no realizada."
 MENSAJE_MOTIVO_OBLIGATORIO = (
     "Es obligatorio registrar una justificación para indicar por qué no se realizó la lectura semanal."
@@ -161,9 +162,7 @@ MENSAJE_NO_REALIZADA_CON_DATOS = (
 MENSAJE_SIN_HABILITACION_NO_REALIZADA = (
     "No tienes una habilitación vigente para marcar la lectura semanal como no realizada en la semana seleccionada."
 )
-MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA = (
-    "Debes iniciar una actividad de trabajo para marcar la lectura semanal como no realizada."
-)
+MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta la lectura semanal en solo lectura."
 
 MENSAJES_ESCRITURA = MensajesEscritura(MENSAJE_SOLO_LECTURA, MENSAJE_SIN_HABILITACION_FILAS, MENSAJE_SIN_ACTIVIDAD_FILAS)

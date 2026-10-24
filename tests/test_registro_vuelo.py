@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import select
 
 from app.models.evaluacion import NivelRubrica, RegistroVuelo, RubricaMensual
-from app.models.organizacion import AlumnoPertenencia
+from app.models.organizacion import AlumnoPertenencia, AnioEscolar, PeriodoAcademico
 from app.models.trazabilidad import Auditoria
 from app.services import cambios, registro_vuelo
 from app.services.calendario import pa_actual_de_colegios
@@ -31,6 +31,7 @@ CL, ALFA = "Comprensión Lectora", "Alfabetización"
 # ids de nivel_razkids (el id es el orden): aa=1, A=2, C=4, E=6, F=7, G=8, Z=27.
 AA, A, C, D, E, F, G, Z = 1, 2, 4, 5, 6, 7, 8, 27
 SIN_AUTORIZACION = "No tienes autorización vigente para registrar o modificar este periodo."
+TEXTO_TRASLADO = "Proviene del nivel colocado en el periodo anterior. Registrado antes del traslado."
 
 
 @pytest.fixture(autouse=True)
@@ -110,9 +111,9 @@ def test_listado_periodos_estados_y_escritura_por_pa(client, entorno, doc, activ
     assert (ana["nombre"], ana["avance_anual"], ana["inactivo"], cuerpo["aviso"]) == ("Ana Torres", 0, False, None)
     pa1, pa2 = ana["periodos"][:2]
     assert pa1["entrada"] == {"nivel": {"id": C, "letra": "C"}, "origen": "grado",
-                              "texto": "Nivel inicial según el grado del alumno."}
+                              "texto": "Nivel inicial según el grado del alumno.", "de_otro_colegio": False}
     assert pa2["entrada"] == {"nivel": None, "origen": "pendiente_periodo_anterior",
-                              "texto": "Pendiente del periodo anterior"}
+                              "texto": "Pendiente del periodo anterior", "de_otro_colegio": False}
     assert (pa2["sugerencia"]["texto"], pa2["nivel_colocado"], pa2["incompleto"]) == ("Pendiente de evaluar", None, True)
 
 
@@ -133,8 +134,8 @@ def test_entrada_del_pa1_por_grado(client, db, entorno, cabeceras, grado, letra)
 
 
 def test_herencia_del_pa_anterior_y_v1_con_cambio_de_colegio(client, db, entorno, cabeceras):
-    """La entrada del PA2 es la decisión del PA1 aunque haya sido en otro colegio; si hay
-    dos en el PA1, la más reciente."""
+    """La entrada del PA2 es la decisión del PA1 aunque haya sido en otro colegio (con el
+    aviso del traslado); si hay dos en el PA1, la más reciente."""
     ana, segundo = entorno.alumnos["ana"], entorno.grados["2.º"]
     lejano = entorno.colegios["Lejano"]
     decision_de_vuelo(db, ana, entorno.periodos["pasado"], D, fecha=a_las(date(2026, 3, 2)))
@@ -144,7 +145,77 @@ def test_herencia_del_pa_anterior_y_v1_con_cambio_de_colegio(client, db, entorno
     pa2 = periodo_de_ana(client, cabeceras["Supervisor"], entorno, 2)
 
     assert pa2["entrada"] == {"nivel": {"id": E, "letra": "E"}, "origen": "periodo_anterior",
-                              "texto": "Proviene del nivel colocado en el periodo anterior."}
+                              "texto": TEXTO_TRASLADO, "de_otro_colegio": True}
+
+
+def _decision_en_lejano(db, entorno, nivel=F):
+    """Decisión de Ana en el PA1 en el Colegio Lejano, antes de trasladarse al Andino."""
+    lejano, segundo = entorno.colegios["Lejano"], entorno.grados["2.º"]
+    return decision_de_vuelo(db, entorno.alumnos["ana"], entorno.periodos["pasado"], nivel,
+                             id_colegio=lejano.id_colegio, id_seccion=seccion_de(db, lejano, segundo).id_seccion)
+
+
+def test_traslado_hereda_la_entrada_con_aviso(client, db, entorno, cabeceras):
+    _decision_en_lejano(db, entorno)
+
+    entrada = periodo_de_ana(client, cabeceras["Supervisor"], entorno, 2)["entrada"]
+
+    assert entrada == {"nivel": {"id": F, "letra": "F"}, "origen": "periodo_anterior", "texto": TEXTO_TRASLADO,
+                       "de_otro_colegio": True}
+
+
+def test_mismo_colegio_no_es_traslado(client, db, entorno, cabeceras):
+    decision_de_vuelo(db, entorno.alumnos["ana"], entorno.periodos["pasado"], F)
+
+    entrada = periodo_de_ana(client, cabeceras["Supervisor"], entorno, 2)["entrada"]
+
+    assert (entrada["nivel"]["letra"], entrada["de_otro_colegio"]) == ("F", False)
+    assert entrada["texto"] == "Proviene del nivel colocado en el periodo anterior."
+
+
+def test_otro_anio_escolar_no_hereda(client, db, entorno, cabeceras):
+    otro = AnioEscolar(nombre="Otro", fecha_inicio=date(2025, 3, 1), fecha_fin=date(2025, 12, 20),
+                       creado_por=1, creado_en=a_las(HOY))
+    db.add(otro)
+    db.flush()
+    pa_otro = PeriodoAcademico(id_anio_escolar=otro.id_anio_escolar, numero=1, creado_por=1, creado_en=a_las(HOY))
+    db.add(pa_otro)
+    db.commit()
+    decision_de_vuelo(db, entorno.alumnos["ana"], pa_otro, F)
+
+    pa1, pa2 = periodo_de_ana(client, cabeceras["Supervisor"], entorno, 1), periodo_de_ana(
+        client, cabeceras["Supervisor"], entorno, 2)
+
+    assert pa1["entrada"]["origen"] == "grado"
+    assert (pa2["entrada"]["nivel"], pa2["entrada"]["origen"]) == (None, "pendiente_periodo_anterior")
+
+
+def test_guardar_en_pa2_conserva_el_registro_de_entrada_de_otro_colegio(client, db, entorno, doc, actividad):
+    anterior = _decision_en_lejano(db, entorno)
+
+    [resultado] = guardar(client, doc, item(entorno, id_nivel_colocado=G)).json()
+
+    assert resultado["estado"] == "aceptada", resultado
+    assert resultado["registro"]["entrada"]["de_otro_colegio"] is True
+    fila = db.exec(select(RegistroVuelo).where(RegistroVuelo.id_periodo_academico ==
+                                               entorno.periodos["vigente"].id_periodo_academico)).one()
+    assert (fila.id_registro_entrada, fila.id_nivel_entrada_al_decidir) == (anterior.id, F)
+
+
+def test_el_docente_del_nuevo_colegio_no_edita_la_decision_original(client, db, entorno, doc, actividad):
+    anterior = _decision_en_lejano(db, entorno)
+    del_lejano = {"id_colegio": anterior.id_colegio, "id_grado": anterior.id_grado,
+                  "id_seccion": anterior.id_seccion, "id_programa": anterior.id_programa}
+
+    respuesta = guardar(client, doc, item(entorno, periodo="pasado", id_nivel_colocado=G, **del_lejano))
+    consulta = client.get("/registro-vuelo", params={**del_lejano, "id_anio_escolar": entorno.anio.id_anio_escolar},
+                          headers=doc)
+
+    [resultado] = respuesta.json()
+    assert (resultado["estado"], resultado["motivo"]) == ("rechazada", "aula_fuera_de_alcance")
+    assert (consulta.status_code, motivo(consulta)) == (403, "aula_fuera_de_alcance")
+    db.expire_all()
+    assert db.get(RegistroVuelo, anterior.id).id_nivel_colocado == F
 
 
 def test_sugerencia_con_y_sin_rubrica_completa(client, db, entorno, cabeceras):
@@ -234,7 +305,7 @@ def test_roles_y_alcance(client, entorno, cabeceras):
 # ── PUT ─────────────────────────────────────────────────────────────────────────────
 
 def test_guardar_registra_la_decision_con_su_contexto(client, db, entorno, doc, actividad):
-    decision_de_vuelo(db, entorno.alumnos["ana"], entorno.periodos["pasado"], E)
+    anterior = decision_de_vuelo(db, entorno.alumnos["ana"], entorno.periodos["pasado"], E)
     referencia = rubrica(db, entorno, "ana", "vigente", 6, 3, 3)
 
     [resultado] = guardar(client, doc, item(entorno, id_nivel_colocado=F, id_nivel_proyeccion=G,
@@ -251,6 +322,7 @@ def test_guardar_registra_la_decision_con_su_contexto(client, db, entorno, doc, 
     assert (fila.id_rubrica_referencia, fila.rubrica_version, fila.resultado_decimas, fila.id_nivel_entrada_al_decidir) == (
         referencia.id, 1, 30, E,
     )
+    assert fila.id_registro_entrada == anterior.id
     assert fila.id_actividad == uuid.UUID(actividad["id"])
     assert cambios.cambios_por_actividad(db, [fila.id_actividad])[fila.id_actividad] == {"registro_vuelo": 1}
 
@@ -347,7 +419,7 @@ def test_sin_actividad(client, entorno, doc):
     [sin_actividad] = guardar(client, doc, item(entorno, id_nivel_colocado=C)).json()
 
     assert (sin_actividad["motivo"], sin_actividad["detail"]) == (
-        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar el Registro de Vuelo.",
+        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar información.",
     )
 
 

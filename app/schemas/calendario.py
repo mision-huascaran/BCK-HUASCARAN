@@ -24,7 +24,7 @@ class PeriodoEntrada(BaseModel):
 
 
 class DiaNoLectivoEntrada(BaseModel):
-    """Feriado o suspensión: dentro de un PA y sin superponerse con otro."""
+    """Feriado o suspensión: dentro de los periodos (PA o PR) y sin superponerse con otro."""
 
     motivo: Texto
     fecha_inicio: date

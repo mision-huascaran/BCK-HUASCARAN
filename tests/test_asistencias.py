@@ -195,7 +195,7 @@ def test_escritura_con_asignacion_y_actividad(client, db, entorno, doc):
     con_actividad = consultar(client, doc, db, entorno, LUNES).json()["escritura"]
 
     assert (sin_actividad["permitida"], sin_actividad["motivo"]) == (
-        False, "Inicia una actividad de trabajo para registrar asistencias.")
+        False, "Debes iniciar una actividad de trabajo para registrar o modificar información.")
     assert con_actividad == {"permitida": True, "motivo": None, "id_permiso": None, "aviso_permiso": None}
 
 

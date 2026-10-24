@@ -53,6 +53,7 @@ from app.services.programacion import (
     fila_de_programada,
 )
 from app.services.sincronizacion import (
+    MENSAJE_ACTIVIDAD_REQUERIDA,
     ContextoOperacion,
     Operacion,
     OperacionDescartada,
@@ -81,7 +82,7 @@ AVISO_TRASLADADA = (
 MENSAJE_SIN_HABILITACION = (
     "No tienes una habilitación vigente para registrar o corregir asistencias en la fecha seleccionada."
 )
-MENSAJE_ACTIVIDAD = "Inicia una actividad de trabajo para registrar asistencias."
+MENSAJE_ACTIVIDAD = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta las asistencias en solo lectura."
 MENSAJE_FUERA_DE_LA_CLASE = "El alumno no está en la lista de esta clase."
 MENSAJE_SIN_CLASE = "No hay una clase programada para esta fecha. Para registrarla, márcala como clase adicional."

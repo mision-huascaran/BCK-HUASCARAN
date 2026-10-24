@@ -447,13 +447,24 @@ def test_cargar_calendario_real_del_repositorio(con_original):
 # ── cargar-feriados ─────────────────────────────────────────────────────────────────
 
 # PA3 del 22/07 al 2/08 (feriados el martes 23 y el lunes 29) y PA4 del 26 al 30/08
-# (Santa Rosa, el viernes 30). El 6/08 cae en el PR3 y los de octubre en adelante, en el PR4.
+# (Santa Rosa, el viernes 30). Los de abril a junio caen en el PR2, el 6/08 en el PR3 y
+# los de octubre a diciembre en el PR4 (hasta el 20/12): también se cargan. El 1/01 y el
+# 25/12 quedan fuera de los periodos.
 PAS_CON_FERIADOS = [
     {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15"},
     {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05"},
     {"numero": 3, "fecha_inicio": "2030-07-22", "fecha_fin": "2030-08-02"},
     {"numero": 4, "fecha_inicio": "2030-08-26", "fecha_fin": "2030-08-30"},
 ]
+
+
+FERIADOS_EN_PERIODOS = {
+    date(2030, 4, 18), date(2030, 4, 19), date(2030, 5, 1), date(2030, 6, 7),  # PR2
+    date(2030, 7, 23), date(2030, 7, 29),  # PA3
+    date(2030, 8, 6),  # PR3
+    date(2030, 8, 30),  # PA4
+    date(2030, 10, 8), date(2030, 11, 1), date(2030, 12, 9),  # PR4
+}
 
 
 def no_lectivos(db) -> dict[date, DiaNoLectivo]:
@@ -469,7 +480,7 @@ def test_feriados_de_lunes_a_viernes_en_espanol():
     assert feriados_entre_semana(set()) == {}
 
 
-def test_cargar_feriados_en_el_general_solo_dentro_de_un_pa(con_original, tmp_path):
+def test_cargar_feriados_en_el_general_dentro_de_un_pa_o_un_pr(con_original, tmp_path):
     db = con_original
     assert cargar_feriados(db).omitidos == ["feriados: no hay ningún calendario general en la BD"]
     cargar_calendario(db, escribir(tmp_path, calendario(PAS_CON_FERIADOS)))
@@ -478,14 +489,15 @@ def test_cargar_feriados_en_el_general_solo_dentro_de_un_pa(con_original, tmp_pa
 
     resumen = cargar_feriados(db)
 
-    assert resumen.creados["dia_no_lectivo"] == 2
+    assert resumen.creados["dia_no_lectivo"] == len(FERIADOS_EN_PERIODOS) - 1
     assert resumen.advertencias == [
         "dia_no_lectivo 2030-07-29 (calendario general 1): ya existe con motivo 'Otro nombre' (la librería dice "
         "'Feriado nacional: Día de la Gran Parada Militar'). No se modifica."
     ]
     dias = no_lectivos(db)
-    assert set(dias) == {date(2030, 7, 23), date(2030, 7, 29), date(2030, 8, 30)}
+    assert set(dias) == FERIADOS_EN_PERIODOS
     assert (dias[date(2030, 8, 30)].origen, dias[date(2030, 8, 30)].fecha_fin) == ("automatico", date(2030, 8, 30))
+    assert dias[date(2030, 8, 6)].origen == "automatico"  # en el PR3
     assert releer(db, Calendario, general.id_calendario).version == 2
     assert sum(cargar_feriados(db).creados.values()) == 0
     assert releer(db, Calendario, general.id_calendario).version == 2
@@ -504,7 +516,7 @@ def test_cargar_feriados_no_vuelve_no_lectiva_una_fecha_con_asistencias(con_orig
 
     resumen = cargar_feriados(db)
 
-    assert set(no_lectivos(db)) == {date(2030, 7, 23), date(2030, 7, 29)}
+    assert set(no_lectivos(db)) == FERIADOS_EN_PERIODOS - {date(2030, 8, 30)}
     assert any("2030-08-30" in a and "asistencias" in a for a in resumen.advertencias)
 
 

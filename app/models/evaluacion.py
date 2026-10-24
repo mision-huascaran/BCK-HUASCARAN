@@ -408,6 +408,9 @@ class RegistroVuelo(SQLModel, table=True):
     id_nivel_proyeccion: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)
     observacion: Optional[str] = Field(default=None, sa_type=Text)
     id_rubrica_referencia: Optional[int] = Field(default=None, foreign_key="rubrica_mensual.id")
+    # La decisión del PA anterior que dio la entrada al decidir (null en PA1 o si estaba
+    # pendiente); puede ser de otro colegio (traslado).
+    id_registro_entrada: Optional[int] = Field(default=None, foreign_key="registro_vuelo.id", ondelete="SET NULL")
     rubrica_version: Optional[int] = None
     resultado_decimas: Optional[int] = None
     id_nivel_entrada_al_decidir: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)

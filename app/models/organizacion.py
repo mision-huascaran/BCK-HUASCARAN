@@ -443,7 +443,7 @@ class CalendarioPeriodo(SQLModel, table=True):
 
 
 class DiaNoLectivo(SQLModel, table=True):
-    """Feriado o suspensión de un calendario (CU027): rango inclusivo dentro de un PA, sin
+    """Feriado o suspensión de un calendario (CU027): rango inclusivo dentro de los periodos (PA o PR), sin
     superponerse con otro del mismo calendario (validado en el servicio). Reemplaza a
     `dia_no_laborable`, que era global."""
 

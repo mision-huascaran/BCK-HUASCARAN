@@ -28,8 +28,11 @@ class Entrada(BaseModel):
     # null = "Pendiente del periodo anterior".
     nivel: Optional[Letra] = None
     origen: OrigenEntrada
-    # Ayuda o texto para mostrar.
+    # Ayuda o texto para mostrar (con " Registrado antes del traslado." si viene de otro colegio).
     texto: str
+    # La decisión que da la entrada se registró en otro colegio (traslado). Solo se expone
+    # la letra: ver el antecedente no da acceso a esa decisión.
+    de_otro_colegio: bool = False
 
 
 class RubricaReferencia(BaseModel):

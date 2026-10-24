@@ -45,7 +45,13 @@ from app.services.motor_sugerencias import COMPRENSION, FLUIDEZ, resultado_decim
 from app.services.pertenencia import alumnos_del_grupo_en_rango
 from app.services.programacion import FiltroGrupos
 from app.services.reglas_provisionales import regla_grupo_del_mes, regla_mes_a_pa
-from app.services.sincronizacion import ContextoOperacion, Operacion, RechazoOperacion, procesar_operacion
+from app.services.sincronizacion import (
+    MENSAJE_ACTIVIDAD_REQUERIDA,
+    ContextoOperacion,
+    Operacion,
+    RechazoOperacion,
+    procesar_operacion,
+)
 
 MODULO = "rubrica"
 TABLA = "rubrica_mensual"
@@ -63,7 +69,7 @@ MENSAJE_VALOR_NO_PERMITIDO = "Selecciona una valoración permitida para esta dim
 MENSAJE_SIN_HABILITACION = (
     "No tienes una habilitación vigente para registrar o modificar las rúbricas del grupo y mes seleccionados."
 )
-MENSAJE_SIN_ACTIVIDAD = "Debes iniciar una actividad de trabajo para registrar o modificar las rúbricas."
+MENSAJE_SIN_ACTIVIDAD = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_CONCURRENTE = (
     "Esta evaluación fue modificada desde que la consultaste. Revisa la versión actual antes de guardar nuevamente."
 )

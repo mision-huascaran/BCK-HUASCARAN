@@ -2,7 +2,8 @@
 GENERAL de cada año escolar (CU027), con origen 'automatico'.
 
 - Solo los que caen de lunes a viernes (sábados y domingos ya no son lectivos) y dentro
-  de un PA del general: un feriado en un receso no se carga.
+  de un periodo (PA o PR) del general, incluido el PR4 aunque pase al año siguiente. Uno
+  en un PR no amplía el plazo de regularización.
 - No duplica: si la fecha ya está cubierta por un día no lectivo del calendario, no se
   inserta (si es el mismo día con otro motivo, queda un WARNING).
 - No vuelve no lectiva una fecha con asistencias de un colegio que usa el general
@@ -64,7 +65,7 @@ def _fechas_con_asistencias(db: Session, calendarios: Calendarios, general: Cale
 def _omision(general: CalendarioResuelto, fecha: date, motivo: str, con_asistencias: set[date]) -> Optional[str]:
     """Por qué no se carga el feriado ("" = se omite sin aviso), o None si se carga."""
     periodo = general.periodo_de(fecha)
-    if periodo is None or not periodo.es_pa:
+    if periodo is None:
         return ""
     existente = general.no_lectivo_de(fecha)
     if existente is not None:

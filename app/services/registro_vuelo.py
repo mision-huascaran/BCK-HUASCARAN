@@ -69,7 +69,13 @@ from app.services.nivel_descriptivo import EscalaDescriptiva
 from app.services.pertenencia import alumnos_del_grupo_en_rango
 from app.services.programacion import FiltroGrupos
 from app.services.reglas_provisionales import regla_decision_vigente
-from app.services.sincronizacion import ContextoOperacion, Operacion, RechazoOperacion, procesar_operacion
+from app.services.sincronizacion import (
+    MENSAJE_ACTIVIDAD_REQUERIDA,
+    ContextoOperacion,
+    Operacion,
+    RechazoOperacion,
+    procesar_operacion,
+)
 from app.services.usuario_service import DOCENTE, nombre_rol
 
 MODULO = "registro_vuelo"
@@ -82,12 +88,13 @@ AVANCE_POR_PERIODO = 25
 
 AYUDA_GRADO = "Nivel inicial según el grado del alumno."
 AYUDA_ANTERIOR = "Proviene del nivel colocado en el periodo anterior."
+AYUDA_TRASLADO = "Registrado antes del traslado."
 TEXTO_PENDIENTE_ANTERIOR = "Pendiente del periodo anterior"
 AVISO_ENTRADA_CAMBIADA = (
     "El nivel de entrada cambió por una corrección del periodo anterior. Revisa la decisión de este periodo."
 )
 MENSAJE_SIN_HABILITACION = "No tienes autorización vigente para registrar o modificar este periodo."
-MENSAJE_SIN_ACTIVIDAD = "Debes iniciar una actividad de trabajo para registrar o modificar el Registro de Vuelo."
+MENSAJE_SIN_ACTIVIDAD = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta el Registro de Vuelo en solo lectura."
 MENSAJE_PERIODO_FUTURO = "No se puede registrar un periodo académico que todavía no empieza."
 MENSAJE_CONCURRENTE = (
@@ -214,18 +221,28 @@ def colocado_del_periodo(registros: list[RegistroVuelo], id_periodo: int) -> Opt
     return decision.id_nivel_colocado if decision else None
 
 
-def entrada_de(datos: DatosVuelo, id_alumno: int, periodo: PeriodoAcademico, id_grado: int) -> tuple[Optional[int], str]:
-    """(id del nivel de entrada o None, origen)."""
+def decision_de_entrada(datos: DatosVuelo, id_alumno: int, periodo: PeriodoAcademico) -> Optional[RegistroVuelo]:
+    """La decisión del PA inmediatamente anterior del mismo año que da la entrada (V1), en
+    cualquier grupo o colegio; None en el PA1 o si está pendiente. `datos` solo tiene los
+    registros y PA del año consultado."""
     anterior = datos.anterior(periodo)
     if anterior is None:
+        return None
+    return decision_del_periodo(datos.registros.get(id_alumno, []), anterior.id_periodo_academico)
+
+
+def entrada_de(datos: DatosVuelo, id_alumno: int, periodo: PeriodoAcademico, id_grado: int) -> tuple[Optional[int], str]:
+    """(id del nivel de entrada o None, origen)."""
+    if datos.anterior(periodo) is None:
         return datos.entrada_por_grado.get(id_grado), ORIGEN_GRADO
-    heredado = colocado_del_periodo(datos.registros.get(id_alumno, []), anterior.id_periodo_academico)
-    return (heredado, ORIGEN_ANTERIOR) if heredado is not None else (None, ORIGEN_PENDIENTE)
+    decision = decision_de_entrada(datos, id_alumno, periodo)
+    return (decision.id_nivel_colocado, ORIGEN_ANTERIOR) if decision is not None else (None, ORIGEN_PENDIENTE)
 
 
-def _entrada(datos: DatosVuelo, id_nivel: Optional[int], origen: str) -> Entrada:
+def _entrada(datos: DatosVuelo, id_nivel: Optional[int], origen: str, de_otro_colegio: bool = False) -> Entrada:
     textos = {ORIGEN_GRADO: AYUDA_GRADO, ORIGEN_ANTERIOR: AYUDA_ANTERIOR, ORIGEN_PENDIENTE: TEXTO_PENDIENTE_ANTERIOR}
-    return Entrada(nivel=datos.letra(id_nivel), origen=origen, texto=textos[origen])
+    texto = f"{textos[origen]} {AYUDA_TRASLADO}" if de_otro_colegio else textos[origen]
+    return Entrada(nivel=datos.letra(id_nivel), origen=origen, texto=texto, de_otro_colegio=de_otro_colegio)
 
 
 def _mover(datos: DatosVuelo, id_nivel: int, accion: Optional[str]) -> Optional[Letra]:
@@ -284,13 +301,15 @@ def resolver_periodo(datos: DatosVuelo, contexto: Contexto, id_alumno: int, peri
     """La fila del alumno en el PA y el grupo, con lo calculado."""
     fila = _fila_del_contexto(datos, contexto, id_alumno, periodo.id_periodo_academico)
     id_entrada, origen = entrada_de(datos, id_alumno, periodo, contexto.id_grado)
+    origen_entrada = decision_de_entrada(datos, id_alumno, periodo)
+    de_otro_colegio = origen_entrada is not None and origen_entrada.id_colegio != contexto.id_colegio
     colocado = fila.id_nivel_colocado if fila else None
     cambio = colocado is not None and fila.id_nivel_entrada_al_decidir != id_entrada
     escala = datos.escalas.get(contexto.id_grado, EscalaDescriptiva(()))
     return PeriodoAlumno(
         numero=periodo.numero, id_periodo_academico=periodo.id_periodo_academico,
         id_registro=fila.id if fila else None, version=fila.version if fila else None,
-        entrada=_entrada(datos, id_entrada, origen),
+        entrada=_entrada(datos, id_entrada, origen, de_otro_colegio),
         sugerencia=sugerencia_de(datos, id_alumno, periodo.id_periodo_academico, id_entrada),
         nivel_colocado=datos.letra(colocado), nivel_programa=escala.nivel(colocado),
         proyeccion=datos.letra(fila.id_nivel_proyeccion if fila else None),
@@ -461,10 +480,12 @@ def _cambios_de(fila: Optional[RegistroVuelo], item: RegistroVueloGuardar) -> di
 def _decision(datos: DatosVuelo, id_alumno: int, periodo: PeriodoAcademico, id_grado: int) -> dict[str, Any]:
     """Con qué se decide el nivel colocado: la entrada vigente y la rúbrica de la sugerencia."""
     id_entrada, _ = entrada_de(datos, id_alumno, periodo, id_grado)
+    origen_entrada = decision_de_entrada(datos, id_alumno, periodo)
     rubrica = datos.rubricas.get((id_alumno, periodo.id_periodo_academico))
     sugerida = sugerencia_de(datos, id_alumno, periodo.id_periodo_academico, id_entrada)
     return {
         "id_nivel_entrada_al_decidir": id_entrada,
+        "id_registro_entrada": origen_entrada.id if origen_entrada else None,
         "id_rubrica_referencia": rubrica.id if rubrica else None,
         "rubrica_version": rubrica.version if rubrica else None,
         "resultado_decimas": sugerida.resultado_decimas,

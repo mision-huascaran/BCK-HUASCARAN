@@ -63,7 +63,9 @@ ACTIVIDAD_REQUERIDA = "actividad_requerida"
 REALIZADO_EN_FUTURO = "realizado_en_futuro"
 OPERACION_AJENA = "operacion_ajena"
 MENSAJE_FUERA_DE_ACTIVIDAD = "La operación se realizó fuera de una actividad de trabajo del docente."
-MENSAJE_ACTIVIDAD_REQUERIDA = "Inicia una actividad de trabajo para registrar información."
+# Mensaje único de actividad no iniciada en los módulos operativos (Asistencias, Lectura
+# semanal, Rúbrica mensual, Registro de Vuelo). Alumnos (CU014) conserva el suyo.
+MENSAJE_ACTIVIDAD_REQUERIDA = "Debes iniciar una actividad de trabajo para registrar o modificar información."
 MENSAJE_REALIZADO_EN_FUTURO = "La hora de la operación es posterior a la hora actual."
 MENSAJE_OPERACION_AJENA = "El identificador de la operación ya fue usado."
 MENSAJE_OPERACION_NO_ENCONTRADA = "La operación no existe."

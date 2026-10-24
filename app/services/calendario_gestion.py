@@ -6,7 +6,10 @@ Reglas (todas validadas aquí, además de lo que impone la BD):
   superponerse y con inicio <= fin (fechas inclusivas).
 - El PR4 no puede chocar con el PA1 del año escolar siguiente del mismo colegio (ni el
   PA1 con el PR4 del año anterior).
-- Días no lectivos: motivo no vacío, dentro de un PA y sin superponerse entre sí.
+- Días no lectivos: motivo no vacío, con todas sus fechas dentro de los periodos (PA o
+  PR, incluido el PR4 aunque pase al año calendario siguiente) y sin superponerse entre
+  sí. No dividen periodos ni cambian fechas; uno dentro de un PA no lo vuelve receso, y
+  uno dentro de un PR no amplía el plazo de regularización (que usa el `fecha_fin` del PR).
 - Ningún cambio puede dejar una fecha con asistencias como no lectiva, fuera de su PA o
   en otro PA (409 `calendario_incompatible`). En el general se evalúan todos los colegios
   que lo usan; en un particular, solo su colegio. Todo o nada.
@@ -183,10 +186,19 @@ def errores_de_periodos(periodos: list[PeriodoEntrada]) -> Errores:
     return errores
 
 
-def _dentro_de_un_pa(dia: DiaNoLectivoEntrada, periodos: list[PeriodoEntrada]) -> bool:
-    return any(
-        p.tipo == TIPO_PA and p.fecha_inicio <= dia.fecha_inicio and dia.fecha_fin <= p.fecha_fin for p in periodos
-    )
+FUERA_DE_LOS_PERIODOS = "Debe estar comprendido dentro de los periodos (PA o PR) del calendario."
+
+
+def _dentro_de_los_periodos(dia: DiaNoLectivoEntrada, periodos: list[PeriodoEntrada]) -> bool:
+    """Si todas las fechas del día no lectivo caen en algún periodo (PA o PR): puede
+    abarcar periodos contiguos, no un hueco entre ellos."""
+    cursor = dia.fecha_inicio
+    while cursor <= dia.fecha_fin:
+        periodo = next((p for p in periodos if p.fecha_inicio <= cursor <= p.fecha_fin), None)
+        if periodo is None:
+            return False
+        cursor = periodo.fecha_fin + timedelta(days=1)
+    return True
 
 
 def _superposiciones(dias: list[DiaNoLectivoEntrada]) -> Errores:
@@ -206,7 +218,7 @@ def _superposiciones(dias: list[DiaNoLectivoEntrada]) -> Errores:
 
 
 def errores_de_no_lectivos(dias: list[DiaNoLectivoEntrada], periodos: list[PeriodoEntrada]) -> Errores:
-    """Cada día no lectivo con inicio <= fin, dentro de un PA y sin superponerse."""
+    """Cada día no lectivo con inicio <= fin, dentro de los periodos y sin superponerse."""
     errores: Errores = []
     validos = []
     for i, dia in enumerate(dias):
@@ -214,8 +226,8 @@ def errores_de_no_lectivos(dias: list[DiaNoLectivoEntrada], periodos: list[Perio
             errores.append((f"dias_no_lectivos.{i}.fecha_fin", FIN_ANTES_DE_INICIO))
             continue
         validos.append(dia)
-        if not _dentro_de_un_pa(dia, periodos):
-            errores.append((f"dias_no_lectivos.{i}", "Debe estar comprendido dentro de un PA del calendario."))
+        if not _dentro_de_los_periodos(dia, periodos):
+            errores.append((f"dias_no_lectivos.{i}", FUERA_DE_LOS_PERIODOS))
     return errores + (_superposiciones(dias) if len(validos) == len(dias) else [])
 
 
@@ -835,19 +847,19 @@ def _particular_existente() -> ErrorNegocio:
 
 
 def _dias_del_general(general: CalendarioResuelto, periodos: list[PeriodoEntrada]) -> list[DiaNoLectivoEntrada]:
-    """Días no lectivos del general que caen dentro de un PA de las fechas particulares
-    (los demás no tendrían dónde vivir en ese calendario)."""
+    """Días no lectivos del general que caen dentro de los periodos de las fechas
+    particulares (los demás no tendrían dónde vivir en ese calendario)."""
     dias = [
         DiaNoLectivoEntrada(motivo=r.motivo, fecha_inicio=r.fecha_inicio, fecha_fin=r.fecha_fin)
         for r in general.no_lectivos
     ]
-    return [d for d in dias if _dentro_de_un_pa(d, periodos)]
+    return [d for d in dias if _dentro_de_los_periodos(d, periodos)]
 
 
 def crear_particular(db: Session, data: CalendarioParticularCrear, actor: Usuario) -> CalendarioRespuesta:
     """Fechas particulares del colegio para el año. Requiere el general; sin
-    `dias_no_lectivos` copia los del general (con su origen) que caen dentro de un PA de
-    las fechas particulares."""
+    `dias_no_lectivos` copia los del general (con su origen) que caen dentro de los
+    periodos de las fechas particulares."""
     anio = _anio_existente(db, data.id_anio_escolar)
     colegio = _colegio_existente(db, data.id_colegio)
     calendarios = cargar_calendarios(db)

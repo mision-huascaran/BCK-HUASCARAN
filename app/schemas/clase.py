@@ -26,6 +26,9 @@ class ClaseItem(BaseModel):
     id_periodo_academico: int
     # Para reprogramar (null si no tiene fila).
     version: Optional[int] = None
+    # Subprogramas de los alumnos de la clase en su fecha vigente (de la lista congelada,
+    # si la tiene), por id. Una clase con los dos sale una sola vez.
+    subprogramas: list[ItemCatalogo] = []
 
 
 class ReprogramacionCrear(BaseModel):

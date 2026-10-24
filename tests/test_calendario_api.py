@@ -215,8 +215,11 @@ BASE_NUEVO = HOY + timedelta(days=400)
          "periodos.2.fecha_fin", "La fecha de fin no puede ser anterior a la fecha de inicio."),
         (lambda c: c["periodos"][1].update(fecha_inicio=c["periodos"][0]["fecha_fin"]),
          "periodos.1.fecha_inicio", "PR1 debe empezar después del fin de PA1"),
-        (lambda c: c["dias_no_lectivos"].append(dia(date.fromisoformat(c["periodos"][1]["fecha_inicio"]))),
-         "dias_no_lectivos.0", "Debe estar comprendido dentro de un PA del calendario."),
+        (lambda c: c["dias_no_lectivos"].append(dia(date.fromisoformat(c["periodos"][7]["fecha_fin"]) + timedelta(days=1))),
+         "dias_no_lectivos.0", "Debe estar comprendido dentro de los periodos (PA o PR) del calendario."),
+        (lambda c: c["dias_no_lectivos"].append(dia(date.fromisoformat(c["periodos"][0]["fecha_inicio"]) - timedelta(days=1),
+                                                    date.fromisoformat(c["periodos"][0]["fecha_inicio"]))),
+         "dias_no_lectivos.0", "Debe estar comprendido dentro de los periodos (PA o PR) del calendario."),
         (lambda c: c["dias_no_lectivos"].extend([dia(BASE_NUEVO, BASE_NUEVO + timedelta(days=2), "Uno"),
                                                  dia(BASE_NUEVO + timedelta(days=1), motivo_dia="Dos")]),
          "dias_no_lectivos.1", "Se superpone con el día no lectivo «Uno»."),
@@ -225,7 +228,8 @@ BASE_NUEVO = HOY + timedelta(days=400)
         (lambda c: c["dias_no_lectivos"].append(dia(BASE_NUEVO, motivo_dia="   ")),
          "dias_no_lectivos.0.motivo", "No puede estar vacío."),
     ],
-    ids=["falta_un_periodo", "repetido", "inicio_mayor_que_fin", "superpuestos", "no_lectivo_en_pr",
+    ids=["falta_un_periodo", "repetido", "inicio_mayor_que_fin", "superpuestos", "no_lectivo_fuera_de_periodos",
+         "no_lectivo_empieza_antes_del_pa1",
          "no_lectivos_superpuestos", "no_lectivo_invertido", "motivo_vacio"],
 )
 def test_crear_el_general_validaciones(client, db, entorno, sup, cambiar, campo, texto):
@@ -238,6 +242,26 @@ def test_crear_el_general_validaciones(client, db, entorno, sup, cambiar, campo,
     errores = respuesta.json()["errores"]
     assert any(e["campo"] == campo and texto in e["mensaje"] for e in errores), errores
     assert db.exec(select(Calendario).where(Calendario.id_anio_escolar == cuerpo["id_anio_escolar"])).first() is None
+
+
+def test_dias_no_lectivos_en_un_pr_y_en_el_pr4_que_pasa_de_anio(client, db, entorno, sup):
+    rangos = rangos_relativos(BASE_NUEVO)
+    rangos["PR4"] = (rangos["PR4"][0], date(rangos["PR4"][0].year + 1, 1, 15))
+    en_pr1 = dia(rangos["PR1"][0], rangos["PR1"][0] + timedelta(days=3), "Vacaciones de medio año")
+    # Del último día del PA2 al PR2: todas sus fechas están en periodos contiguos.
+    pa2_y_pr2 = dia(rangos["PA2"][1], rangos["PR2"][1], "Paro regional")
+    en_pr4 = dia(date(rangos["PR4"][0].year + 1, 1, 5), motivo_dia="Feriado del año siguiente")
+    cuerpo = cuerpo_nuevo(db, rangos, [en_pr1, pa2_y_pr2, en_pr4])
+
+    respuesta = client.post(URL, json=cuerpo, headers=sup)
+
+    assert respuesta.status_code == 201, respuesta.json()
+    guardados = {(d["fecha_inicio"], d["fecha_fin"]) for d in respuesta.json()["dias_no_lectivos"]}
+    assert guardados == {(d["fecha_inicio"], d["fecha_fin"]) for d in (en_pr1, pa2_y_pr2, en_pr4)}
+    # Registrarlos no cambia las fechas de los periodos.
+    assert [(p["fecha_inicio"], p["fecha_fin"]) for p in respuesta.json()["periodos"]] == [
+        (p["fecha_inicio"], p["fecha_fin"]) for p in cuerpo["periodos"]
+    ]
 
 
 def test_crear_el_general_de_un_anio_inexistente(client, entorno, sup):
@@ -376,8 +400,8 @@ def test_el_general_no_evalua_a_colegios_con_particular(client, db, entorno, sup
 # ── Fechas particulares y volver al general ─────────────────────────────────────────
 
 def test_crear_particular_copia_los_dias_del_general(client, db, entorno, sup):
-    """Copia los días del general con su origen, salvo los que quedan fuera de sus PA (el
-    del día +15 cae en su PR2)."""
+    """Copia los días del general con su origen, también los que caen en un PR (el del día
+    +15 cae en su PR2)."""
     agregar_no_lectivo(db, entorno.calendario, LUNES, motivo="Feriado nacional: X", origen=ORIGEN_AUTOMATICO)
     agregar_no_lectivo(db, entorno.calendario, HOY + timedelta(days=15), motivo="Aniversario")
     rangos = con_cambio("PA2", fin=HOY + timedelta(days=10))
@@ -388,7 +412,10 @@ def test_crear_particular_copia_los_dias_del_general(client, db, entorno, sup):
     assert respuesta.status_code == 201
     cuerpo = respuesta.json()
     assert (cuerpo["origen"], cuerpo["colegio"]["nombre"], cuerpo["version"]) == ("particular", "Colegio Lejano", 1)
-    assert cuerpo["dias_no_lectivos"] == [dia(LUNES, motivo_dia="Feriado nacional: X") | {"origen": "automatico"}]
+    assert cuerpo["dias_no_lectivos"] == [
+        dia(LUNES, motivo_dia="Feriado nacional: X") | {"origen": "automatico"},
+        dia(HOY + timedelta(days=15), motivo_dia="Aniversario") | {"origen": "manual"},
+    ]
     assert cuerpo["periodos"][2]["fecha_fin"] == (HOY + timedelta(days=10)).isoformat()
     assert [a.accion for a in auditoria(db, cuerpo["id_calendario"])] == ["crear"]
     lejano = {"id_colegio": entorno.colegios["Lejano"].id_colegio}
