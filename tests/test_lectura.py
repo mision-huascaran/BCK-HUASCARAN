@@ -616,3 +616,154 @@ def test_productividad_y_calendario(client, db, entorno, doc, tabla, actividad):
 
     assert conteos[uuid.UUID(actividad["id"])] == {"seguimiento_lectura": 2}
     assert ("lectura", LUNES) in {(r.tipo, r.fecha) for r in registros}
+
+
+# ── Semana partida entre dos meses (CU023 a CU026, v2) ──────────────────────────────
+
+# Miércoles 08/07, todavía en el PA2. La semana del lunes 29/06 al viernes 03/07 cae en
+# junio y julio.
+HOY_JULIO = date(2026, 7, 8)
+LUNES_PARTIDO, JUEVES_PARTIDO = date(2026, 6, 29), date(2026, 7, 2)
+
+
+@pytest.fixture
+def julio(miercoles, db):
+    miercoles.fijar(a_las(HOY_JULIO, 9))
+    for lunes in (date(2026, 6, 22), LUNES_PARTIDO, date(2026, 7, 6)):
+        semana_de(db, lunes)
+    db.commit()
+
+
+@pytest.fixture
+def los_jueves(db, entorno):
+    """El 2.º pasa a tener clase los jueves: la habitual de la semana partida es el 02/07."""
+    fila_grado = db.get(ColegioGrado, (entorno.colegios["Andino"].id_colegio, entorno.grados["2.º"]))
+    fila_grado.dia_clase = 4
+    db.add(fila_grado)
+    db.commit()
+
+
+def test_semana_partida_una_sola_tabla_en_el_mes_de_la_clase(client, db, entorno, julio, doc, los_jueves, actividad):
+    desde_junio = crear(client, doc, db, entorno, fecha=LUNES_PARTIDO, mes=6)
+    desde_julio = crear(client, doc, db, entorno, fecha=LUNES_PARTIDO, mes=7)
+    consulta_junio = consultar(client, doc, db, entorno, fecha=LUNES_PARTIDO, mes=6)
+
+    assert desde_junio.status_code == 201, desde_junio.text
+    creada = desde_junio.json()
+    assert (creada["mes"], creada["clase_referencia"]["fecha"]) == (7, JUEVES_PARTIDO.isoformat())
+    # Desde el otro mes es la misma semana: 409 con el id de la primera.
+    assert (desde_julio.status_code, motivo(desde_julio), desde_julio.json()["id"]) == (
+        409, "tabla_existente", creada["id"],
+    )
+    # Consultada con el mes "equivocado", devuelve la misma tabla con su mes real.
+    assert consulta_junio.status_code == 200
+    assert (consulta_junio.json()["id"], consulta_junio.json()["mes"]) == (creada["id"], 7)
+    assert len(db.exec(select(LecturaSemanal)).all()) == 1
+
+
+def test_semana_partida_sin_tabla_sugiere_de_toda_la_semana(client, db, entorno, julio, doc, los_jueves, actividad):
+    respuesta = consultar(client, doc, db, entorno, fecha=LUNES_PARTIDO, mes=6)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (404, "tabla_no_existe")
+    assert respuesta.json()["clase_referencia_sugerida"]["fecha"] == JUEVES_PARTIDO.isoformat()
+
+
+def test_misma_semana_una_tabla_por_subprograma_sobre_la_misma_clase(client, db, entorno, julio, doc, actividad):
+    comprension = crear(client, doc, db, entorno, fecha=LUNES_PARTIDO)
+    alfabetizacion = crear(client, doc, db, entorno, fecha=LUNES_PARTIDO, mes=7, programa=ALFABETIZACION)
+
+    assert (comprension.status_code, alfabetizacion.status_code) == (201, 201)
+    assert comprension.json()["clase_referencia"]["id_clase"] == alfabetizacion.json()["clase_referencia"]["id_clase"]
+    assert [f["nombre"] for f in alfabetizacion.json()["filas"]] == ["Beto Alfa"]
+
+
+def test_cambiar_clase_a_una_adicional_del_mes_siguiente(client, db, entorno, julio, doc, actividad):
+    ana = entorno.alumnos["ana"]
+    cira = crear_alumno(db, "Cira", "Comprensión", entorno.colegios["Andino"], entorno.grados["2.º"],
+                        entorno.programas[COMPRENSION], 1, desde=entorno.anio.fecha_inicio)
+    tabla_junio = crear(client, doc, db, entorno, fecha=LUNES_PARTIDO).json()
+    adicional = clase_guardada(db, ana, JUEVES_PARTIDO, lista=[ana, cira, entorno.alumnos["beto"]], tipo="adicional")
+    db.commit()
+
+    cambio = client.patch(f"/lectura/tablas/{tabla_junio['id']}/clase-referencia",
+                          json={"id_operacion": str(uuid.uuid4()), "version": 1, "id_clase": adicional.id_clase},
+                          headers=doc)
+
+    assert tabla_junio["mes"] == 6
+    assert cambio.status_code == 200, cambio.text
+    cuerpo = cambio.json()
+    assert (cuerpo["id"], cuerpo["mes"], cuerpo["clase_referencia"]["id_clase"]) == (tabla_junio["id"], 7, adicional.id_clase)
+    assert [f["nombre"] for f in cuerpo["filas"]] == ["Cira Comprensión", "Ana Torres"]
+    assert len(db.exec(select(LecturaSemanal)).all()) == 1
+    auditoria = db.exec(select(Auditoria).where(Auditoria.tabla == "lectura_semanal", Auditoria.campo == "mes")).one()
+    assert (auditoria.valor_anterior, auditoria.valor_nuevo) == ("6", "7")
+
+
+def test_cambiar_clase_a_una_usada_por_otra_tabla_del_mismo_subprograma(client, db, entorno, cabeceras, tabla):
+    doc = cabeceras["Docente"]
+    datos = filtro(db, entorno)
+    # Tabla de la semana anterior con su clase del lunes 08/06; esa clase se traslada
+    # después al martes 16/06, dentro de la semana de la tabla del fixture.
+    anterior = crear(client, doc, db, entorno, fecha=LUNES_ANTERIOR).json()
+    traslado = client.post(f"/colegios/{datos['id_colegio']}/clases/reprogramaciones", json={
+        "id_grado": datos["id_grado"], "id_seccion": datos["id_seccion"], "fecha_original": LUNES_ANTERIOR.isoformat(),
+        "fecha_nueva": MARTES.isoformat(), "motivo": "Actuación", "version": 1,
+    }, headers=cabeceras["Supervisor"])
+    assert traslado.status_code == 201, traslado.text
+
+    cambio = client.patch(f"/lectura/tablas/{tabla['id']}/clase-referencia",
+                          json={"id_operacion": str(uuid.uuid4()), "version": 1,
+                                "id_clase": anterior["clase_referencia"]["id_clase"]}, headers=doc)
+
+    assert (cambio.status_code, motivo(cambio)) == (409, "clase_ya_usada")
+    assert cambio.json()["detail"] == (
+        "La clase seleccionada ya es la clase de referencia de otra tabla de lectura de este subprograma."
+    )
+
+
+def semanas_del_grupo(client, cabecera, db, entorno, mes, **extra):
+    params = {k: v for k, v in filtro(db, entorno).items() if k in ("id_colegio", "id_grado", "id_seccion")}
+    db.commit()
+    return client.get("/semanas", params={**params, "id_anio_escolar": entorno.anio.id_anio_escolar, "mes": mes,
+                                          **extra}, headers=cabecera)
+
+
+def inicios(respuesta) -> list[str]:
+    return [s["fecha_inicio"] for s in respuesta.json()]
+
+
+def test_semanas_partida_aparece_en_un_solo_mes(client, db, entorno, julio, doc, los_jueves, actividad):
+    cl = {"id_programa": entorno.programas[COMPRENSION]}
+    alfa = {"id_programa": entorno.programas[ALFABETIZACION]}
+    partida = LUNES_PARTIDO.isoformat()
+
+    # Sin tabla: el mes de su clase habitual (jueves 02/07), con y sin subprograma.
+    assert partida not in inicios(semanas_del_grupo(client, doc, db, entorno, 6))
+    assert partida in inicios(semanas_del_grupo(client, doc, db, entorno, 7))
+    assert partida not in inicios(semanas_del_grupo(client, doc, db, entorno, 6, **cl))
+    assert partida in inicios(semanas_del_grupo(client, doc, db, entorno, 7, **cl))
+    tabla_cl = crear(client, doc, db, entorno, fecha=LUNES_PARTIDO).json()
+    adicional = clase_guardada(db, entorno.alumnos["ana"], LUNES_PARTIDO, tipo="adicional")
+    db.commit()
+    cambio = client.patch(f"/lectura/tablas/{tabla_cl['id']}/clase-referencia",
+                          json={"id_operacion": str(uuid.uuid4()), "version": 1, "id_clase": adicional.id_clase},
+                          headers=doc)
+    assert cambio.json()["mes"] == 6, cambio.text
+
+    # La tabla de Comprensión Lectora pasó a junio; Alfabetización sigue sin tabla (julio).
+    junio_cl, julio_cl = (semanas_del_grupo(client, doc, db, entorno, m, **cl) for m in (6, 7))
+    junio_alfa, julio_alfa = (semanas_del_grupo(client, doc, db, entorno, m, **alfa) for m in (6, 7))
+    assert (partida in inicios(junio_cl), partida in inicios(julio_cl)) == (True, False)
+    assert (partida in inicios(junio_alfa), partida in inicios(julio_alfa)) == (False, True)
+    # Fechas completas, aunque crucen de mes.
+    [semana] = [s for s in junio_cl.json() if s["fecha_inicio"] == partida]
+    assert semana["fecha_fin"] == "2026-07-03"
+
+
+def test_no_realizada_en_una_semana_partida(client, db, entorno, julio, doc, los_jueves, actividad):
+    tabla_partida = crear(client, doc, db, entorno, fecha=LUNES_PARTIDO, mes=6).json()
+
+    respuesta = marcar(client, doc, tabla_partida["id"], motivo_="Paro regional")
+
+    assert respuesta.status_code == 200, respuesta.text
+    assert (respuesta.json()["estado"], respuesta.json()["mes"]) == ("no_realizada", 7)

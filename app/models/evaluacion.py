@@ -255,15 +255,18 @@ MAXIMOS_LSN = (5, 10)
 class LecturaSemanal(SQLModel, table=True):
     """Tabla de Seguimiento de Lectura de un grupo y subprograma en una semana (CU023 a
     CU026), atada a una clase de referencia del grupo en esa semana: la asistencia de esa
-    clase decide qué filas admiten datos de lectura. El `mes` es el de la fecha de su
-    clase de referencia."""
+    clase decide qué filas admiten datos de lectura.
+
+    Identidad: una sola tabla por grupo, subprograma y semana (UNIQUE). Una semana que cae
+    en dos meses tiene una sola tabla. `id_anio_escolar` y `mes` no son identidad: solo la
+    ubican en los filtros (el mes de la fecha de su clase de referencia; cambia si se
+    cambia la clase a una de otro mes)."""
 
     __tablename__ = "lectura_semanal"
     __table_args__ = (
         ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_lectura_semanal_seccion"),
         UniqueConstraint(
-            "id_colegio", "id_grado", "id_seccion", "id_programa", "id_anio_escolar", "mes", "id_semana",
-            name="uq_lectura_semanal_grupo_semana",
+            "id_colegio", "id_grado", "id_seccion", "id_programa", "id_semana", name="uq_lectura_semanal_grupo_semana",
         ),
         UniqueConstraint(*UNICA_TABLA_POR_CLASE_Y_SUBPROGRAMA, name="uq_lectura_semanal_clase_programa"),
         CheckConstraint("mes BETWEEN 1 AND 12", name="ck_lectura_semanal_mes"),

@@ -42,7 +42,7 @@ class RegistroDeActividad(BaseModel):
     alumno: Optional[ItemCatalogo] = None
     # Asistencias: fecha de la clase.
     fecha: Optional[date] = None
-    # Lectura: semana y mes; Rúbrica: mes.
+    # Lectura: semana (y el mes en que se ubica la tabla); Rúbrica: mes.
     id_semana: Optional[int] = None
     semana_inicio: Optional[date] = None
     mes: Optional[int] = None
