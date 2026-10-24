@@ -342,16 +342,14 @@ class LecturaSemanalAlumno(SQLModel, table=True):
 
 class RubricaMensual(SQLModel, table=True):
     """Evaluación mensual de un alumno en su grupo de ese mes (CU029, CU030): Fluidez y
-    Comprensión (null = "Sin evaluar"; se puede guardar incompleta). `id_periodo_academico`
-    es el PA del mes (REGLA PROVISIONAL R1: el de su último día lectivo)."""
+    Comprensión (null = "Sin evaluar"; se puede guardar incompleta). Una sola por alumno,
+    año y mes, en cualquier grupo (R2). `id_periodo_academico` es el PA del mes (R1: el de
+    más días lectivos del mes)."""
 
     __tablename__ = "rubrica_mensual"
     __table_args__ = (
         ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_rubrica_mensual_seccion"),
-        UniqueConstraint(
-            "id_alumno", "id_anio_escolar", "mes", "id_colegio", "id_grado", "id_seccion", "id_programa",
-            name="uq_rubrica_mensual_alumno_mes_grupo",
-        ),
+        UniqueConstraint("id_alumno", "id_anio_escolar", "mes", name="uq_rubrica_mensual_alumno_mes"),
         CheckConstraint("mes BETWEEN 1 AND 12", name="ck_rubrica_mensual_mes"),
         Index("ix_rubrica_mensual_colegio_periodo", "id_colegio", "id_periodo_academico"),
     )

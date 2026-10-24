@@ -1,9 +1,11 @@
-"""Reglas provisionales: decisiones que el equipo tomó para avanzar mientras el negocio
-(Carlos) no las define. Cada una lleva la marca `# REGLA PROVISIONAL` y su código (L1,
-R1...), para encontrarlas y reemplazarlas cuando se confirmen.
+"""Reglas de negocio con código (L1, R1...). Las provisionales son decisiones que el
+equipo tomó para avanzar mientras el negocio (Carlos) no las define: llevan la marca
+`# REGLA PROVISIONAL`, para encontrarlas y reemplazarlas cuando se confirmen. Las ya
+confirmadas por el analista llevan `# REGLA CONFIRMADA`.
 
 Sin dependencias de la app: se usan desde los modelos y los servicios.
 """
+from collections import Counter
 from datetime import date, datetime
 from typing import Callable, Optional, TypeVar
 
@@ -17,20 +19,37 @@ G = TypeVar("G")
 UNICA_TABLA_POR_CLASE_Y_SUBPROGRAMA = ("id_clase_referencia", "id_programa")
 
 
-# REGLA PROVISIONAL R1 (Rúbrica mensual, CU029): el PA de un mes es el PA de su último
-# día lectivo. Un mes partido entre dos PA se evalúa (y se habilita) con el segundo.
+# REGLA CONFIRMADA R1 (Rúbrica mensual, CU029): cada mes pertenece a un solo PA, el que
+# tiene más días lectivos dentro del mes según el calendario del colegio del grupo; si dos
+# empatan, gana el que contiene el último día lectivo del mes. Recesos y días no lectivos
+# no cuentan.
 def regla_mes_a_pa(dias_lectivos: list[date], pa_de: Callable[[date], Optional[T]]) -> Optional[T]:
-    """El PA del último de los días lectivos del mes (`pa_de` lo resuelve con el
-    calendario del colegio); None si el mes no tiene días lectivos."""
-    return pa_de(max(dias_lectivos)) if dias_lectivos else None
+    """El PA con más días lectivos del mes (`pa_de` resuelve el de cada día con el
+    calendario del colegio; se comparan por `id_periodo_academico`) y, en empate, el del
+    último día lectivo; None si el mes no tiene días lectivos en ningún PA."""
+    pas = {}
+    conteo: Counter = Counter()
+    ultimo_dia = {}
+    for dia in sorted(dias_lectivos):
+        pa = pa_de(dia)
+        if pa is None:
+            continue
+        clave = pa.id_periodo_academico
+        pas[clave] = pa
+        conteo[clave] += 1
+        ultimo_dia[clave] = dia
+    if not conteo:
+        return None
+    return pas[max(conteo, key=lambda clave: (conteo[clave], ultimo_dia[clave]))]
 
 
-# REGLA PROVISIONAL R2 (Rúbrica mensual, CU029): si un alumno cambió de grupo durante el
-# mes, se lo evalúa en el grupo al que pertenecía el último día lectivo del mes en que
-# estuvo en alguno.
+# REGLA CONFIRMADA R2 (Rúbrica mensual, CU029, CU030): mientras el alumno no tenga una
+# evaluación del mes, le corresponde el grupo de su última pertenencia válida en un día
+# lectivo del mes (si el mes está en curso, solo los días ya transcurridos: los filtra el
+# llamador). Una evaluación ya guardada conserva su grupo (lo resuelve rubrica_service).
 def regla_grupo_del_mes(intervalos: list[tuple[date, Optional[date], G]], dias_lectivos: list[date]) -> Optional[G]:
-    """De los intervalos [desde, hasta) de pertenencia del alumno, el grupo del último día
-    lectivo del mes en que pertenecía a alguno; None si no estuvo ningún día lectivo."""
+    """De los intervalos [desde, hasta) de pertenencia del alumno, el grupo del último de
+    esos días lectivos en que pertenecía a alguno; None si no estuvo ningún día."""
     for dia in sorted(dias_lectivos, reverse=True):
         for desde, hasta, grupo in intervalos:
             if desde <= dia and (hasta is None or hasta > dia):

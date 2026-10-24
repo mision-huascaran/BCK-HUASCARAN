@@ -8,6 +8,7 @@ from sqlmodel import select
 
 from app.core import tiempo
 from app.models.organizacion import AnioEscolar, DocenteColegioGrado, PeriodoAcademico, Usuario
+from app.models.trazabilidad import Auditoria
 from app.services.habilitacion import (
     MENSAJE_CUENTA_INACTIVA,
     MENSAJE_SIN_HABILITACION,
@@ -171,6 +172,41 @@ def test_cu016_editar_en_receso_tambien_pide_inicio(client, db, entorno, sup, le
     assert motivo(sin_inicio) == "inicio_asignacion_requerido"
     assert retroactivo.status_code == 200
     assert filas_de(db, "nuevo1@sicedu.test") == [(2, True), (2, True), (3, False), (3, False), (4, False), (4, False)]
+
+
+def _titular_de_lejano(db, entorno) -> Usuario:
+    """Docente titular de Lejano 3.º en el PA2, que Lejano acaba de culminar."""
+    titular = crear_docente(db, entorno, "Titular", "titular@sicedu.test", "70000009")
+    asignar(db, titular.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    db.commit()
+    return titular
+
+
+def test_cu016_retroactivo_del_mismo_titular_habilita_su_pa_culminado(client, db, entorno, sup, lejano_en_receso):
+    titular = _titular_de_lejano(db, entorno)
+    cambio = {"grados": [entorno.grados["3.º"]], "inicio_asignacion": "retroactivo"}
+
+    respuesta = client.patch(f"/usuarios/{titular.id_usuario}", json={"asignacion": cambio}, headers=sup)
+
+    assert respuesta.status_code == 200
+    # Se conserva su fila del PA2 (sin duplicarla) y queda marcada retroactiva.
+    assert filas_de(db, titular.correo) == [(2, True), (3, False), (4, False)]
+    habilitacion = _habilitacion(db, entorno, titular, "Lejano", "3.º", modulo="rubrica")
+    assert (habilitacion.permitido, habilitacion.origen) == (True, ORIGEN_RETROACTIVA)
+    auditoria = db.exec(select(Auditoria).where(Auditoria.campo == "asignacion")).one()
+    assert auditoria.valor_nuevo.endswith("(P2 retroactivo)")
+    assert not auditoria.valor_anterior.endswith("retroactivo)")
+
+
+def test_cu016_proximo_no_habilita_al_titular_en_el_pa_culminado(client, db, entorno, sup, lejano_en_receso):
+    titular = _titular_de_lejano(db, entorno)
+    cambio = {"grados": [entorno.grados["3.º"]], "inicio_asignacion": "proximo"}
+
+    respuesta = client.patch(f"/usuarios/{titular.id_usuario}", json={"asignacion": cambio}, headers=sup)
+
+    assert respuesta.status_code == 200
+    assert filas_de(db, titular.correo) == [(2, False), (3, False), (4, False)]
+    assert _habilitacion(db, entorno, titular, "Lejano", "3.º", modulo="rubrica").permitido is False
 
 
 def test_cu016_inactivar_en_pa_libera_ese_pa_y_los_siguientes(client, db, entorno, sup):

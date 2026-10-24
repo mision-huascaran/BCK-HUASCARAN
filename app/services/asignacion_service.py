@@ -11,7 +11,9 @@ Reglas de negocio:
   (CU027): dos colegios pueden estar en periodos distintos el mismo día.
 - Si el colegio está hoy en un receso (PR n), el request elige `inicio_asignacion`:
   "retroactivo" crea además la fila del PA n recién culminado (`retroactiva`), que no
-  puede sustituir a su titular; "proximo" empieza en el PA n + 1 (no existe en el PR4).
+  puede sustituir a su titular; si el mismo docente ya era su titular, se conserva su fila
+  y se marca `retroactiva`: la asignación ordinaria no habilita por sí sola la
+  regularización durante el PR. "proximo" empieza en el PA n + 1 (no existe en el PR4).
 
 Las asignaciones se cambian con POST y PATCH /usuarios; aquí no se hace commit.
 """
@@ -87,15 +89,19 @@ class Asignacion:
     retroactivo: Optional[PeriodoAcademico] = None
 
     def resumen(self) -> str:
-        return resumen_asignacion(self.colegio.nombre, self.grados, self.periodos[0], self.anio)
+        return resumen_asignacion(
+            self.colegio.nombre, self.grados, self.periodos[0], self.anio, self.retroactivo is not None
+        )
 
 
 def resumen_asignacion(
-    colegio: str, grados: list[Grado], desde: PeriodoAcademico, anio: AnioEscolar
+    colegio: str, grados: list[Grado], desde: PeriodoAcademico, anio: AnioEscolar, retroactivo: bool = False
 ) -> str:
-    """Texto legible para la auditoría: `AMASHCA [1.º, 2.º] desde P3 2026`."""
+    """Texto legible para la auditoría: `AMASHCA [1.º, 2.º] desde P3 2026`, con
+    ` (P3 retroactivo)` si ese primer PA está habilitado con "Retroactivo"."""
     nombres = ", ".join(g.nombre for g in sorted(grados, key=lambda g: g.id_grado))
-    return f"{colegio} [{nombres}] desde P{desde.numero} {anio.nombre}"
+    marca = f" (P{desde.numero} retroactivo)" if retroactivo else ""
+    return f"{colegio} [{nombres}] desde P{desde.numero} {anio.nombre}{marca}"
 
 
 # ── Validación de los datos de una asignación ───────────────────────────────────────
@@ -314,7 +320,8 @@ def reemplazar_asignaciones(
     conservan con su `creado_en`, que así indica desde cuándo el docente atiende ese
     colegio y grado (lo usa la alerta de inactividad, CU011). Son periodos vigentes o
     futuros, así que no se pierde historial; en el PA retroactivo (ya culminado) solo se
-    agregan filas, marcadas `retroactiva`.
+    agregan filas, marcadas `retroactiva`, o se marcan las que el docente ya tenía como
+    titular (sin crear otra ni cambiar al titular).
     """
     _verificar_grados_libres(db, id_docente, asignacion)
     ids_periodo = [p.id_periodo_academico for p in asignacion.periodos]
@@ -336,6 +343,11 @@ def reemplazar_asignaciones(
         clave = (fila.id_colegio, fila.id_grado, fila.id_periodo_academico)
         if clave in deseadas:
             conservadas.add(clave)
+            if fila.id_periodo_academico == id_retroactivo and not fila.retroactiva:
+                fila.retroactiva = True
+                fila.modificado_por = id_actor
+                fila.modificado_en = ahora
+                db.add(fila)
         elif fila.id_periodo_academico != id_retroactivo:
             sobrantes.append(fila.id)
     if sobrantes:
@@ -483,7 +495,14 @@ def resumen_actual(db: Session, id_docente: int, periodos: list[PeriodoAcademico
         if estado is not None:
             colegio = db.get(Colegio, estado.id_colegio)
             grados = list(db.exec(select(Grado).where(col(Grado.id_grado).in_(estado.ids_grados))).all())
-            return resumen_asignacion(colegio.nombre, grados, periodo, anio)
+            retroactiva = db.exec(
+                select(DocenteColegioGrado.id).where(
+                    DocenteColegioGrado.id_docente == id_docente,
+                    DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico,
+                    col(DocenteColegioGrado.retroactiva).is_(True),
+                ).limit(1)
+            ).first()
+            return resumen_asignacion(colegio.nombre, grados, periodo, anio, retroactiva is not None)
     return SIN_ASIGNACION
 
 

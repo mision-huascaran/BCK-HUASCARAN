@@ -392,7 +392,7 @@ def _meses_con_rubricas(db: Session, ids_colegio: set[int], id_anio: int) -> lis
 
 
 def _motivo_mes_incompatible(id_periodo: int, propuesta: CalendarioResuelto, primer_dia: date) -> Optional[str]:
-    """Un mes con rúbricas no puede cambiar de PA (R1: el de su último día lectivo)."""
+    """Un mes con rúbricas no puede cambiar de PA (R1: el de más días lectivos del mes)."""
     ultimo = primer_dia.replace(day=monthrange(primer_dia.year, primer_dia.month)[1])
     pa = regla_mes_a_pa(propuesta.dias_lectivos(primer_dia, ultimo), propuesta.periodo_de)
     if pa is None:
