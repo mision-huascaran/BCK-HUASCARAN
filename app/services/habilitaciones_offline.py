@@ -12,7 +12,14 @@ from typing import Optional
 from sqlmodel import Session, col, select
 
 from app.core.tiempo import ahora_utc, hoy_lima
-from app.models.organizacion import Colegio, DocenteColegioGrado, PeriodoAcademico, PermisoCorreccion, Usuario
+from app.models.organizacion import (
+    AnioEscolar,
+    Colegio,
+    DocenteColegioGrado,
+    PeriodoAcademico,
+    PermisoCorreccion,
+    Usuario,
+)
 from app.schemas.calendario import CalendarioDeColegio
 from app.schemas.habilitacion import AsignacionUtilizable, MisHabilitaciones, PermisoUtilizable
 from app.services.calendario import CalendarioResuelto, Calendarios, PeriodoCalendario, cargar_calendarios
@@ -74,13 +81,14 @@ def _permisos(db: Session, id_docente: int) -> list[PermisoCorreccion]:
 
 
 def _calendarios_de(
-    pares: list[ParColegioAnio], calendarios: Calendarios, colegios: dict[int, Colegio]
+    db: Session, pares: list[ParColegioAnio], calendarios: Calendarios, colegios: dict[int, Colegio]
 ) -> list[CalendarioDeColegio]:
+    nombres = dict(db.exec(select(AnioEscolar.id_anio_escolar, AnioEscolar.nombre)).all())
     salida = []
     for id_colegio, id_anio in sorted(set(pares)):
         aplicable = calendarios.aplicable(id_colegio, id_anio)
         if aplicable is not None:
-            datos = respuesta(aplicable, colegios[id_colegio]).model_dump()
+            datos = respuesta(aplicable, colegios[id_colegio], nombres.get(id_anio)).model_dump()
             salida.append(CalendarioDeColegio(**datos, id_colegio=id_colegio))
     return salida
 
@@ -117,5 +125,5 @@ def mis_habilitaciones(db: Session, usuario: Usuario) -> MisHabilitaciones:
             )
             for p in permisos
         ],
-        calendarios=_calendarios_de(pares, calendarios, colegios),
+        calendarios=_calendarios_de(db, pares, calendarios, colegios),
     )

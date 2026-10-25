@@ -6,12 +6,19 @@ Reglas (todas validadas aquí, además de lo que impone la BD):
   superponerse y con inicio <= fin (fechas inclusivas).
 - El PR4 no puede chocar con el PA1 del año escolar siguiente del mismo colegio (ni el
   PA1 con el PR4 del año anterior).
+- Año escolar (decisión del equipo): sus fechas son las del calendario general, del
+  inicio del PA1 al fin del PR4 (`anio_escolar.sincronizar_anio`, que también ajusta sus
+  semanas). Al crear el general con `anio`, el año escolar se crea en la misma
+  transacción si no existe. Como los meses se identifican solo por número, el general
+  no puede abarcar dos veces el mismo mes: el PR4 termina antes del día 1 del mismo mes
+  del año siguiente al inicio del PA1.
 - Días no lectivos: motivo no vacío, con todas sus fechas dentro de los periodos (PA o
   PR, incluido el PR4 aunque pase al año calendario siguiente) y sin superponerse entre
   sí. No dividen periodos ni cambian fechas; uno dentro de un PA no lo vuelve receso, y
   uno dentro de un PR no amplía el plazo de regularización (que usa el `fecha_fin` del PR).
 - Ningún cambio puede dejar una fecha con asistencias como no lectiva, fuera de su PA o
-  en otro PA (409 `calendario_incompatible`). En el general se evalúan todos los colegios
+  en otro PA, ni una semana con tabla de lectura fuera del año (409
+  `calendario_incompatible`). En el general se evalúan todos los colegios
   que lo usan; en un particular, solo su colegio. Todo o nada.
 - Concurrencia: cada edición trae la `version` que se leyó; si cambió, 409
   `modificacion_concurrente`, sin combinar propuestas.
@@ -33,7 +40,7 @@ from sqlmodel import Session, col, select
 from app.core.errores import ErrorNegocio
 from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
 from app.core.validacion import MENSAJE_GENERAL, MOTIVO_VALIDACION
-from app.models.evaluacion import Asistencia, Clase, LecturaSemanal, RegistroVuelo, RubricaMensual
+from app.models.evaluacion import Asistencia, Clase, LecturaSemanal, RegistroVuelo, RubricaMensual, SemanaReporte
 from app.models.organizacion import (
     ORIGEN_MANUAL,
     TIPO_PA,
@@ -59,6 +66,7 @@ from app.schemas.calendario import (
     PeriodoSalida,
 )
 from app.schemas.comun import ItemCatalogo
+from app.services.anio_escolar import rango_del_calendario, semanas_en_conflicto, sincronizar_anio
 from app.services.auditoria import CREAR, EDITAR, INACTIVAR, registrar_auditoria
 from app.services.calendario import (
     NUMEROS_PA,
@@ -87,14 +95,20 @@ REGISTRO_RUBRICA = "rubrica"
 REGISTRO_VUELO = "registro_vuelo"
 FORMATO_FECHA = "%d/%m/%Y"
 FIN_ANTES_DE_INICIO = "La fecha de fin no puede ser anterior a la fecha de inicio."
+MAS_DE_DOCE_MESES = (
+    "El año escolar no puede abarcar más de 12 meses: el receso posterior al cuarto periodo debe terminar antes "
+    "del mismo mes en que empezó el primer periodo."
+)
 
 # Motivos de las incompatibilidades con registros existentes.
 NO_LECTIVA = "no_lectiva"
+FUERA_DEL_ANIO = "fuera_del_anio"
 FUERA_DE_PA = "fuera_de_pa"
 CAMBIA_DE_PA = "cambia_de_pa"
 ANTES_DEL_PA = "antes_del_pa"
 _MENSAJES_INCOMPATIBILIDAD = {
     NO_LECTIVA: "La fecha tiene {registros} y quedaría como no lectiva.",
+    FUERA_DEL_ANIO: "La semana tiene {registros} y quedaría fuera del año escolar.",
     FUERA_DE_PA: "La fecha tiene {registros} y quedaría fuera de su PA.",
     CAMBIA_DE_PA: "La fecha tiene {registros} y pasaría a otro PA.",
     ANTES_DEL_PA: "La fecha tiene {registros} y quedaría antes del inicio de su PA.",
@@ -215,6 +229,15 @@ def _superposiciones(dias: list[DiaNoLectivoEntrada]) -> Errores:
         if ultimo is None or dias[i].fecha_fin > dias[ultimo].fecha_fin:
             ultimo = i
     return errores
+
+
+def errores_de_duracion(periodos: list[PeriodoEntrada]) -> Errores:
+    """Calendario general: el PR4 termina antes del día 1 del mismo mes del año siguiente
+    al inicio del PA1 (p. ej. PA1 desde el 15/03/2026 -> PR4 hasta el 28/02/2027)."""
+    inicio, fin = rango_del_calendario(periodos)
+    if fin >= date(inicio.year + 1, inicio.month, 1):
+        return [(_campo_de(periodos, TIPO_PR, 4, "fecha_fin"), MAS_DE_DOCE_MESES)]
+    return []
 
 
 def errores_de_no_lectivos(dias: list[DiaNoLectivoEntrada], periodos: list[PeriodoEntrada]) -> Errores:
@@ -449,8 +472,35 @@ def _incompatibilidades(
     return incompatibles
 
 
-def _exigir_compatible(db: Session, id_anio: int, ids_colegio: set[int], propuesta: CalendarioResuelto) -> None:
+def _semanas_fuera_del_anio(db: Session, anio: AnioEscolar, propuesta: CalendarioResuelto) -> list[dict]:
+    """Tablas de lectura cuya semana quedaría fuera del año con el nuevo general."""
+    tablas = semanas_en_conflicto(db, anio, *rango_del_calendario(propuesta.periodos))
+    if not tablas:
+        return []
+    nombres = dict(db.exec(select(Colegio.id_colegio, Colegio.nombre)).all())
+    lunes = dict(db.exec(select(SemanaReporte.id_semana, SemanaReporte.fecha_inicio).where(
+        col(SemanaReporte.id_semana).in_({t.id_semana for t in tablas})
+    )).all())
+    return [
+        {
+            "colegio": {"id": t.id_colegio, "nombre": nombres.get(t.id_colegio, "")},
+            "fecha": lunes[t.id_semana].isoformat(),
+            "tipo_registro": REGISTRO_LECTURA,
+            "motivo": FUERA_DEL_ANIO,
+            "mensaje": _MENSAJES_INCOMPATIBILIDAD[FUERA_DEL_ANIO].format(registros=_REGISTROS[REGISTRO_LECTURA]),
+        }
+        for t in tablas
+    ]
+
+
+def _exigir_compatible(
+    db: Session, id_anio: int, ids_colegio: set[int], propuesta: CalendarioResuelto, anio: Optional[AnioEscolar] = None
+) -> None:
+    """Sin registros afectados; con `anio` (cambio del general), tampoco semanas con
+    tablas de lectura que queden fuera del año."""
     incompatibles = _incompatibilidades(db, id_anio, ids_colegio, propuesta)
+    if anio is not None:
+        incompatibles += _semanas_fuera_del_anio(db, anio, propuesta)
     if incompatibles:
         raise _conflicto(
             "No se puede guardar el calendario: el cambio afecta registros existentes.",
@@ -666,12 +716,15 @@ def _dia_salida(rango: RangoNoLectivo) -> DiaNoLectivoSalida:
     )
 
 
-def respuesta(calendario: CalendarioResuelto, colegio: Optional[Colegio]) -> CalendarioRespuesta:
+def respuesta(
+    calendario: CalendarioResuelto, colegio: Optional[Colegio], nombre_anio: Optional[str] = None
+) -> CalendarioRespuesta:
     hoy = hoy_lima()
     actual = calendario.periodo_de(hoy)
     return CalendarioRespuesta(
         id_calendario=calendario.id_calendario,
         id_anio_escolar=calendario.id_anio_escolar,
+        anio=nombre_anio,
         colegio=ItemCatalogo(id=colegio.id_colegio, nombre=colegio.nombre) if colegio is not None else None,
         origen="general" if calendario.es_general else "particular",
         version=calendario.version,
@@ -688,7 +741,7 @@ def _respuesta_de(db: Session, id_anio: int, colegio: Optional[Colegio]) -> Cale
     aplicable = calendarios.aplicable(id_colegio, id_anio)
     if aplicable is None:
         raise no_configurado()
-    return respuesta(aplicable, colegio)
+    return respuesta(aplicable, colegio, db.get(AnioEscolar, id_anio).nombre)
 
 
 # ── Consulta ────────────────────────────────────────────────────────────────────────
@@ -726,12 +779,25 @@ def _fuera_de_alcance() -> ErrorNegocio:
     )
 
 
+def anio_por_valor(db: Session, valor: int) -> Optional[AnioEscolar]:
+    """El año escolar del año calendario `valor` (su nombre, p. ej. "2027"), o None."""
+    return db.exec(select(AnioEscolar).where(AnioEscolar.nombre == str(valor))).first()
+
+
 def consultar(
-    db: Session, usuario: Usuario, id_anio_escolar: Optional[int], id_colegio: Optional[int]
+    db: Session, usuario: Usuario, id_anio_escolar: Optional[int], id_colegio: Optional[int],
+    valor_anio: Optional[int] = None,
 ) -> CalendarioRespuesta:
-    """Calendario aplicable al año (por defecto, el de referencia) y alcance: sin
-    `id_colegio`, el general; con él, el particular activo del colegio o el general."""
-    if id_anio_escolar is not None:
+    """Calendario aplicable al año (por id, por valor o, por defecto, el de referencia) y
+    alcance: sin `id_colegio`, el general; con él, el particular activo del colegio o el
+    general. Un año por valor que no existe es "sin calendario" (no se crea)."""
+    if id_anio_escolar is not None and valor_anio is not None:
+        raise _error_validacion([("anio", "Indica el año o el id_anio_escolar, no ambos.")])
+    if valor_anio is not None:
+        anio = anio_por_valor(db, valor_anio)
+        if anio is None:
+            raise no_configurado()
+    elif id_anio_escolar is not None:
         anio = _anio_existente(db, id_anio_escolar)
     else:
         anio = anio_de_referencia(db)
@@ -783,18 +849,44 @@ def _general_existente() -> ErrorNegocio:
     return _conflicto("Ya existe un calendario general para este año escolar.", "calendario_existente")
 
 
+def _anio_del_pedido(db: Session, data: CalendarioCrear) -> AnioEscolar:
+    """El año escolar indicado por id (422 si no existe) o por valor; un valor sin año
+    escolar devuelve uno nuevo, todavía sin guardar (se guarda solo si todo valida)."""
+    if data.id_anio_escolar is not None:
+        return _anio_existente(db, data.id_anio_escolar)
+    existente = anio_por_valor(db, data.anio)
+    if existente is not None:
+        return existente
+    inicio, fin = rango_del_calendario(data.periodos)
+    return AnioEscolar(nombre=str(data.anio), fecha_inicio=inicio, fecha_fin=fin)
+
+
+def _validar_general(periodos: list[PeriodoEntrada], dias: list[DiaNoLectivoEntrada]) -> None:
+    """Las validaciones de la propuesta y, solo para el general, la de los 12 meses."""
+    _validar_propuesta(periodos, dias)
+    _exigir_sin_errores(errores_de_duracion(periodos))
+
+
 def crear_general(db: Session, data: CalendarioCrear, actor: Usuario) -> CalendarioRespuesta:
-    anio = _anio_existente(db, data.id_anio_escolar)
+    """Crea el general y, con `anio`, el año escolar si no existe, en una sola
+    transacción: todo se valida antes de escribir. Deja el año con las fechas del
+    calendario y sus semanas."""
+    anio = _anio_del_pedido(db, data)
     calendarios = cargar_calendarios(db)
     if anio.id_anio_escolar in calendarios.generales:
         raise _general_existente()
-    _validar_propuesta(data.periodos, data.dias_no_lectivos)
+    _validar_general(data.periodos, data.dias_no_lectivos)
     _exigir_sin_errores(_errores_con_vecinos(db, calendarios, anio, None, data.periodos))
     ahora = ahora_utc()
+    if anio.id_anio_escolar is None:
+        anio.creado_por, anio.creado_en = actor.id_usuario, ahora
+        db.add(anio)
+        db.flush()
     ids_periodo = asegurar_periodos_academicos(db, anio.id_anio_escolar, actor.id_usuario, ahora)
     borrador = Calendario(id_calendario=0, id_anio_escolar=anio.id_anio_escolar, version=1)
     propuesta = resolver_propuesta(borrador, data.periodos, data.dias_no_lectivos, {}, ids_periodo)
     calendario = insertar_calendario(db, anio.id_anio_escolar, None, propuesta, actor.id_usuario, ahora)
+    sincronizar_anio(db, anio, *rango_del_calendario(propuesta.periodos), actor.id_usuario, ahora)
     _auditar(db, calendario, CREAR, actor, ahora)
     _guardar(db, _general_existente())
     return _respuesta_de(db, anio.id_anio_escolar, None)
@@ -814,24 +906,33 @@ def editar(db: Session, id_calendario: int, data: CalendarioEditar, actor: Usuar
         raise _conflicto("El colegio ya no usa este calendario particular.", "calendario_inactivo")
     if calendario.version != data.version:
         raise _modificacion_concurrente()
-    _validar_propuesta(data.periodos, data.dias_no_lectivos)
+    es_general = calendario.id_colegio is None
+    if es_general:
+        _validar_general(data.periodos, data.dias_no_lectivos)
+    else:
+        _validar_propuesta(data.periodos, data.dias_no_lectivos)
     anio = db.get(AnioEscolar, calendario.id_anio_escolar)
     calendarios = cargar_calendarios(db)
     antes = calendarios.aplicable(calendario.id_colegio, anio.id_anio_escolar)
     ids_periodo = _ids_periodo(db, anio.id_anio_escolar)
     propuesta = resolver_propuesta(calendario, data.periodos, data.dias_no_lectivos, _origenes(antes), ids_periodo)
     _exigir_sin_errores(_errores_con_vecinos(db, calendarios, anio, calendario.id_colegio, data.periodos))
-    _exigir_compatible(db, anio.id_anio_escolar, _colegios_afectados(db, calendarios, calendario), propuesta)
+    _exigir_compatible(
+        db, anio.id_anio_escolar, _colegios_afectados(db, calendarios, calendario), propuesta,
+        anio if es_general else None,
+    )
     colegio = db.get(Colegio, calendario.id_colegio) if calendario.id_colegio is not None else None
     cambios = _cambios(antes, propuesta)
     if not cambios:
-        return respuesta(antes, colegio)
+        return respuesta(antes, colegio, anio.nombre)
     ahora = ahora_utc()
     _escribir_periodos(db, calendario, propuesta)
     _escribir_no_lectivos(db, calendario, propuesta, actor.id_usuario, ahora)
     calendario.version += 1
     calendario.modificado_por, calendario.modificado_en = actor.id_usuario, ahora
     db.add(calendario)
+    if es_general:
+        sincronizar_anio(db, anio, *rango_del_calendario(propuesta.periodos), actor.id_usuario, ahora)
     _auditar(db, calendario, EDITAR, actor, ahora, cambios)
     _guardar(db, _modificacion_concurrente())
     return _respuesta_de(db, anio.id_anio_escolar, colegio)

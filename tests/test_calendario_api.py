@@ -8,8 +8,10 @@ import pytest
 from sqlmodel import select
 
 from app.core.tiempo import ahora_utc
+from app.models.evaluacion import SemanaReporte
 from app.models.organizacion import ORIGEN_AUTOMATICO, AnioEscolar, Calendario, PeriodoAcademico
 from app.models.trazabilidad import Auditoria
+from app.services.anio_escolar import semanas_deseadas
 from tests.conftest import (
     a_las,
     agregar_no_lectivo,
@@ -19,6 +21,7 @@ from tests.conftest import (
     rangos_relativos,
     registrar_asistencia,
     releer,
+    tabla_lectura,
 )
 
 HOY = date(2026, 6, 17)  # miércoles; el PA2 del general va del 18/05 al 16/07
@@ -516,3 +519,163 @@ def test_editar_un_particular_inactivo(client, entorno, sup):
     respuesta = editar(client, sup, creado["id_calendario"], rangos_relativos(HOY), version=2)
 
     assert (respuesta.status_code, motivo(respuesta)) == (409, "calendario_inactivo")
+
+
+# ── El año escolar se crea con su calendario general (CU027, v2) ────────────────────
+
+MAS_DE_DOCE_MESES = (
+    "El año escolar no puede abarcar más de 12 meses: el receso posterior al cuarto periodo debe terminar antes "
+    "del mismo mes en que empezó el primer periodo."
+)
+# PA1 desde el jueves 04/03/2027 hasta un PR4 que termina el 29/12/2027.
+RANGOS_2027 = rangos_relativos(date(2027, 8, 1))
+
+
+def anios(db, nombre=None) -> list[AnioEscolar]:
+    db.expire_all()
+    consulta = select(AnioEscolar)
+    if nombre is not None:
+        consulta = consulta.where(AnioEscolar.nombre == nombre)
+    return list(db.exec(consulta).all())
+
+
+def semanas_del(db, anio: AnioEscolar) -> list[SemanaReporte]:
+    db.expire_all()
+    return list(db.exec(select(SemanaReporte).where(SemanaReporte.id_anio_escolar == anio.id_anio_escolar)
+                        .order_by(SemanaReporte.fecha_inicio)).all())
+
+
+def test_crear_con_anio_nuevo_crea_el_anio_sus_pa_y_semanas(client, db, entorno, sup):
+    cuerpo = {"anio": 2027, "periodos": periodos(RANGOS_2027)}
+
+    respuesta = client.post(URL, json=cuerpo, headers=sup)
+
+    assert respuesta.status_code == 201, respuesta.json()
+    [anio] = anios(db, "2027")
+    assert (respuesta.json()["id_anio_escolar"], respuesta.json()["anio"]) == (anio.id_anio_escolar, "2027")
+    assert (anio.fecha_inicio, anio.fecha_fin) == (RANGOS_2027["PA1"][0], RANGOS_2027["PR4"][1])
+    assert len(db.exec(select(PeriodoAcademico).where(PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar)).all()) == 4
+    semanas = semanas_del(db, anio)
+    assert [s.numero_semana for s in semanas] == list(range(1, len(semanas) + 1))
+    assert semanas[0].fecha_inicio <= anio.fecha_inicio <= semanas[0].fecha_fin
+    assert semanas[-1].fecha_inicio <= anio.fecha_fin
+    listados = client.get("/anios-escolares", headers=sup).json()
+    assert [(a["nombre"], a["fecha_inicio"]) for a in listados][-1] == ("2027", RANGOS_2027["PA1"][0].isoformat())
+
+
+def test_crear_con_anio_existente_usa_su_id(client, db, entorno, sup):
+    existente = AnioEscolar(nombre="2027", fecha_inicio=date(2027, 1, 1), fecha_fin=date(2027, 12, 31),
+                            creado_por=1, creado_en=ahora_utc())
+    db.add(existente)
+    db.commit()
+    total = len(anios(db))
+
+    respuesta = client.post(URL, json={"anio": 2027, "periodos": periodos(RANGOS_2027)}, headers=sup)
+
+    assert respuesta.status_code == 201, respuesta.json()
+    assert respuesta.json()["id_anio_escolar"] == existente.id_anio_escolar
+    assert len(anios(db)) == total
+    # Sus fechas pasan a ser las del calendario.
+    assert releer(db, AnioEscolar, existente.id_anio_escolar).fecha_inicio == RANGOS_2027["PA1"][0]
+    repetido = client.post(URL, json={"anio": 2027, "periodos": periodos(RANGOS_2027)}, headers=sup)
+    assert (repetido.status_code, motivo(repetido)) == (409, "calendario_existente")
+
+
+def test_crear_con_anio_y_validacion_fallida_no_crea_el_anio(client, db, entorno, sup):
+    cuerpo = {"anio": 2027, "periodos": periodos(RANGOS_2027)}
+    cuerpo["periodos"][1]["fecha_inicio"] = cuerpo["periodos"][0]["fecha_fin"]  # PR1 superpuesto con PA1
+
+    respuesta = client.post(URL, json=cuerpo, headers=sup)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
+    assert anios(db, "2027") == []
+    assert db.exec(select(Calendario).where(Calendario.id_anio_escolar.is_(None))).first() is None
+
+
+@pytest.mark.parametrize("anio_del_cuerpo", [{"anio": 2027, "id_anio_escolar": 1}, {}])
+def test_crear_con_anio_e_id_a_la_vez_o_sin_ninguno(client, db, entorno, sup, anio_del_cuerpo):
+    respuesta = client.post(URL, json={**anio_del_cuerpo, "periodos": periodos(RANGOS_2027)}, headers=sup)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
+    assert anios(db, "2027") == []
+
+
+def test_consultar_por_anio_sin_anio_escolar_no_crea_nada(client, db, entorno, sup):
+    total = len(anios(db))
+
+    sin_anio = client.get(URL, params={"anio": 2030}, headers=sup)
+    con_anio = client.get(URL, params={"anio": entorno.anio.nombre}, headers=sup)
+    ambos = client.get(URL, params={"anio": 2030, "id_anio_escolar": entorno.anio.id_anio_escolar}, headers=sup)
+
+    assert (sin_anio.status_code, motivo(sin_anio)) == (404, "calendario_no_configurado")
+    assert len(anios(db)) == total
+    assert (con_anio.status_code, con_anio.json()["id_anio_escolar"], con_anio.json()["anio"]) == (
+        200, entorno.anio.id_anio_escolar, entorno.anio.nombre,
+    )
+    assert (ambos.status_code, motivo(ambos)) == (422, "validacion")
+
+
+def test_editar_el_general_actualiza_las_fechas_y_semanas_del_anio(client, db, entorno, sup):
+    rangos = rangos_relativos(HOY)
+    rangos["PR4"] = (rangos["PR4"][0], rangos["PR4"][1] + timedelta(days=21))
+
+    respuesta = editar(client, sup, entorno.calendario.id_calendario, rangos)
+
+    assert respuesta.status_code == 200, respuesta.json()
+    anio = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
+    assert (anio.fecha_inicio, anio.fecha_fin) == (rangos["PA1"][0], rangos["PR4"][1])
+    esperadas = semanas_deseadas(anio.fecha_inicio, anio.fecha_fin)
+    assert [(s.fecha_inicio, s.numero_semana) for s in semanas_del(db, anio)] == [
+        (s.lunes, s.numero_semana) for s in esperadas
+    ]
+
+
+def test_editar_el_general_sin_dejar_fuera_semanas_con_tablas(client, db, entorno, sup):
+    rangos = rangos_relativos(HOY)
+    primera_semana = rangos["PA1"][0] + timedelta(days=(7 - rangos["PA1"][0].weekday()) % 7)  # su primer lunes
+    tabla_lectura(db, entorno.alumnos["ana"], primera_semana)
+    antes = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
+    fechas_antes = (antes.fecha_inicio, antes.fecha_fin)
+    rangos["PA1"] = (primera_semana + timedelta(days=14), rangos["PA1"][1])
+
+    respuesta = editar(client, sup, entorno.calendario.id_calendario, rangos)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (409, "calendario_incompatible")
+    fuera = [i for i in respuesta.json()["incompatibilidades"] if i["motivo"] == "fuera_del_anio"]
+    assert fuera[0]["mensaje"] == "La semana tiene una tabla de lectura semanal y quedaría fuera del año escolar."
+    anio = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
+    assert (anio.fecha_inicio, anio.fecha_fin) == fechas_antes
+
+
+def test_editar_un_particular_no_cambia_las_fechas_del_anio(client, db, entorno, sup):
+    creado = particular(client, entorno, sup).json()
+    antes = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
+    fechas_antes = (antes.fecha_inicio, antes.fecha_fin)
+    rangos = rangos_relativos(HOY)
+    rangos["PR4"] = (rangos["PR4"][0], rangos["PR4"][1] + timedelta(days=10))
+
+    respuesta = editar(client, sup, creado["id_calendario"], rangos)
+
+    assert respuesta.status_code == 200, respuesta.json()
+    anio = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
+    assert (anio.fecha_inicio, anio.fecha_fin) == fechas_antes
+
+
+def test_el_general_no_abarca_mas_de_12_meses(client, db, entorno, sup):
+    largo = dict(RANGOS_2027)
+    inicio = largo["PA1"][0]
+    largo["PR4"] = (largo["PR4"][0], date(inicio.year + 1, inicio.month, 1))
+    justo = dict(largo)
+    justo["PR4"] = (justo["PR4"][0], date(inicio.year + 1, inicio.month, 1) - timedelta(days=1))
+    del_entorno = rangos_relativos(HOY)
+    pa1 = del_entorno["PA1"][0]
+    del_entorno["PR4"] = (del_entorno["PR4"][0], date(pa1.year + 1, pa1.month, 15))
+
+    al_crear = client.post(URL, json={"anio": 2027, "periodos": periodos(largo)}, headers=sup)
+    al_editar = editar(client, sup, entorno.calendario.id_calendario, del_entorno)
+
+    for respuesta in (al_crear, al_editar):
+        assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
+        assert {"campo": "periodos.7.fecha_fin", "mensaje": MAS_DE_DOCE_MESES} in respuesta.json()["errores"]
+    assert anios(db, "2027") == []
+    assert client.post(URL, json={"anio": 2027, "periodos": periodos(justo)}, headers=sup).status_code == 201

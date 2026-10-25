@@ -1,43 +1,50 @@
 """cargar-calendario: año escolar, calendario general y semanas desde un JSON.
 
 Desde CU027 el calendario académico lo gestiona el Supervisor en la API. Este comando
-solo lo siembra:
-- el año se busca por nombre (sus fechas sí las manda el archivo) y se aseguran sus
-  periodos académicos PA1 a PA4 (`periodo_academico`, sin fechas);
+solo lo siembra (corre en cada arranque con `inicializar`):
+- el año se busca por nombre (`anio.nombre`) y se aseguran sus periodos académicos PA1
+  a PA4 (`periodo_academico`, sin fechas);
 - si el año no tiene calendario general, se crea con los PA del archivo y sus recesos
-  (`recesos`; si el archivo no los trae, se derivan como en la migración). Si ya existe y
-  difiere del archivo, NO se modifica (un despliegue no debe pisar lo que guardó un
-  Supervisor): queda un WARNING;
-- semana_reporte se genera de lunes a viernes en todo el rango del año escolar (toda
-  semana con al menos un día hábil dentro del año), sin depender de los PA, con
-  numero_semana correlativo en el año. Si eso deja fuera de rango semanas que ya tienen
-  tablas de lectura, ERROR y no se toca nada del año. Las semanas sin tablas que quedan
-  fuera se eliminan: son datos generados.
+  (`recesos`; si el archivo no los trae, se derivan como en la migración y el PR4 llega
+  hasta `anio.fecha_fin`). Si ya existe y difiere del archivo, NO se modifica (un
+  despliegue no debe pisar lo que guardó un Supervisor): queda un WARNING;
+- las fechas del año NO las manda el archivo: son las de su calendario general (inicio
+  del PA1 a fin del PR4) y, con ellas, sus semanas (`anio_escolar.sincronizar_anio`, el
+  mismo servicio que usa la API). Así los años existentes quedan alineados al arrancar.
+  Si eso deja fuera de rango semanas que ya tienen tablas de lectura, ERROR y no se toca
+  nada del año.
 """
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
 from app.cli.comun import DIR_DATOS, Resumen, id_supervisor_original, leer_json
 from app.core.tiempo import ahora_utc
-from app.models.evaluacion import LecturaSemanal, SemanaReporte
 from app.models.organizacion import AnioEscolar, Calendario, PeriodoAcademico
 from app.schemas.calendario import PeriodoEntrada
+from app.services.anio_escolar import (
+    LUNES,
+    VIERNES,
+    rango_del_calendario,
+    semanas_deseadas,
+    semanas_en_conflicto,
+    sincronizar_anio,
+)
 from app.services.calendario import NUMEROS_PA, calendario_general, cargar_calendarios
 from app.services.calendario_gestion import (
     asegurar_periodos_academicos,
     derivar_recesos,
+    errores_de_duracion,
     errores_de_periodos,
     insertar_calendario,
     resolver_propuesta,
 )
 
 ARCHIVO_CALENDARIO = DIR_DATOS / "calendario_2026.json"
-LUNES, VIERNES = 0, 4
-UNA_SEMANA = timedelta(days=7)
+__all__ = ["cargar_calendario", "leer_calendario", "semanas_deseadas", "validar_calendario"]
 
 
 @dataclass(frozen=True)
@@ -57,17 +64,11 @@ class RecesoArchivo:
 @dataclass(frozen=True)
 class CalendarioArchivo:
     nombre: str
-    inicio: date
-    fin: date
     periodos: tuple[PeriodoArchivo, ...]
     recesos: tuple[RecesoArchivo, ...] = ()
-
-
-@dataclass(frozen=True)
-class SemanaDeseada:
-    lunes: date
-    viernes: date
-    numero_semana: int
+    # Solo sin `recesos`: hasta dónde llega el PR4 derivado (`anio.fecha_fin`). Las fechas
+    # del año no salen del archivo.
+    fin_pr4: Optional[date] = None
 
 
 # ── Lectura y validación (sin BD) ───────────────────────────────────────────────────
@@ -88,17 +89,16 @@ def leer_calendario(datos: dict) -> tuple[Optional[CalendarioArchivo], list[str]
         recesos = [RecesoArchivo(int(r["numero"]), *_rango(r)) for r in datos.get("recesos", [])]
         calendario = CalendarioArchivo(
             nombre=str(anio["nombre"]),
-            inicio=date.fromisoformat(anio["fecha_inicio"]),
-            fin=date.fromisoformat(anio["fecha_fin"]),
             periodos=tuple(sorted(periodos, key=lambda p: p.inicio)),
             recesos=tuple(sorted(recesos, key=lambda r: r.numero)),
+            fin_pr4=date.fromisoformat(anio["fecha_fin"]) if anio.get("fecha_fin") else None,
         )
     except (KeyError, TypeError, ValueError) as e:
         return None, [f"formato inválido del calendario: {e!r}"]
     return calendario, validar_calendario(calendario)
 
 
-def _errores_periodo(p: PeriodoArchivo, cal: CalendarioArchivo) -> list[str]:
+def _errores_periodo(p: PeriodoArchivo) -> list[str]:
     errores = []
     if p.inicio > p.fin:
         errores.append(f"periodo {p.numero}: empieza ({p.inicio}) después de terminar ({p.fin})")
@@ -106,20 +106,18 @@ def _errores_periodo(p: PeriodoArchivo, cal: CalendarioArchivo) -> list[str]:
         errores.append(f"periodo {p.numero}: {p.inicio} no es lunes")
     if p.fin.weekday() != VIERNES:
         errores.append(f"periodo {p.numero}: {p.fin} no es viernes")
-    if p.inicio < cal.inicio or p.fin > cal.fin:
-        errores.append(f"periodo {p.numero}: {p.inicio}..{p.fin} sale del año {cal.inicio}..{cal.fin}")
     return errores
 
 
 def validar_calendario(cal: CalendarioArchivo) -> list[str]:
     errores = []
-    if cal.inicio > cal.fin:
-        errores.append(f"año {cal.nombre}: empieza ({cal.inicio}) después de terminar ({cal.fin})")
     numeros = [p.numero for p in cal.periodos]
     if sorted(numeros) != list(NUMEROS_PA):
         errores.append(f"año {cal.nombre}: debe tener los periodos 1 a 4, una vez cada uno (tiene {numeros})")
+    if not cal.recesos and cal.fin_pr4 is None:
+        errores.append(f"año {cal.nombre}: sin `recesos`, `anio.fecha_fin` indica hasta dónde llega el PR4")
     for p in cal.periodos:
-        errores += _errores_periodo(p, cal)
+        errores += _errores_periodo(p)
     # Ordenados por inicio: entre un PA y el siguiente debe quedar al menos un día de receso.
     for anterior, siguiente in zip(cal.periodos, cal.periodos[1:]):
         if siguiente.inicio <= anterior.fin + timedelta(days=1):
@@ -128,70 +126,37 @@ def validar_calendario(cal: CalendarioArchivo) -> list[str]:
             )
     if errores:
         return errores
-    # Los 8 periodos (con los recesos del archivo o derivados) en orden y sin solaparse.
-    return [f"año {cal.nombre}: {campo}: {mensaje}" for campo, mensaje in errores_de_periodos(periodos_del_archivo(cal))]
+    # Los 8 periodos (con los recesos del archivo o derivados) en orden, sin solaparse y
+    # en no más de 12 meses (como en la API).
+    periodos = periodos_del_archivo(cal)
+    errores = errores_de_periodos(periodos) or errores_de_duracion(periodos)
+    return [f"año {cal.nombre}: {campo}: {mensaje}" for campo, mensaje in errores]
 
 
 def periodos_del_archivo(cal: CalendarioArchivo) -> list[PeriodoEntrada]:
     """Los 8 periodos del calendario general: los PA del archivo y sus recesos (los del
     archivo o, si no trae ninguno, derivados de los huecos entre PA)."""
     if not cal.recesos:
-        return derivar_recesos([(p.inicio, p.fin) for p in cal.periodos], cal.fin)
+        return derivar_recesos([(p.inicio, p.fin) for p in cal.periodos], cal.fin_pr4)
     return [
         *(PeriodoEntrada(tipo="PA", numero=p.numero, fecha_inicio=p.inicio, fecha_fin=p.fin) for p in cal.periodos),
         *(PeriodoEntrada(tipo="PR", numero=r.numero, fecha_inicio=r.inicio, fecha_fin=r.fin) for r in cal.recesos),
     ]
 
 
-def semanas_deseadas(inicio: date, fin: date) -> list[SemanaDeseada]:
-    """Semanas de lunes a viernes con al menos un día hábil en [inicio, fin] (el año
-    escolar), numeradas 1..N."""
-    lunes = inicio - timedelta(days=inicio.weekday() - LUNES)
-    if lunes + timedelta(days=VIERNES) < inicio:
-        lunes += UNA_SEMANA
-    semanas = []
-    while lunes <= fin:
-        semanas.append(SemanaDeseada(lunes, lunes + timedelta(days=VIERNES), len(semanas) + 1))
-        lunes += UNA_SEMANA
-    return semanas
-
-
 # ── Escritura ───────────────────────────────────────────────────────────────────────
 
 
-def _semanas_con_registros(db: Session, ids_semana: list[int]) -> set[int]:
-    if not ids_semana:
-        return set()
-    return set(db.exec(select(LecturaSemanal.id_semana).where(col(LecturaSemanal.id_semana).in_(ids_semana))).all())
-
-
-def _conflictos(
-    semanas_bd: list[SemanaReporte], con_registros: set[int], deseadas: dict[date, SemanaDeseada]
-) -> list[str]:
-    """Semanas con tablas de lectura que el año dejaría fuera de rango."""
-    return [
-        f"semana {semana.id_semana} ({semana.fecha_inicio}..{semana.fecha_fin}) tiene registros y quedaría "
-        "fuera de rango"
-        for semana in semanas_bd
-        if semana.id_semana in con_registros and semana.fecha_inicio not in deseadas
-    ]
-
-
-def _cargar_anio(db: Session, cal: CalendarioArchivo, auditoria: dict, resumen: Resumen) -> AnioEscolar:
+def _cargar_anio(
+    db: Session, cal: CalendarioArchivo, rango: tuple[date, date], auditoria: dict, resumen: Resumen
+) -> AnioEscolar:
+    """El año por nombre; si no existe, se crea con el rango del calendario general."""
     anio = db.exec(select(AnioEscolar).where(AnioEscolar.nombre == cal.nombre)).first()
     if anio is None:
-        anio = AnioEscolar(nombre=cal.nombre, fecha_inicio=cal.inicio, fecha_fin=cal.fin, **auditoria)
+        anio = AnioEscolar(nombre=cal.nombre, fecha_inicio=rango[0], fecha_fin=rango[1], **auditoria)
         db.add(anio)
         db.flush()
         resumen.creados["año_escolar"] += 1
-    elif (anio.fecha_inicio, anio.fecha_fin) != (cal.inicio, cal.fin):
-        resumen.advertir(
-            f"año {cal.nombre}: fechas {anio.fecha_inicio}..{anio.fecha_fin} -> {cal.inicio}..{cal.fin} "
-            "(el archivo de calendario manda)"
-        )
-        anio.fecha_inicio, anio.fecha_fin = cal.inicio, cal.fin
-        anio.modificado_por, anio.modificado_en = auditoria["creado_por"], auditoria["creado_en"]
-        resumen.actualizados["año_escolar"] += 1
     return anio
 
 
@@ -231,58 +196,31 @@ def _cargar_calendario_general(
         )
 
 
-def _sincronizar_semanas(
-    db: Session,
-    anio: AnioEscolar,
-    semanas_bd: list[SemanaReporte],
-    deseadas: dict[date, SemanaDeseada],
-    auditoria: dict,
-    resumen: Resumen,
+def _rango_del_general(db: Session, anio: Optional[AnioEscolar], cal: CalendarioArchivo) -> tuple[date, date]:
+    """Fechas que tendrá el año: las del general que ya existe o, si no, las del archivo."""
+    if anio is not None:
+        general = cargar_calendarios(db, anio.id_anio_escolar, ids_colegio=[]).generales.get(anio.id_anio_escolar)
+        if general is not None:
+            return rango_del_calendario(general.periodos)
+    return rango_del_calendario(periodos_del_archivo(cal))
+
+
+def _sincronizar(
+    db: Session, anio: AnioEscolar, rango: tuple[date, date], auditoria: dict, resumen: Resumen
 ) -> None:
-    pendientes = dict(deseadas)
-    for semana in semanas_bd:
-        deseada = pendientes.pop(semana.fecha_inicio, None)
-        if deseada is None:
-            # Sin registros (lo garantiza _conflictos): era una semana generada que ya no aplica.
-            db.delete(semana)
-            resumen.eliminados["semana_reporte"] += 1
-            continue
-        valores = (deseada.viernes, deseada.numero_semana)
-        if (semana.fecha_fin, semana.numero_semana) != valores:
-            semana.fecha_fin, semana.numero_semana = valores
-            semana.modificado_por, semana.modificado_en = auditoria["creado_por"], auditoria["creado_en"]
-            resumen.actualizados["semana_reporte"] += 1
-    for deseada in pendientes.values():
-        db.add(
-            SemanaReporte(
-                id_anio_escolar=anio.id_anio_escolar,
-                numero_semana=deseada.numero_semana,
-                fecha_inicio=deseada.lunes,
-                fecha_fin=deseada.viernes,
-                **auditoria,
-            )
-        )
-        resumen.creados["semana_reporte"] += 1
+    cambios = sincronizar_anio(db, anio, *rango, auditoria["creado_por"], auditoria["creado_en"])
+    if cambios.fechas and resumen.creados["año_escolar"] == 0:
+        resumen.actualizados["año_escolar"] += 1
+    resumen.creados["semana_reporte"] += cambios.semanas["creadas"]
+    resumen.actualizados["semana_reporte"] += cambios.semanas["actualizadas"]
+    resumen.eliminados["semana_reporte"] += cambios.semanas["eliminadas"]
 
 
-def _conflictos_de_semanas(
-    db: Session, anio: Optional[AnioEscolar], deseadas: dict[date, SemanaDeseada]
-) -> tuple[list[SemanaReporte], list[str]]:
-    if anio is None:
-        return [], []
-    semanas_bd = list(db.exec(select(SemanaReporte).where(SemanaReporte.id_anio_escolar == anio.id_anio_escolar)).all())
-    con_registros = _semanas_con_registros(db, [s.id_semana for s in semanas_bd])
-    return semanas_bd, _conflictos(semanas_bd, con_registros, deseadas)
-
-
-def _escribir(
-    db: Session, cal: CalendarioArchivo, semanas: tuple[list[SemanaReporte], dict[date, SemanaDeseada]],
-    auditoria: dict, resumen: Resumen,
-) -> None:
-    anio = _cargar_anio(db, cal, auditoria, resumen)
+def _escribir(db: Session, cal: CalendarioArchivo, rango: tuple[date, date], auditoria: dict, resumen: Resumen) -> None:
+    anio = _cargar_anio(db, cal, rango, auditoria, resumen)
     _cargar_periodos(db, cal, anio, auditoria, resumen)
     _cargar_calendario_general(db, cal, anio, auditoria, resumen)
-    _sincronizar_semanas(db, anio, *semanas, auditoria, resumen)
+    _sincronizar(db, anio, rango, auditoria, resumen)
     db.commit()
 
 
@@ -304,13 +242,16 @@ def cargar_calendario(db: Session, archivo: Path = ARCHIVO_CALENDARIO) -> Resume
         return resumen
 
     anio = db.exec(select(AnioEscolar).where(AnioEscolar.nombre == cal.nombre)).first()
-    deseadas = {s.lunes: s for s in semanas_deseadas(cal.inicio, cal.fin)}
-    semanas_bd, conflictos = _conflictos_de_semanas(db, anio, deseadas)
+    rango = _rango_del_general(db, anio, cal)
+    conflictos = semanas_en_conflicto(db, anio, *rango)
     if conflictos:
-        for mensaje in conflictos:
-            resumen.error(f"Calendario {cal.nombre} no se aplica: {mensaje}")
+        for tabla in conflictos:
+            resumen.error(
+                f"Calendario {cal.nombre} no se aplica: la semana {tabla.id_semana} tiene registros y quedaría "
+                "fuera de rango"
+            )
         return resumen
 
     auditoria: dict[str, int | datetime] = {"creado_por": id_supervisor, "creado_en": ahora_utc()}
-    _escribir(db, cal, (semanas_bd, deseadas), auditoria, resumen)
+    _escribir(db, cal, rango, auditoria, resumen)
     return resumen
