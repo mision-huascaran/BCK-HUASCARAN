@@ -300,6 +300,53 @@ class LecturaSemanal(SQLModel, table=True):
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
+class LecturaNoRealizada(SQLModel, table=True):
+    """Historial de declaraciones "No realizada" de una tabla de lectura (CU026). Una fila
+    por declaración, con su justificación y quién, con qué actividad y autorización y
+    cuándo la hizo. "Habilitar registro de lectura" la revierte completando los campos
+    de reversión: nada se borra. Solo una declaración vigente (no revertida) por tabla.
+    `lectura_semanal.estado` y `motivo_no_realizada` siguen siendo el estado actual."""
+
+    __tablename__ = "lectura_no_realizada"
+    __table_args__ = (
+        CheckConstraint("length(trim(motivo)) > 0", name="ck_lectura_no_realizada_motivo"),
+        CheckConstraint(
+            "(revertida_por IS NULL AND motivo_correccion IS NULL AND fecha_registro_reversion IS NULL "
+            "AND revertida_en IS NULL AND id_actividad_reversion IS NULL AND id_permiso_reversion IS NULL) OR "
+            "(revertida_por IS NOT NULL AND motivo_correccion IS NOT NULL AND fecha_registro_reversion IS NOT NULL "
+            "AND revertida_en IS NOT NULL)",
+            name="ck_lectura_no_realizada_reversion",
+        ),
+        CheckConstraint(
+            "motivo_correccion IS NULL OR length(trim(motivo_correccion)) > 0",
+            name="ck_lectura_no_realizada_motivo_correccion",
+        ),
+        Index(
+            "uq_lectura_no_realizada_vigente", "id_lectura_semanal", unique=True,
+            postgresql_where=text("revertida_en IS NULL"), sqlite_where=text("revertida_en IS NULL"),
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    id_lectura_semanal: int = Field(foreign_key="lectura_semanal.id", ondelete="CASCADE")
+    motivo: str = Field(sa_type=Text)
+    declarada_por: int = Field(foreign_key=FK_USUARIO)
+    id_docente: int = Field(foreign_key=FK_DOCENTE)
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
+    # Momento original de la declaración (puede venir de una operación sin conexión).
+    fecha_registro: datetime = Field(sa_type=UTCDateTime)
+    creado_en: datetime = Field(sa_type=UTCDateTime)
+
+    revertida_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
+    motivo_correccion: Optional[str] = Field(default=None, sa_type=Text)
+    id_actividad_reversion: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso_reversion: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
+    # Momento original de la reversión.
+    fecha_registro_reversion: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+    revertida_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
+
 class LecturaSemanalAlumno(SQLModel, table=True):
     """Fila de un alumno de la lista de la clase de referencia (CU024). LSN: uno por
     semana, todo o nada (título + nota + máximo 5 o 10). LSL: cantidad entera; null = no

@@ -16,7 +16,10 @@ semana que cae en dos meses tiene una sola tabla.
 - La asistencia de la clase de referencia manda: presente o tardanza habilitan los datos
   de lectura; ausente deja la fila en "No aplica"; sin asistencia, "Pendiente".
 - "No realizada" (CU026): para toda la tabla, con motivo, solo si ninguna fila tiene
-  datos de lectura; bloquea los datos de lectura y las observaciones.
+  datos de lectura; bloquea los datos de lectura y las observaciones. Cada declaración
+  queda en el historial (`lectura_no_realizada`). "Habilitar registro de lectura" la
+  revierte con un motivo de corrección (si sigue vigente y con la misma versión): la
+  tabla vuelve a "normal" y se conserva todo; se puede volver a declarar después.
 
 Lectura: el Docente en su alcance de lectura; el Supervisor, de todo y en solo lectura.
 Cada escritura es una operación (`procesar_operacion`) del Docente, con actividad y
@@ -45,6 +48,7 @@ from app.models.evaluacion import (
     Asistencia,
     Clase,
     ClaseAlumno,
+    LecturaNoRealizada,
     LecturaSemanal,
     LecturaSemanalAlumno,
     SemanaReporte,
@@ -52,11 +56,14 @@ from app.models.evaluacion import (
 from app.models.organizacion import Alumno, AnioEscolar, Programa, Usuario
 from app.schemas.asistencia import Escritura
 from app.schemas.catalogos import SemanaResponse
+from app.schemas.comun import ItemCatalogo
 from app.schemas.lectura import (
     ClaseReferencia,
     ClaseReferenciaCambiar,
+    DeclaracionNoRealizada,
     FilaLectura,
     FilaLecturaGuardar,
+    HabilitarRegistro,
     NoRealizadaMarcar,
     TablaLectura,
     TablaLecturaCrear,
@@ -114,10 +121,12 @@ LSN_INCOMPLETO = "lsn_incompleto"
 LSN_INVALIDO = "lsn_invalido"
 ALUMNO_FUERA_DE_LA_TABLA = "alumno_fuera_de_la_tabla"
 NO_REALIZADA = "lectura_no_realizada"
+DECLARACION_NO_VIGENTE = "declaracion_no_vigente"
 MODIFICACION_CONCURRENTE = "modificacion_concurrente"
 # Los rechazos que se responden 409 (el resto, 422).
 CONFLICTOS = frozenset({
-    TABLA_EXISTENTE, TABLA_CON_DATOS, CLASE_YA_USADA, NO_REALIZADA, MODIFICACION_CONCURRENTE, OPERACION_AJENA,
+    TABLA_EXISTENTE, TABLA_CON_DATOS, CLASE_YA_USADA, NO_REALIZADA, DECLARACION_NO_VIGENTE, MODIFICACION_CONCURRENTE,
+    OPERACION_AJENA,
 })
 
 MENSAJE_TABLA_NO_EXISTE = "No existe una tabla de lectura semanal para los filtros seleccionados."
@@ -168,6 +177,10 @@ MENSAJE_SIN_HABILITACION_NO_REALIZADA = (
     "No tienes una habilitación vigente para marcar la lectura semanal como no realizada en la semana seleccionada."
 )
 MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA = MENSAJE_ACTIVIDAD_REQUERIDA
+MENSAJE_MOTIVO_CORRECCION = "Ingresa el motivo de la corrección."
+MENSAJE_DECLARACION_NO_VIGENTE = "La lectura ya no figura como no realizada. Consulta la versión actual."
+# Campo solo de auditoría de la reversión.
+CAMPO_MOTIVO_CORRECCION = "motivo_correccion"
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta la lectura semanal en solo lectura."
 
 MENSAJES_ESCRITURA = MensajesEscritura(MENSAJE_SOLO_LECTURA, MENSAJE_SIN_HABILITACION_FILAS, MENSAJE_SIN_ACTIVIDAD_FILAS)
@@ -428,6 +441,28 @@ def _fila_salida(
     )
 
 
+def _declaraciones(db: Session, id_tabla: int) -> list[DeclaracionNoRealizada]:
+    """Historial "No realizada" de la tabla, la más reciente primero, con los nombres de
+    quién declaró y quién revirtió."""
+    filas = db.exec(
+        select(LecturaNoRealizada).where(LecturaNoRealizada.id_lectura_semanal == id_tabla)
+        .order_by(col(LecturaNoRealizada.fecha_registro).desc(), col(LecturaNoRealizada.id).desc())
+    ).all()
+    ids = {f.declarada_por for f in filas} | {f.revertida_por for f in filas if f.revertida_por is not None}
+    nombres = {
+        u.id_usuario: ItemCatalogo(id=u.id_usuario, nombre=f"{u.nombres} {u.apellidos}")
+        for u in db.exec(select(Usuario).where(col(Usuario.id_usuario).in_(ids))).all()
+    } if ids else {}
+    return [
+        DeclaracionNoRealizada(
+            id=f.id, motivo=f.motivo, declarada_por=nombres[f.declarada_por], fecha_registro=f.fecha_registro,
+            vigente=f.revertida_en is None, motivo_correccion=f.motivo_correccion,
+            revertida_por=nombres.get(f.revertida_por), fecha_registro_reversion=f.fecha_registro_reversion,
+        )
+        for f in filas
+    ]
+
+
 def _respuesta(db: Session, usuario: Usuario, tabla: LecturaSemanal) -> TablaLectura:
     clase = db.get(Clase, tabla.id_clase_referencia)
     filtro = _filtro_de(tabla)
@@ -436,6 +471,7 @@ def _respuesta(db: Session, usuario: Usuario, tabla: LecturaSemanal) -> TablaLec
         **filtro.columnas(), clase_referencia=_referencia(clase),
         filas=_filas_salida(db, tabla, clase.fecha),
         escritura=_escritura(db, usuario, filtro.grupo, clase.fecha),
+        declaraciones=_declaraciones(db, tabla.id),
     )
 
 
@@ -558,12 +594,15 @@ def _firmar(registro: LecturaSemanal | LecturaSemanalAlumno, captura: _Captura, 
 
 
 def _guardar_cambios(
-    db: Session, registro: LecturaSemanal | LecturaSemanalAlumno, cambios: dict[str, tuple], captura: _Captura
+    db: Session, registro: LecturaSemanal | LecturaSemanalAlumno, cambios: dict[str, tuple], captura: _Captura,
+    solo_auditoria: Optional[dict[str, tuple]] = None,
 ) -> None:
-    """Aplica y audita los cambios (campo -> (anterior, nuevo)) del registro."""
+    """Aplica y audita los cambios (campo -> (anterior, nuevo)) del registro; los de
+    `solo_auditoria` se auditan pero no son columnas del registro."""
     ahora = ahora_utc()
     registrar_auditoria(
-        db, tabla=registro.__tablename__, id_registro=registro.id, accion=EDITAR, cambios=cambios,
+        db, tabla=registro.__tablename__, id_registro=registro.id, accion=EDITAR,
+        cambios={**cambios, **(solo_auditoria or {})},
         id_usuario=captura.usuario.id_usuario, fecha=ahora, id_actividad=captura.contexto.id_actividad,
         id_permiso=captura.id_permiso,
     )
@@ -802,10 +841,33 @@ def _marcador(db: Session, usuario: Usuario, id_tabla: int, data: NoRealizadaMar
         nuevos = {"estado": LECTURA_NO_REALIZADA, "motivo_no_realizada": motivo}
         cambios = {c: (getattr(tabla, c), v) for c, v in nuevos.items() if getattr(tabla, c) != v}
         if cambios:
-            _guardar_cambios(db, tabla, cambios, _Captura(usuario, contexto, id_permiso))
+            captura = _Captura(usuario, contexto, id_permiso)
+            _registrar_declaracion(db, tabla, motivo, captura)
+            _guardar_cambios(db, tabla, cambios, captura)
         return {"id": tabla.id}
 
     return aplicar
+
+
+def _declaracion_vigente(db: Session, id_tabla: int) -> Optional[LecturaNoRealizada]:
+    return db.exec(select(LecturaNoRealizada).where(
+        LecturaNoRealizada.id_lectura_semanal == id_tabla, col(LecturaNoRealizada.revertida_en).is_(None),
+    )).first()
+
+
+def _registrar_declaracion(db: Session, tabla: LecturaSemanal, motivo: str, captura: _Captura) -> None:
+    """Una declaración nueva en el historial; si la tabla ya estaba "No realizada", solo
+    se corrige el motivo de la vigente (sigue habiendo una sola vigente)."""
+    vigente = _declaracion_vigente(db, tabla.id)
+    if vigente is not None:
+        vigente.motivo = motivo
+        db.add(vigente)
+        return
+    db.add(LecturaNoRealizada(
+        id_lectura_semanal=tabla.id, motivo=motivo, declarada_por=captura.usuario.id_usuario,
+        id_docente=captura.usuario.id_docente, id_actividad=captura.contexto.id_actividad,
+        id_permiso=captura.id_permiso, fecha_registro=captura.contexto.en, creado_en=ahora_utc(),
+    ))
 
 
 def marcar_no_realizada(db: Session, usuario: Usuario, id_tabla: int, data: NoRealizadaMarcar) -> TablaLectura:
@@ -817,6 +879,57 @@ def marcar_no_realizada(db: Session, usuario: Usuario, id_tabla: int, data: NoRe
         raise error_de_campo("motivo", MENSAJE_MOTIVO_OBLIGATORIO)
     operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA)
     return _ejecutar(db, usuario, data, _marcador(db, usuario, id_tabla, data, motivo), operacion)
+
+
+# ── Habilitar registro de lectura (CU026) ───────────────────────────────────────────
+
+def _no_vigente(tabla: LecturaSemanal) -> RechazoOperacion:
+    return RechazoOperacion(
+        DECLARACION_NO_VIGENTE, MENSAJE_DECLARACION_NO_VIGENTE, {"id": tabla.id, "version": tabla.version}
+    )
+
+
+def _revertidor(db: Session, usuario: Usuario, id_tabla: int, data: HabilitarRegistro, motivo: str):
+    def aplicar(contexto: ContextoOperacion) -> dict[str, Any]:
+        tabla = _tabla_bloqueada(db, id_tabla)
+        clase = db.get(Clase, tabla.id_clase_referencia)
+        id_permiso = _exigir_habilitacion(
+            db, usuario, _filtro_de(tabla).grupo, clase.id_periodo_academico, contexto.en,
+            MENSAJE_SIN_HABILITACION_FILAS,
+        )
+        # Sin declaración vigente (rechazada o ya revertida por otra operación) no se
+        # aplica nada; después, la versión: no se revierte otra versión de la tabla.
+        vigente = _declaracion_vigente(db, tabla.id)
+        if tabla.estado != LECTURA_NO_REALIZADA or vigente is None:
+            raise _no_vigente(tabla)
+        _exigir_version_tabla(tabla, data.version)
+        ahora = ahora_utc()
+        vigente.revertida_por, vigente.motivo_correccion = usuario.id_usuario, motivo
+        vigente.id_actividad_reversion, vigente.id_permiso_reversion = contexto.id_actividad, id_permiso
+        vigente.fecha_registro_reversion, vigente.revertida_en = contexto.en, ahora
+        db.add(vigente)
+        cambios = {"estado": (tabla.estado, LECTURA_NORMAL), "motivo_no_realizada": (tabla.motivo_no_realizada, None)}
+        _guardar_cambios(
+            db, tabla, cambios, _Captura(usuario, contexto, id_permiso),
+            solo_auditoria={CAMPO_MOTIVO_CORRECCION: (None, motivo)},
+        )
+        return {"id": tabla.id}
+
+    return aplicar
+
+
+def habilitar_registro(db: Session, usuario: Usuario, id_tabla: int, data: HabilitarRegistro) -> TablaLectura:
+    """Revierte la declaración "No realizada" vigente (CU026) con su motivo de corrección:
+    la tabla vuelve a "normal" (las filas se recalculan como siempre) y se conservan la
+    declaración, la corrección, quién, con qué actividad y autorización y cuándo. 422 si
+    falta el motivo; 409 `declaracion_no_vigente` si ya no está "No realizada" y
+    `modificacion_concurrente` si cambió la versión."""
+    _tabla_visible(db, usuario, id_tabla)
+    motivo = (data.motivo or "").strip()
+    if not motivo:
+        raise error_de_campo("motivo", MENSAJE_MOTIVO_CORRECCION)
+    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA)
+    return _ejecutar(db, usuario, data, _revertidor(db, usuario, id_tabla, data, motivo), operacion)
 
 
 # ── Filas (CU024, CU025) ────────────────────────────────────────────────────────────

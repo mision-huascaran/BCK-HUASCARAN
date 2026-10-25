@@ -679,3 +679,20 @@ def test_el_general_no_abarca_mas_de_12_meses(client, db, entorno, sup):
         assert {"campo": "periodos.7.fecha_fin", "mensaje": MAS_DE_DOCE_MESES} in respuesta.json()["errores"]
     assert anios(db, "2027") == []
     assert client.post(URL, json={"anio": 2027, "periodos": periodos(justo)}, headers=sup).status_code == 201
+
+
+def test_el_pa1_empieza_en_el_anio_seleccionado(client, db, entorno, sup):
+    existente = AnioEscolar(nombre="2028", fecha_inicio=date(2028, 1, 1), fecha_fin=date(2028, 12, 31),
+                            creado_por=1, creado_en=ahora_utc())
+    db.add(existente)
+    db.commit()
+    error = {"campo": "periodos.0.fecha_inicio", "mensaje": "El primer periodo debe empezar en el año seleccionado."}
+
+    por_valor = client.post(URL, json={"anio": 2029, "periodos": periodos(RANGOS_2027)}, headers=sup)
+    por_id = client.post(URL, json={"id_anio_escolar": existente.id_anio_escolar, "periodos": periodos(RANGOS_2027)},
+                         headers=sup)
+
+    for respuesta in (por_valor, por_id):
+        assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
+        assert error in respuesta.json()["errores"]
+    assert anios(db, "2029") == []

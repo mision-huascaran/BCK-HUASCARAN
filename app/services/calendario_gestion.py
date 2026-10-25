@@ -6,6 +6,7 @@ Reglas (todas validadas aquí, además de lo que impone la BD):
   superponerse y con inicio <= fin (fechas inclusivas).
 - El PR4 no puede chocar con el PA1 del año escolar siguiente del mismo colegio (ni el
   PA1 con el PR4 del año anterior).
+- Al crear el general, el PA1 empieza en el año calendario del año escolar (su nombre).
 - Año escolar (decisión del equipo): sus fechas son las del calendario general, del
   inicio del PA1 al fin del PR4 (`anio_escolar.sincronizar_anio`, que también ajusta sus
   semanas). Al crear el general con `anio`, el año escolar se crea en la misma
@@ -95,6 +96,7 @@ REGISTRO_RUBRICA = "rubrica"
 REGISTRO_VUELO = "registro_vuelo"
 FORMATO_FECHA = "%d/%m/%Y"
 FIN_ANTES_DE_INICIO = "La fecha de fin no puede ser anterior a la fecha de inicio."
+PA1_FUERA_DEL_ANIO = "El primer periodo debe empezar en el año seleccionado."
 MAS_DE_DOCE_MESES = (
     "El año escolar no puede abarcar más de 12 meses: el receso posterior al cuarto periodo debe terminar antes "
     "del mismo mes en que empezó el primer periodo."
@@ -237,6 +239,17 @@ def errores_de_duracion(periodos: list[PeriodoEntrada]) -> Errores:
     inicio, fin = rango_del_calendario(periodos)
     if fin >= date(inicio.year + 1, inicio.month, 1):
         return [(_campo_de(periodos, TIPO_PR, 4, "fecha_fin"), MAS_DE_DOCE_MESES)]
+    return []
+
+
+def errores_del_anio(anio: AnioEscolar, periodos: list[PeriodoEntrada]) -> Errores:
+    """Al crear el general, el PA1 empieza en el año calendario del año escolar (su
+    nombre, p. ej. "2027"). Un nombre que no es un año (datos antiguos) no se valida."""
+    if not anio.nombre.isdigit():
+        return []
+    inicio, _ = rango_del_calendario(periodos)
+    if inicio.year != int(anio.nombre):
+        return [(_campo_de(periodos, TIPO_PA, 1, "fecha_inicio"), PA1_FUERA_DEL_ANIO)]
     return []
 
 
@@ -876,6 +889,7 @@ def crear_general(db: Session, data: CalendarioCrear, actor: Usuario) -> Calenda
     if anio.id_anio_escolar in calendarios.generales:
         raise _general_existente()
     _validar_general(data.periodos, data.dias_no_lectivos)
+    _exigir_sin_errores(errores_del_anio(anio, data.periodos))
     _exigir_sin_errores(_errores_con_vecinos(db, calendarios, anio, None, data.periodos))
     ahora = ahora_utc()
     if anio.id_anio_escolar is None:

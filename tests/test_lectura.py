@@ -5,9 +5,17 @@ import uuid
 from datetime import date
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from app.models.evaluacion import Asistencia, Clase, ClaseAlumno, LecturaSemanal, LecturaSemanalAlumno
+from app.models.evaluacion import (
+    Asistencia,
+    Clase,
+    ClaseAlumno,
+    LecturaNoRealizada,
+    LecturaSemanal,
+    LecturaSemanalAlumno,
+)
 from app.models.organizacion import ColegioGrado, DocenteColegioGrado
 from app.models.trazabilidad import Auditoria
 from app.services import cambios, lectura_service
@@ -767,3 +775,157 @@ def test_no_realizada_en_una_semana_partida(client, db, entorno, julio, doc, los
 
     assert respuesta.status_code == 200, respuesta.text
     assert (respuesta.json()["estado"], respuesta.json()["mes"]) == ("no_realizada", 7)
+
+
+# ── Habilitar registro de lectura: revertir un "No realizada" (CU026, v2) ────────────
+
+MENSAJE_NO_VIGENTE = "La lectura ya no figura como no realizada. Consulta la versión actual."
+
+
+def habilitar(client, cabecera, id_tabla, version, motivo_="Se marcó por error", id_operacion=None):
+    return client.post(f"/lectura/tablas/{id_tabla}/habilitar-registro",
+                       json={"id_operacion": str(id_operacion or uuid.uuid4()), "version": version,
+                             "motivo": motivo_}, headers=cabecera)
+
+
+def test_marcar_no_realizada_crea_su_declaracion(client, db, entorno, cabeceras, tabla):
+    doc = cabeceras["Docente"]
+    marcar(client, doc, tabla["id"], motivo_="Paro de transportistas")
+
+    consulta = consultar(client, doc, db, entorno).json()
+
+    [declaracion] = consulta["declaraciones"]
+    docente = entorno.usuarios["Docente"]
+    assert (declaracion["motivo"], declaracion["vigente"], declaracion["motivo_correccion"]) == (
+        "Paro de transportistas", True, None,
+    )
+    assert declaracion["declarada_por"] == {"id": docente.id_usuario, "nombre": f"{docente.nombres} {docente.apellidos}"}
+    fila = db.exec(select(LecturaNoRealizada)).one()
+    assert (fila.id_docente, fila.revertida_en) == (entorno.id_docente, None)
+
+
+def test_habilitar_registro_revierte_y_conserva_el_historial(client, db, entorno, cabeceras, tabla, actividad):
+    doc = cabeceras["Docente"]
+    marcar(client, doc, tabla["id"], motivo_="Paro")
+
+    respuesta = habilitar(client, doc, tabla["id"], 2, motivo_="  Se marcó por error  ")
+
+    assert respuesta.status_code == 200, respuesta.text
+    cuerpo = respuesta.json()
+    assert (cuerpo["estado"], cuerpo["motivo_no_realizada"], cuerpo["version"]) == ("normal", None, 3)
+    # Ana asistió y no tiene lectura: vuelve a "Pendiente"; no se generan datos.
+    assert [(f["estado_fila"], f["cantidad_lsl"]) for f in cuerpo["filas"]] == [("pendiente", None)]
+    [declaracion] = cuerpo["declaraciones"]
+    assert (declaracion["motivo"], declaracion["vigente"], declaracion["motivo_correccion"]) == (
+        "Paro", False, "Se marcó por error",
+    )
+    assert declaracion["revertida_por"]["id"] == entorno.usuarios["Docente"].id_usuario
+    historial = db.exec(select(LecturaNoRealizada)).one()
+    assert historial.id_actividad_reversion == uuid.UUID(actividad["id"])
+    assert historial.revertida_en is not None and historial.fecha_registro_reversion is not None
+    auditoria = db.exec(select(Auditoria).where(Auditoria.tabla == "lectura_semanal",
+                                                Auditoria.campo == "motivo_correccion")).one()
+    assert auditoria.valor_nuevo == "Se marcó por error"
+    # Después de revertir se puede registrar la lectura.
+    [guardada] = guardar(client, doc, tabla["id"], fila(entorno, cantidad_lsl=2)).json()
+    assert guardada["estado"] == "aceptada", guardada
+
+
+@pytest.mark.parametrize("motivo_", ["", "   "])
+def test_habilitar_registro_exige_motivo(client, db, entorno, cabeceras, tabla, motivo_):
+    doc = cabeceras["Docente"]
+    marcar(client, doc, tabla["id"], motivo_="Paro")
+
+    respuesta = habilitar(client, doc, tabla["id"], 2, motivo_=motivo_)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
+    assert respuesta.json()["errores"] == [{"campo": "motivo", "mensaje": "Ingresa el motivo de la corrección."}]
+    assert db.exec(select(LecturaNoRealizada)).one().revertida_en is None
+
+
+def test_habilitar_registro_con_version_vieja_o_sin_declaracion_vigente(client, db, entorno, cabeceras, tabla):
+    doc = cabeceras["Docente"]
+    sin_declaracion = habilitar(client, doc, tabla["id"], 1)
+    marcar(client, doc, tabla["id"], motivo_="Paro")
+
+    vieja = habilitar(client, doc, tabla["id"], 1)
+    revertida = habilitar(client, doc, tabla["id"], 2)
+    otra_vez = habilitar(client, doc, tabla["id"], 3)
+
+    assert (sin_declaracion.status_code, motivo(sin_declaracion), sin_declaracion.json()["detail"]) == (
+        409, "declaracion_no_vigente", MENSAJE_NO_VIGENTE,
+    )
+    assert (vieja.status_code, motivo(vieja), vieja.json()["version"]) == (409, "modificacion_concurrente", 2)
+    assert revertida.status_code == 200
+    # Ya revertida por otra operación: motivo propio y no se aplica nada.
+    assert (otra_vez.status_code, motivo(otra_vez), otra_vez.json()["version"]) == (409, "declaracion_no_vigente", 3)
+    assert len(db.exec(select(LecturaNoRealizada)).all()) == 1
+
+
+def test_habilitar_registro_reintento_no_duplica(client, db, entorno, cabeceras, tabla):
+    doc = cabeceras["Docente"]
+    marcar(client, doc, tabla["id"], motivo_="Paro")
+    id_operacion = uuid.uuid4()
+
+    primera = habilitar(client, doc, tabla["id"], 2, id_operacion=id_operacion)
+    reintento = habilitar(client, doc, tabla["id"], 2, id_operacion=id_operacion)
+
+    assert (primera.status_code, reintento.status_code) == (200, 200)
+    assert reintento.json()["version"] == primera.json()["version"] == 3
+    auditorias = db.exec(select(Auditoria).where(Auditoria.campo == "motivo_correccion")).all()
+    assert len(auditorias) == 1
+
+
+def test_volver_a_declarar_despues_de_revertir(client, db, entorno, cabeceras, tabla):
+    doc = cabeceras["Docente"]
+    marcar(client, doc, tabla["id"], motivo_="Paro")
+    habilitar(client, doc, tabla["id"], 2)
+
+    nueva = marcar(client, doc, tabla["id"], version=3, motivo_="Feria escolar")
+
+    assert nueva.status_code == 200, nueva.text
+    assert [(d["motivo"], d["vigente"]) for d in nueva.json()["declaraciones"]] == [
+        ("Feria escolar", True), ("Paro", False),
+    ]
+
+
+def test_habilitar_registro_solo_afecta_a_esa_tabla(client, db, entorno, cabeceras, tabla):
+    doc = cabeceras["Docente"]
+    alfabetizacion = crear(client, doc, db, entorno, programa=ALFABETIZACION).json()
+    marcar(client, doc, tabla["id"], motivo_="Paro")
+    marcar(client, doc, alfabetizacion["id"], motivo_="Paro")
+
+    habilitar(client, doc, tabla["id"], 2)
+
+    otra = consultar(client, doc, db, entorno, programa=ALFABETIZACION).json()
+    assert (otra["estado"], otra["version"]) == ("no_realizada", 2)
+    assert db.exec(select(Asistencia).where(Asistencia.id_alumno == entorno.alumnos["ana"].id_alumno)).one().estado == "presente"
+
+
+def test_habilitar_registro_sin_actividad_y_roles(client, db, entorno, cabeceras, tabla, actividad):
+    doc = cabeceras["Docente"]
+    marcar(client, doc, tabla["id"], motivo_="Paro")
+    client.post(f"/actividades/{actividad['id']}/finalizar", json={}, headers=doc)
+
+    sin_actividad = habilitar(client, doc, tabla["id"], 2)
+    supervisor = habilitar(client, cabeceras["Supervisor"], tabla["id"], 2)
+
+    assert (sin_actividad.status_code, motivo(sin_actividad), sin_actividad.json()["detail"]) == (
+        422, "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar información.",
+    )
+    assert supervisor.status_code == 403
+    assert db.exec(select(LecturaNoRealizada)).one().revertida_en is None
+
+
+def test_una_sola_declaracion_vigente_por_tabla(db, entorno, cabeceras, tabla, client):
+    marcar(client, cabeceras["Docente"], tabla["id"], motivo_="Paro")
+    vigente = db.exec(select(LecturaNoRealizada)).one()
+    duplicada = LecturaNoRealizada(
+        id_lectura_semanal=tabla["id"], motivo="Otra", declarada_por=vigente.declarada_por,
+        id_docente=vigente.id_docente, fecha_registro=vigente.fecha_registro, creado_en=vigente.creado_en,
+    )
+    db.add(duplicada)
+
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()

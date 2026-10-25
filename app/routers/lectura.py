@@ -16,6 +16,7 @@ from app.schemas.lectura import (
     MAX_FILAS_POR_LOTE,
     ClaseReferenciaCambiar,
     FilaLecturaGuardar,
+    HabilitarRegistro,
     NoRealizadaMarcar,
     TablaLectura,
     TablaLecturaCrear,
@@ -115,3 +116,19 @@ def marcar_no_realizada(id_tabla: int, data: NoRealizadaMarcar, db: Db, docente:
     `modificacion_concurrente`.
     """
     return lectura_service.marcar_no_realizada(db, docente, id_tabla, data)
+
+
+@router.post("/tablas/{id_tabla}/habilitar-registro", response_model=TablaLectura)
+def habilitar_registro(id_tabla: int, data: HabilitarRegistro, db: Db, docente: Docente):
+    """"Habilitar registro de lectura" (CU026): revierte la declaración "No realizada"
+    vigente con su "Motivo de la corrección" (`motivo`) y la `version` de la tabla
+    consultada. Requiere actividad y habilitación de Seguimiento de Lectura para el PA de
+    la clase de referencia, como una declaración nueva. La tabla vuelve a "normal" y se
+    conserva el historial (`declaraciones`); no amplía el plazo. Idempotente por
+    `id_operacion`.
+
+    Errores: 404 `tabla_no_encontrada`; 422 `validacion` (motivo vacío),
+    `sin_habilitacion`, `actividad_requerida`; 409 `declaracion_no_vigente` (la tabla ya
+    no está "No realizada"), `modificacion_concurrente` (con `id` y `version` actuales).
+    """
+    return lectura_service.habilitar_registro(db, docente, id_tabla, data)
