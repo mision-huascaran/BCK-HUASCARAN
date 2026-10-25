@@ -480,10 +480,10 @@ def test_porcentaje_excluye_listas_incompletas_y_cuenta_una_vez_la_reprogramada(
 
 # ── Salud del Sistema (CU012) ───────────────────────────────────────────────────────
 
-def test_salud_cuenta_alumno_por_clase_con_estado_del_pa_vigente(db, entorno):
+def test_salud_cuenta_alumno_por_clase_con_estado_u_observacion_del_pa_vigente(db, entorno):
     ana = entorno.alumnos["ana"]
     registrar_asistencia(db, ana, LUNES)
     registrar_asistencia(db, ana, LUNES_ANTERIOR, estado=None)
     registrar_asistencia(db, ana, LUNES_DEL_PA1)
 
-    assert salud_sistema.asistencias_confirmadas(db, pa_actual_de_colegios(db, solo_activos=True)) == 1
+    assert len(salud_sistema.asistencias_guardadas(db, pa_actual_de_colegios(db, solo_activos=True))) == 1

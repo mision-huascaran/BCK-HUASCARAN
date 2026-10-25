@@ -116,6 +116,7 @@ class OperacionSincronizacion(SQLModel, table=True):
         CheckConstraint(f"estado IN ({_valores(ESTADOS_OPERACION)})", name="ck_operacion_sincronizacion_estado"),
         Index("ix_operacion_sincronizacion_actividad", "id_actividad"),
         Index("ix_operacion_sincronizacion_usuario_estado", "id_usuario", "estado"),
+        Index("ix_operacion_sincronizacion_clave", "modulo", "clave_registro", "recibida_en"),
     )
 
     id_operacion: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
@@ -132,6 +133,9 @@ class OperacionSincronizacion(SQLModel, table=True):
     respuesta: Optional[dict] = Field(default=None, sa_type=JSON().with_variant(JSONB(), "postgresql"))
     fecha_realizacion: datetime = Field(sa_type=UTCDateTime)
     recibida_en: datetime = Field(sa_type=UTCDateTime)
+    # Clave canónica del registro (app/services/claves_registro.py); null en las
+    # operaciones anteriores a la Salud por registro.
+    clave_registro: Optional[str] = Field(default=None, sa_type=Text)
 
 
 class OperacionPendiente(SQLModel, table=True):
@@ -143,6 +147,7 @@ class OperacionPendiente(SQLModel, table=True):
         _check_modulo("operacion_pendiente"),
         Index("ix_operacion_pendiente_usuario", "id_usuario"),
         Index("ix_operacion_pendiente_actividad", "id_actividad"),
+        Index("ix_operacion_pendiente_clave", "clave_registro"),
     )
 
     id_operacion: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
@@ -153,3 +158,6 @@ class OperacionPendiente(SQLModel, table=True):
     modulo: str = Field(sa_type=Text)
     fecha_realizacion: datetime = Field(sa_type=UTCDateTime)
     informado_en: datetime = Field(sa_type=UTCDateTime)
+    # Clave canónica del registro del aviso (del campo `registro`); null si el front no
+    # la informó: entonces cuenta una vez por `id_operacion`.
+    clave_registro: Optional[str] = Field(default=None, sa_type=Text)

@@ -53,6 +53,7 @@ from app.schemas.registro_vuelo import (
     SugerenciaVuelo,
 )
 from app.schemas.sincronizacion import ResultadoOperacion
+from app.services import claves_registro
 from app.services.asistencia_service import exigir_seccion
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import (
@@ -581,12 +582,23 @@ def guardar(db: Session, usuario: Usuario, items: list[RegistroVueloGuardar]) ->
     resultados = [
         procesar_operacion(
             db, usuario, item, _aplicador(db, usuario, item),
-            Operacion(MODULO, TABLA, _id_entidad(item), MENSAJE_SIN_ACTIVIDAD),
+            Operacion(MODULO, TABLA, _id_entidad(item), MENSAJE_SIN_ACTIVIDAD, _clave(db, item)),
         )
         for item in items
     ]
     db.commit()
     return resultados
+
+
+def _clave(db: Session, item: RegistroVueloGuardar) -> Optional[str]:
+    """Clave del registro (alumno × PA y grupo); None si el PA no existe (se rechaza)."""
+    periodo = db.get(PeriodoAcademico, item.id_periodo_academico)
+    if periodo is None:
+        return None
+    return claves_registro.registro_vuelo(
+        item.id_colegio, item.id_grado, item.id_seccion, item.id_programa, periodo.id_anio_escolar,
+        item.id_periodo_academico, item.id_alumno,
+    )
 
 
 def _id_entidad(item: RegistroVueloGuardar) -> str:

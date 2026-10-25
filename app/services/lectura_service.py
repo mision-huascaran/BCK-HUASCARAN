@@ -70,6 +70,7 @@ from app.schemas.lectura import (
 )
 from app.schemas.sincronizacion import ResultadoOperacion
 from app.services.asistencia_service import exigir_seccion
+from app.services import claves_registro
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import cargar_calendarios, en_pa_de_su_colegio, rango_del_mes
 from app.services.clase_service import colegio_existente, grados_visibles
@@ -394,6 +395,14 @@ def _tabla_por_filtro(db: Session, filtro: FiltroLectura) -> Optional[LecturaSem
 
 def _filtro_de(tabla: LecturaSemanal) -> FiltroLectura:
     return FiltroLectura.de(tabla)
+
+
+def _clave_tabla(filtro: FiltroLectura) -> str:
+    return claves_registro.tabla_lectura(**filtro.identidad())
+
+
+def _clave_fila(tabla: LecturaSemanal, id_alumno: int) -> str:
+    return claves_registro.fila_lectura(**_filtro_de(tabla).identidad(), id_alumno=id_alumno)
 
 
 # ── Consulta ────────────────────────────────────────────────────────────────────────
@@ -748,7 +757,7 @@ def crear_tabla(db: Session, usuario: Usuario, data: TablaLecturaCrear) -> Tabla
     existente con otro `id_operacion` es 409 `tabla_existente` (con su `id`)."""
     filtro = FiltroLectura.de(data)
     semana = _validar_filtro(db, usuario, filtro)
-    operacion = Operacion(MODULO, TABLA, filtro.clave(), MENSAJE_SIN_ACTIVIDAD_CREAR)
+    operacion = Operacion(MODULO, TABLA, filtro.clave(), MENSAJE_SIN_ACTIVIDAD_CREAR, _clave_tabla(filtro))
     return _ejecutar(db, usuario, data, _creador(db, usuario, filtro, semana, data), operacion)
 
 
@@ -820,8 +829,8 @@ def cambiar_clase_referencia(
     cualquier mes, con alumnos del subprograma de la tabla en su lista histórica; solo sin
     datos de lectura y si la tabla no está "No realizada". Si la clase es de otro mes, la
     tabla pasa a ese mes (no se crea otra)."""
-    _tabla_visible(db, usuario, id_tabla)
-    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_FILAS)
+    tabla = _tabla_visible(db, usuario, id_tabla)
+    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_FILAS, _clave_tabla(_filtro_de(tabla)))
     return _ejecutar(db, usuario, data, _cambiador(db, usuario, id_tabla, data), operacion)
 
 
@@ -873,11 +882,13 @@ def _registrar_declaracion(db: Session, tabla: LecturaSemanal, motivo: str, capt
 def marcar_no_realizada(db: Session, usuario: Usuario, id_tabla: int, data: NoRealizadaMarcar) -> TablaLectura:
     """Marca toda la tabla como "No realizada" con su motivo (CU026). 422 si falta el
     motivo; 409 `tabla_con_datos` si alguna fila tiene datos de lectura."""
-    _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla)
     motivo = (data.motivo or "").strip()
     if not motivo:
         raise error_de_campo("motivo", MENSAJE_MOTIVO_OBLIGATORIO)
-    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA)
+    operacion = Operacion(
+        MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA, _clave_tabla(_filtro_de(tabla))
+    )
     return _ejecutar(db, usuario, data, _marcador(db, usuario, id_tabla, data, motivo), operacion)
 
 
@@ -924,11 +935,13 @@ def habilitar_registro(db: Session, usuario: Usuario, id_tabla: int, data: Habil
     declaración, la corrección, quién, con qué actividad y autorización y cuándo. 422 si
     falta el motivo; 409 `declaracion_no_vigente` si ya no está "No realizada" y
     `modificacion_concurrente` si cambió la versión."""
-    _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla)
     motivo = (data.motivo or "").strip()
     if not motivo:
         raise error_de_campo("motivo", MENSAJE_MOTIVO_CORRECCION)
-    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA)
+    operacion = Operacion(
+        MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA, _clave_tabla(_filtro_de(tabla))
+    )
     return _ejecutar(db, usuario, data, _revertidor(db, usuario, id_tabla, data, motivo), operacion)
 
 
@@ -1018,11 +1031,12 @@ def guardar_filas(
     """Registra o corrige filas de la tabla (CU024, CU025). Cada ítem es una operación con
     su resultado; un lote puede tener aceptadas y rechazadas. Un ítem sin cambios no
     escribe ni audita."""
-    _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla)
     resultados = [
         procesar_operacion(
             db, usuario, item, _editor(db, usuario, id_tabla, item),
-            Operacion(MODULO, TABLA_FILA, f"{id_tabla}:{item.id_alumno}", MENSAJE_SIN_ACTIVIDAD_FILAS),
+            Operacion(MODULO, TABLA_FILA, f"{id_tabla}:{item.id_alumno}", MENSAJE_SIN_ACTIVIDAD_FILAS,
+                      _clave_fila(tabla, item.id_alumno)),
         )
         for item in items
     ]

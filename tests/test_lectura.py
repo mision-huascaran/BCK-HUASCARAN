@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.models.evaluacion import (
     Asistencia,
@@ -21,6 +21,7 @@ from app.models.trazabilidad import Auditoria
 from app.services import cambios, lectura_service
 from app.services.calendario import pa_actual_de_colegios
 from app.services.calendario_gestion import _registros
+from app.services.registros_vencidos import estado_de_registros
 from tests.conftest import (
     a_las,
     agregar_no_lectivo,
@@ -822,7 +823,8 @@ def test_habilitar_registro_revierte_y_conserva_el_historial(client, db, entorno
     assert declaracion["revertida_por"]["id"] == entorno.usuarios["Docente"].id_usuario
     historial = db.exec(select(LecturaNoRealizada)).one()
     assert historial.id_actividad_reversion == uuid.UUID(actividad["id"])
-    assert historial.revertida_en is not None and historial.fecha_registro_reversion is not None
+    assert historial.revertida_en is not None
+    assert historial.fecha_registro_reversion is not None
     auditoria = db.exec(select(Auditoria).where(Auditoria.tabla == "lectura_semanal",
                                                 Auditoria.campo == "motivo_correccion")).one()
     assert auditoria.valor_nuevo == "Se marcó por error"
@@ -929,3 +931,42 @@ def test_una_sola_declaracion_vigente_por_tabla(db, entorno, cabeceras, tabla, c
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
+
+
+def test_habilitar_registro_con_permiso_y_sin_habilitacion(client, db, entorno, doc, actividad):
+    """En un PA pasado se revierte con el permiso de corrección (queda en la declaración);
+    revocado el permiso, se rechaza."""
+    permiso = crear_permiso(db, entorno, entorno.id_docente, "Andino", "2.º")
+    creada = crear(client, doc, db, entorno, fecha=LUNES_DEL_PA1).json()
+    marcar(client, doc, creada["id"], motivo_="Paro")
+
+    con_permiso = habilitar(client, doc, creada["id"], 2)
+    marcar(client, doc, creada["id"], version=3, motivo_="Feria")
+    permiso.revocado_en, permiso.revocado_por = permiso.inicio, entorno.supervisor.id_usuario
+    db.add(permiso)
+    db.commit()
+    sin_habilitacion = habilitar(client, doc, creada["id"], 4)
+
+    assert con_permiso.status_code == 200, con_permiso.text
+    db.expire_all()
+    revertida = db.exec(select(LecturaNoRealizada).where(col(LecturaNoRealizada.revertida_en).is_not(None))).one()
+    assert (revertida.id_permiso, revertida.id_permiso_reversion) == (permiso.id_permiso, permiso.id_permiso)
+    assert (sin_habilitacion.status_code, motivo(sin_habilitacion), sin_habilitacion.json()["detail"]) == (
+        422, "sin_habilitacion", "No tienes una habilitación vigente para registrar o corregir la lectura de esta semana.",
+    )
+
+
+def test_revertir_una_semana_vencida_vuelve_a_contar_en_cu011(client, db, entorno, doc, actividad):
+    creada = crear(client, doc, db, entorno, fecha=LUNES_ANTERIOR).json()
+    registrar_asistencia(db, entorno.alumnos["ana"], LUNES_ANTERIOR, "presente")
+    semana = f"{LUNES_ANTERIOR.isoformat()}:{entorno.programas[COMPRENSION]}"
+    marcar(client, doc, creada["id"], motivo_="Paro")
+
+    declarada = estado_de_registros(db)
+    habilitar(client, doc, creada["id"], 2)
+    revertida = estado_de_registros(db)
+
+    lectura = [r.referencia for r in declarada.vencidas + declarada.incompletas if r.modulo == "lectura"]
+    assert semana not in lectura
+    # La tabla existe y queda pendiente después de su plazo: vuelve a contar (incompleta).
+    assert semana in {r.referencia for r in revertida.incompletas if r.modulo == "lectura"}

@@ -36,6 +36,7 @@ from app.schemas.asistencia import (
     Escritura,
     RegistroAsistencia,
 )
+from app.services import claves_registro
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import Calendarios, PeriodoCalendario, cargar_calendarios
 from app.services.clase_service import colegio_existente, grados_visibles
@@ -367,6 +368,11 @@ def _id_entidad(destino: _Destino, id_alumno: int) -> str:
     return f"{filtro.id_colegio}-{filtro.id_grado}-{filtro.id_seccion}-{destino.fecha.isoformat()}:{id_alumno}"
 
 
+def _clave(destino: _Destino, id_alumno: int) -> str:
+    filtro = destino.filtro
+    return claves_registro.asistencia(filtro.id_colegio, filtro.id_grado, filtro.id_seccion, destino.fecha, id_alumno)
+
+
 def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -> AsistenciaGuardada:
     """Registra la asistencia de uno o varios alumnos de una clase (CU022). Cada registro
     es una operación con su resultado (aceptada o rechazada); un lote puede tener de las
@@ -379,7 +385,8 @@ def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -
     resultados = [
         procesar_operacion(
             db, usuario, registro, _aplicador(db, usuario, destino, registro),
-            Operacion(MODULO, TABLA, _id_entidad(destino, registro.id_alumno)),
+            Operacion(MODULO, TABLA, _id_entidad(destino, registro.id_alumno),
+                      clave_registro=_clave(destino, registro.id_alumno)),
         )
         for registro in data.registros
     ]

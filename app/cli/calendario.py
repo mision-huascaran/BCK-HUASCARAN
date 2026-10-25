@@ -44,6 +44,7 @@ from app.services.calendario_gestion import (
 )
 
 ARCHIVO_CALENDARIO = DIR_DATOS / "calendario_2026.json"
+TABLA_ANIO = "año_escolar"
 __all__ = ["cargar_calendario", "leer_calendario", "semanas_deseadas", "validar_calendario"]
 
 
@@ -156,7 +157,7 @@ def _cargar_anio(
         anio = AnioEscolar(nombre=cal.nombre, fecha_inicio=rango[0], fecha_fin=rango[1], **auditoria)
         db.add(anio)
         db.flush()
-        resumen.creados["año_escolar"] += 1
+        resumen.creados[TABLA_ANIO] += 1
     return anio
 
 
@@ -209,8 +210,8 @@ def _sincronizar(
     db: Session, anio: AnioEscolar, rango: tuple[date, date], auditoria: dict, resumen: Resumen
 ) -> None:
     cambios = sincronizar_anio(db, anio, *rango, auditoria["creado_por"], auditoria["creado_en"])
-    if cambios.fechas and resumen.creados["año_escolar"] == 0:
-        resumen.actualizados["año_escolar"] += 1
+    if cambios.fechas and resumen.creados[TABLA_ANIO] == 0:
+        resumen.actualizados[TABLA_ANIO] += 1
     resumen.creados["semana_reporte"] += cambios.semanas["creadas"]
     resumen.actualizados["semana_reporte"] += cambios.semanas["actualizadas"]
     resumen.eliminados["semana_reporte"] += cambios.semanas["eliminadas"]

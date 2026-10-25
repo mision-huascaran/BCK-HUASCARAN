@@ -36,6 +36,7 @@ from app.models.organizacion import Alumno, AlumnoPertenencia, AnioEscolar, Cicl
 from app.schemas.rubrica import Criterio, RubricaAlumno, RubricaGuardar, RubricasDelMes
 from app.schemas.sincronizacion import ResultadoOperacion
 from app.services.asistencia_service import exigir_seccion
+from app.services import claves_registro
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import PeriodoCalendario, cargar_calendarios, en_pa_de_su_colegio, rango_del_mes
 from app.services.clase_service import colegio_existente, grados_visibles
@@ -424,7 +425,8 @@ def guardar(db: Session, usuario: Usuario, items: list[RubricaGuardar]) -> list[
     resultados = [
         procesar_operacion(
             db, usuario, item, _aplicador(db, usuario, item),
-            Operacion(MODULO, TABLA, _id_entidad(item), MENSAJE_SIN_ACTIVIDAD),
+            Operacion(MODULO, TABLA, _id_entidad(item), MENSAJE_SIN_ACTIVIDAD,
+                      claves_registro.rubrica(item.id_alumno, item.id_anio_escolar, item.mes)),
         )
         for item in items
     ]

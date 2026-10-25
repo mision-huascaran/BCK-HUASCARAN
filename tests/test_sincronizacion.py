@@ -294,7 +294,7 @@ def test_salud_en_el_inicio_del_directivo(client, cabeceras, monkeypatch):
     assert client.get("/inicio/directivo", headers=directivo).json()["salud_sistema"] is None
 
     client.post("/sincronizacion/pendientes", json=[pendiente(), pendiente(modulo="alumnos")], headers=cabeceras["Docente"])
-    monkeypatch.setitem(salud_sistema.CONTADORES, "lectura", lambda _db, _pa: 2)
+    monkeypatch.setitem(salud_sistema.CONTADORES, "lectura", lambda _db, _pa: ["lectura:a", "lectura:b"])
 
     # 2 sincronizados y 1 pendiente de los cuatro módulos (el de Alumnos no cuenta).
     assert client.get("/inicio/directivo", headers=directivo).json()["salud_sistema"] == 67

@@ -539,6 +539,11 @@ def anios(db, nombre=None) -> list[AnioEscolar]:
     return list(db.exec(consulta).all())
 
 
+def fechas_del_anio(db, entorno) -> tuple[date, date]:
+    anio = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
+    return anio.fecha_inicio, anio.fecha_fin
+
+
 def semanas_del(db, anio: AnioEscolar) -> list[SemanaReporte]:
     db.expire_all()
     return list(db.exec(select(SemanaReporte).where(SemanaReporte.id_anio_escolar == anio.id_anio_escolar)
@@ -634,8 +639,7 @@ def test_editar_el_general_sin_dejar_fuera_semanas_con_tablas(client, db, entorn
     rangos = rangos_relativos(HOY)
     primera_semana = rangos["PA1"][0] + timedelta(days=(7 - rangos["PA1"][0].weekday()) % 7)  # su primer lunes
     tabla_lectura(db, entorno.alumnos["ana"], primera_semana)
-    antes = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
-    fechas_antes = (antes.fecha_inicio, antes.fecha_fin)
+    fechas_antes = fechas_del_anio(db, entorno)
     rangos["PA1"] = (primera_semana + timedelta(days=14), rangos["PA1"][1])
 
     respuesta = editar(client, sup, entorno.calendario.id_calendario, rangos)
@@ -643,22 +647,19 @@ def test_editar_el_general_sin_dejar_fuera_semanas_con_tablas(client, db, entorn
     assert (respuesta.status_code, motivo(respuesta)) == (409, "calendario_incompatible")
     fuera = [i for i in respuesta.json()["incompatibilidades"] if i["motivo"] == "fuera_del_anio"]
     assert fuera[0]["mensaje"] == "La semana tiene una tabla de lectura semanal y quedaría fuera del año escolar."
-    anio = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
-    assert (anio.fecha_inicio, anio.fecha_fin) == fechas_antes
+    assert fechas_del_anio(db, entorno) == fechas_antes
 
 
 def test_editar_un_particular_no_cambia_las_fechas_del_anio(client, db, entorno, sup):
     creado = particular(client, entorno, sup).json()
-    antes = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
-    fechas_antes = (antes.fecha_inicio, antes.fecha_fin)
+    fechas_antes = fechas_del_anio(db, entorno)
     rangos = rangos_relativos(HOY)
     rangos["PR4"] = (rangos["PR4"][0], rangos["PR4"][1] + timedelta(days=10))
 
     respuesta = editar(client, sup, creado["id_calendario"], rangos)
 
     assert respuesta.status_code == 200, respuesta.json()
-    anio = releer(db, AnioEscolar, entorno.anio.id_anio_escolar)
-    assert (anio.fecha_inicio, anio.fecha_fin) == fechas_antes
+    assert fechas_del_anio(db, entorno) == fechas_antes
 
 
 def test_el_general_no_abarca_mas_de_12_meses(client, db, entorno, sup):
