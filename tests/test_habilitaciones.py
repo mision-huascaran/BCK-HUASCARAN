@@ -8,6 +8,7 @@ from sqlmodel import select
 
 from app.core import tiempo
 from app.models.organizacion import AnioEscolar, DocenteColegioGrado, PeriodoAcademico, Usuario
+from app.models.trazabilidad import Auditoria
 from app.services.habilitacion import (
     MENSAJE_CUENTA_INACTIVA,
     MENSAJE_SIN_HABILITACION,
@@ -49,14 +50,21 @@ def lejano_en_receso(db, entorno):
     return crear_particular(db, entorno, rangos_en_receso(entorno.hoy))
 
 
-def nuevo_docente(entorno, n=1, colegio="Lejano", grado="3.º", **asignacion) -> dict:
+def en_colegio(entorno, colegio="Lejano", *grados, **extra) -> dict:
+    """Asignación de un solo colegio del año del entorno (por defecto, 3.º de Lejano)."""
+    return {
+        "id_anio_escolar": entorno.anio.id_anio_escolar,
+        "colegios": [{
+            "id_colegio": entorno.colegios[colegio].id_colegio,
+            "grados": [entorno.grados[g] for g in grados or ("3.º",)], **extra,
+        }],
+    }
+
+
+def nuevo_docente(entorno, n=1, colegio="Lejano", grado="3.º", **extra) -> dict:
     return {
         "nombres": f"Nuevo{n}", "apellidos": "Docente", "dni": f"6000000{n}", "correo": f"nuevo{n}@sicedu.test",
-        "id_rol": entorno.roles["Docente"],
-        "asignacion": {
-            "id_colegio": entorno.colegios[colegio].id_colegio, "id_anio_escolar": entorno.anio.id_anio_escolar,
-            "grados": [entorno.grados[grado]], **asignacion,
-        },
+        "id_rol": entorno.roles["Docente"], "asignacion": en_colegio(entorno, colegio, grado, **extra),
     }
 
 
@@ -137,7 +145,7 @@ def test_cu016_proximo_en_el_pr4_es_422(client, db, entorno, sup):
     )
 
     assert (proximo.status_code, proximo.json()["detail"]) == (422, MENSAJE_SIN_PROXIMO)
-    assert proximo.json()["errores"] == [{"campo": "asignacion.inicio_asignacion", "mensaje": MENSAJE_SIN_PROXIMO}]
+    assert proximo.json()["errores"] == [{"campo": "asignacion.colegios.0.inicio_asignacion", "mensaje": MENSAJE_SIN_PROXIMO}]
     assert retroactivo.status_code == 201
     assert filas_de(db, "nuevo2@sicedu.test") == [(4, True)]
 
@@ -163,14 +171,51 @@ def test_cu016_retroactivo_no_sustituye_al_titular_historico(client, db, entorno
 def test_cu016_editar_en_receso_tambien_pide_inicio(client, db, entorno, sup, lejano_en_receso):
     creado = client.post("/usuarios", json=nuevo_docente(entorno, inicio_asignacion="proximo"), headers=sup).json()
     url = f"/usuarios/{creado['usuario']['id']}"
-    cambio = {"grados": [entorno.grados["3.º"], entorno.grados["4.º"]]}
+    cambio = en_colegio(entorno, "Lejano", "3.º", "4.º")
 
     sin_inicio = client.patch(url, json={"asignacion": cambio}, headers=sup)
-    retroactivo = client.patch(url, json={"asignacion": {**cambio, "inicio_asignacion": "retroactivo"}}, headers=sup)
+    retroactivo = client.patch(
+        url, json={"asignacion": en_colegio(entorno, "Lejano", "3.º", "4.º", inicio_asignacion="retroactivo")}, headers=sup
+    )
 
     assert motivo(sin_inicio) == "inicio_asignacion_requerido"
     assert retroactivo.status_code == 200
     assert filas_de(db, "nuevo1@sicedu.test") == [(2, True), (2, True), (3, False), (3, False), (4, False), (4, False)]
+
+
+def _titular_de_lejano(db, entorno) -> Usuario:
+    """Docente titular de Lejano 3.º en el PA2, que Lejano acaba de culminar."""
+    titular = crear_docente(db, entorno, "Titular", "titular@sicedu.test", "70000009")
+    asignar(db, titular.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    db.commit()
+    return titular
+
+
+def test_cu016_retroactivo_del_mismo_titular_habilita_su_pa_culminado(client, db, entorno, sup, lejano_en_receso):
+    titular = _titular_de_lejano(db, entorno)
+    cambio = en_colegio(entorno, inicio_asignacion="retroactivo")
+
+    respuesta = client.patch(f"/usuarios/{titular.id_usuario}", json={"asignacion": cambio}, headers=sup)
+
+    assert respuesta.status_code == 200
+    # Se conserva su fila del PA2 (sin duplicarla) y queda marcada retroactiva.
+    assert filas_de(db, titular.correo) == [(2, True), (3, False), (4, False)]
+    habilitacion = _habilitacion(db, entorno, titular, "Lejano", "3.º", modulo="rubrica")
+    assert (habilitacion.permitido, habilitacion.origen) == (True, ORIGEN_RETROACTIVA)
+    auditoria = db.exec(select(Auditoria).where(Auditoria.campo == "asignacion")).one()
+    assert auditoria.valor_nuevo.endswith("(P2 retroactivo)")
+    assert not auditoria.valor_anterior.endswith("retroactivo)")
+
+
+def test_cu016_proximo_no_habilita_al_titular_en_el_pa_culminado(client, db, entorno, sup, lejano_en_receso):
+    titular = _titular_de_lejano(db, entorno)
+    cambio = en_colegio(entorno, inicio_asignacion="proximo")
+
+    respuesta = client.patch(f"/usuarios/{titular.id_usuario}", json={"asignacion": cambio}, headers=sup)
+
+    assert respuesta.status_code == 200
+    assert filas_de(db, titular.correo) == [(2, False), (3, False), (4, False)]
+    assert _habilitacion(db, entorno, titular, "Lejano", "3.º", modulo="rubrica").permitido is False
 
 
 def test_cu016_inactivar_en_pa_libera_ese_pa_y_los_siguientes(client, db, entorno, sup):

@@ -293,11 +293,13 @@ def test_cargar_calendario_crea_anio_periodos_calendario_y_semanas(con_original,
         ("PA3", date(2030, 5, 6), date(2030, 5, 10)), ("PR3", date(2030, 5, 11), date(2030, 6, 2)),
         ("PA4", date(2030, 6, 3), date(2030, 6, 7)), ("PR4", date(2030, 6, 8), date(2030, 12, 20)),
     ]
-    # Todo el año escolar (01/03 viernes a 20/12), de lunes a viernes, sin depender de los PA:
-    # la primera semana es la del viernes 1 de marzo.
+    # El año va del inicio del PA1 (04/03) al fin del PR4 (20/12), no de las fechas del
+    # archivo (01/03), y sus semanas cubren todo ese rango de lunes a viernes.
+    anio = db.exec(select(AnioEscolar)).one()
+    assert (anio.fecha_inicio, anio.fecha_fin) == (date(2030, 3, 4), date(2030, 12, 20))
     semanas = db.exec(select(SemanaReporte).order_by(SemanaReporte.numero_semana)).all()
     assert (semanas[0].fecha_inicio, semanas[0].fecha_fin, semanas[-1].fecha_inicio) == (
-        date(2030, 2, 25), date(2030, 3, 1), date(2030, 12, 16),
+        date(2030, 3, 4), date(2030, 3, 8), date(2030, 12, 16),
     )
     assert [s.numero_semana for s in semanas] == list(range(1, len(semanas) + 1))
     assert all(s.fecha_inicio == semanas[0].fecha_inicio + timedelta(weeks=i) for i, s in enumerate(semanas))
@@ -322,7 +324,7 @@ def test_cargar_calendario_usa_los_recesos_del_archivo(con_original, tmp_path):
 
 def test_cargar_calendario_no_pisa_el_calendario_de_la_api(con_original, tmp_path):
     """Desde CU027 el general lo gestiona el Supervisor: un archivo distinto no lo cambia
-    (WARNING). El año sí lo manda el archivo."""
+    (WARNING). Las fechas del año tampoco: son las del general."""
     db = con_original
     cargar_calendario(db, escribir(tmp_path, calendario()))
     cambiado = calendario(fecha_fin="2030-12-13")
@@ -335,12 +337,33 @@ def test_cargar_calendario_no_pisa_el_calendario_de_la_api(con_original, tmp_pat
     resumen = cargar_calendario(db, escribir(tmp_path, cambiado))
 
     assert resumen.errores == []
-    assert resumen.actualizados["año_escolar"] == 1
     assert any("calendario general 2030: difiere del archivo y no se modifica" in a for a in resumen.advertencias)
     assert any("el periodo 9 existe en la BD" in a for a in resumen.advertencias)
     assert general_2030(db).pa(1).fecha_fin == date(2030, 3, 15)
-    # El año termina una semana antes: su última semana sobra.
-    assert resumen.eliminados["semana_reporte"] == 1
+    # El `fecha_fin` del archivo no cuenta: el año y sus semanas siguen las del general.
+    assert (resumen.actualizados["año_escolar"], resumen.eliminados["semana_reporte"]) == (0, 0)
+    assert db.exec(select(AnioEscolar)).one().fecha_fin == date(2030, 12, 20)
+
+
+def test_cargar_calendario_alinea_el_anio_con_su_general(con_original, tmp_path):
+    """Un año existente con otras fechas queda con las de su general al arrancar."""
+    db = con_original
+    cargar_calendario(db, escribir(tmp_path, calendario()))
+    anio = db.exec(select(AnioEscolar)).one()
+    anio.fecha_inicio, anio.fecha_fin = date(2030, 1, 1), date(2030, 12, 31)
+    db.add(anio)
+    general = db.exec(select(Calendario)).one()
+    fijar_periodo(db, general, "PR4", fin=date(2031, 1, 31))
+    db.commit()
+
+    resumen = cargar_calendario(db, escribir(tmp_path, calendario()))
+
+    db.expire_all()
+    anio = db.exec(select(AnioEscolar)).one()
+    assert (anio.fecha_inicio, anio.fecha_fin) == (date(2030, 3, 4), date(2031, 1, 31))
+    assert resumen.actualizados["año_escolar"] == 1
+    ultima = db.exec(select(SemanaReporte).order_by(SemanaReporte.fecha_inicio.desc())).first()
+    assert ultima.fecha_inicio == date(2031, 1, 27)
 
 
 def test_cargar_calendario_las_semanas_no_dependen_de_los_pa(con_original, tmp_path):
@@ -368,8 +391,10 @@ def test_cargar_calendario_no_mueve_semanas_con_registros(con_original, tmp_path
     db.flush()
     # Una tabla de lectura en la última semana del año (16 a 20 de diciembre).
     tabla = tabla_lectura(db, alumno, date(2030, 12, 17))
+    # El Supervisor acortó el PR4 del general: esa semana quedaría fuera del año.
+    fijar_periodo(db, db.exec(select(Calendario)).one(), "PR4", fin=date(2030, 12, 13))
 
-    resumen = cargar_calendario(db, escribir(tmp_path, calendario(fecha_fin="2030-12-13")))
+    resumen = cargar_calendario(db, escribir(tmp_path, calendario()))
 
     assert "tiene registros" in resumen.errores[0]
     assert db.exec(select(AnioEscolar)).one().fecha_fin == date(2030, 12, 20)
@@ -389,10 +414,10 @@ def con_pa1(**cambios) -> list[dict]:
         (con_pa1(fecha_inicio="2030-03-05"), {}, "no es lunes"),
         (con_pa1(fecha_fin="2030-03-14"), {}, "no es viernes"),
         (con_pa1(fecha_inicio="2030-03-15", fecha_fin="2030-03-04"), {}, "después de terminar"),
-        (con_pa1(), {"fecha_inicio": "2030-03-10"}, "sale del año"),
         ([], {}, "debe tener los periodos 1 a 4"),
         (calendario()["periodos"][:3], {}, "debe tener los periodos 1 a 4"),
-        ([], {"fecha_inicio": "2031-01-01"}, "empieza (2031-01-01)"),
+        (con_pa1(), {"fecha_fin": None}, "sin `recesos`, `anio.fecha_fin` indica hasta dónde llega el PR4"),
+        (con_pa1(), {"fecha_fin": "2031-03-01"}, "no puede abarcar más de 12 meses"),
         (con_pa1(fecha_fin="2030-03-29"), {}, "se solapan"),
         (con_pa1(fecha_fin="2030-03-24"), {}, "se solapan o no dejan días para el receso"),
     ],
@@ -414,8 +439,7 @@ def test_validar_recesos_del_archivo():
 
 def test_leer_calendario_con_formato_invalido():
     assert leer_calendario({"anio": {}})[1][0].startswith("formato inválido")
-    cal, _ = leer_calendario(calendario())
-    assert len(semanas_deseadas(cal.inicio, cal.fin)) == 43
+    assert len(semanas_deseadas(date(2030, 3, 1), date(2030, 12, 20))) == 43
     # Un año que empieza en sábado arranca con la semana siguiente.
     assert semanas_deseadas(date(2030, 3, 2), date(2030, 3, 8))[0].lunes == date(2030, 3, 4)
     # Uno que empieza un miércoles incluye esa semana; uno que termina un lunes, la suya.
@@ -447,13 +471,24 @@ def test_cargar_calendario_real_del_repositorio(con_original):
 # ── cargar-feriados ─────────────────────────────────────────────────────────────────
 
 # PA3 del 22/07 al 2/08 (feriados el martes 23 y el lunes 29) y PA4 del 26 al 30/08
-# (Santa Rosa, el viernes 30). El 6/08 cae en el PR3 y los de octubre en adelante, en el PR4.
+# (Santa Rosa, el viernes 30). Los de abril a junio caen en el PR2, el 6/08 en el PR3 y
+# los de octubre a diciembre en el PR4 (hasta el 20/12): también se cargan. El 1/01 y el
+# 25/12 quedan fuera de los periodos.
 PAS_CON_FERIADOS = [
     {"numero": 1, "fecha_inicio": "2030-03-04", "fecha_fin": "2030-03-15"},
     {"numero": 2, "fecha_inicio": "2030-03-25", "fecha_fin": "2030-04-05"},
     {"numero": 3, "fecha_inicio": "2030-07-22", "fecha_fin": "2030-08-02"},
     {"numero": 4, "fecha_inicio": "2030-08-26", "fecha_fin": "2030-08-30"},
 ]
+
+
+FERIADOS_EN_PERIODOS = {
+    date(2030, 4, 18), date(2030, 4, 19), date(2030, 5, 1), date(2030, 6, 7),  # PR2
+    date(2030, 7, 23), date(2030, 7, 29),  # PA3
+    date(2030, 8, 6),  # PR3
+    date(2030, 8, 30),  # PA4
+    date(2030, 10, 8), date(2030, 11, 1), date(2030, 12, 9),  # PR4
+}
 
 
 def no_lectivos(db) -> dict[date, DiaNoLectivo]:
@@ -469,7 +504,7 @@ def test_feriados_de_lunes_a_viernes_en_espanol():
     assert feriados_entre_semana(set()) == {}
 
 
-def test_cargar_feriados_en_el_general_solo_dentro_de_un_pa(con_original, tmp_path):
+def test_cargar_feriados_en_el_general_dentro_de_un_pa_o_un_pr(con_original, tmp_path):
     db = con_original
     assert cargar_feriados(db).omitidos == ["feriados: no hay ningún calendario general en la BD"]
     cargar_calendario(db, escribir(tmp_path, calendario(PAS_CON_FERIADOS)))
@@ -478,14 +513,15 @@ def test_cargar_feriados_en_el_general_solo_dentro_de_un_pa(con_original, tmp_pa
 
     resumen = cargar_feriados(db)
 
-    assert resumen.creados["dia_no_lectivo"] == 2
+    assert resumen.creados["dia_no_lectivo"] == len(FERIADOS_EN_PERIODOS) - 1
     assert resumen.advertencias == [
         "dia_no_lectivo 2030-07-29 (calendario general 1): ya existe con motivo 'Otro nombre' (la librería dice "
         "'Feriado nacional: Día de la Gran Parada Militar'). No se modifica."
     ]
     dias = no_lectivos(db)
-    assert set(dias) == {date(2030, 7, 23), date(2030, 7, 29), date(2030, 8, 30)}
+    assert set(dias) == FERIADOS_EN_PERIODOS
     assert (dias[date(2030, 8, 30)].origen, dias[date(2030, 8, 30)].fecha_fin) == ("automatico", date(2030, 8, 30))
+    assert dias[date(2030, 8, 6)].origen == "automatico"  # en el PR3
     assert releer(db, Calendario, general.id_calendario).version == 2
     assert sum(cargar_feriados(db).creados.values()) == 0
     assert releer(db, Calendario, general.id_calendario).version == 2
@@ -504,7 +540,7 @@ def test_cargar_feriados_no_vuelve_no_lectiva_una_fecha_con_asistencias(con_orig
 
     resumen = cargar_feriados(db)
 
-    assert set(no_lectivos(db)) == {date(2030, 7, 23), date(2030, 7, 29)}
+    assert set(no_lectivos(db)) == FERIADOS_EN_PERIODOS - {date(2030, 8, 30)}
     assert any("2030-08-30" in a and "asistencias" in a for a in resumen.advertencias)
 
 

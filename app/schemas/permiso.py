@@ -2,8 +2,9 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from app.core.tiempo import ZONA_LIMA
 from app.schemas.comun import ItemCatalogo
 
 ModuloPermiso = Literal["asistencias", "rubrica", "registro_vuelo", "lectura"]
@@ -27,6 +28,15 @@ class PermisoCrear(BaseModel):
     fin: datetime
     # Obligatorio; se valida en el servicio para devolver el mensaje del caso de uso.
     motivo: str = ""
+
+    @field_validator("inicio", "fin")
+    @classmethod
+    def _con_zona(cls, valor: Optional[datetime]) -> Optional[datetime]:
+        """Sin zona (p. ej. "2026-10-26T12:39" de un input datetime-local) es hora de Lima;
+        con zona se respeta. Así el servicio siempre compara instantes con zona."""
+        if valor is not None and valor.tzinfo is None:
+            return valor.replace(tzinfo=ZONA_LIMA)
+        return valor
 
 
 class PermisoRevocar(BaseModel):

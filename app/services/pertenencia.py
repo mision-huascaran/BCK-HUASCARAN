@@ -21,6 +21,7 @@ from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio, error_de_campo
+from app.core.texto import comparable_sql
 from app.core.tiempo import hoy_lima
 from app.models.evaluacion import Clase, ClaseAlumno
 from app.models.organizacion import Alumno, AlumnoPertenencia, Colegio, Grado, Seccion
@@ -73,7 +74,7 @@ def _alumnos(db: Session, filtro: list) -> list[Alumno]:
         db.exec(
             select(Alumno)
             .where(col(Alumno.id_alumno).in_(ids))
-            .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+            .order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
         ).all()
     )
 
@@ -105,7 +106,7 @@ def lista_del_grupo(
             select(Alumno, AlumnoPertenencia.id_programa)
             .join(AlumnoPertenencia, AlumnoPertenencia.id_alumno == Alumno.id_alumno)
             .where(*_del_grupo(id_colegio, id_grado, id_seccion, None), *_vigente_en(fecha))
-            .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+            .order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
         ).all()
     ]
 

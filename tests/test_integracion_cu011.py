@@ -282,7 +282,7 @@ def test_salud_del_sistema_suma_los_cuatro_contadores(db, entorno, monkeypatch):
     assert set(salud_sistema.CONTADORES) == {"asistencias", "lectura", "rubrica", "registro_vuelo"}
     llamados = []
     for nombre in list(salud_sistema.CONTADORES):
-        monkeypatch.setitem(salud_sistema.CONTADORES, nombre, lambda _db, _pa, n=nombre: llamados.append(n) or 1)
+        monkeypatch.setitem(salud_sistema.CONTADORES, nombre, lambda _db, _pa, n=nombre: llamados.append(n) or [n])
 
     assert salud_sistema.salud_sistema(db) == 100
     assert sorted(llamados) == ["asistencias", "lectura", "registro_vuelo", "rubrica"]

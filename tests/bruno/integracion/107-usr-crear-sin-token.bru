@@ -18,9 +18,8 @@ body:json {
     "correo": "{{correoUsr}}",
     "id_rol": {{idRolDocente}},
     "asignacion": {
-      "id_colegio": {{idColegioInt}},
       "id_anio_escolar": {{idAnio}},
-      "grados": [{{idGrado1}}]
+      "colegios": [{ "id_colegio": {{idColegioInt}}, "grados": [{{idGrado1}}] }]
     }
   }
 }

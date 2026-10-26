@@ -3,7 +3,7 @@
 Cada año escolar tiene un calendario general y cada colegio puede tener uno particular
 activo. El calendario de un colegio en un año es su particular activo si existe; si no,
 el general. Define 8 periodos con fechas inclusivas (PA1, PR1, ..., PA4, PR4) y días no
-lectivos (rangos dentro de un PA).
+lectivos (rangos dentro de los periodos, PA o PR; fuera de un PA ningún día es lectivo).
 
 Regla de todo el backend: "día" y "periodo" dependen del colegio. Toda operación sobre un
 colegio pregunta con `periodo_de(db, id_colegio, fecha)` o, si evalúa muchos colegios o

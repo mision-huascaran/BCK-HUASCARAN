@@ -255,15 +255,18 @@ MAXIMOS_LSN = (5, 10)
 class LecturaSemanal(SQLModel, table=True):
     """Tabla de Seguimiento de Lectura de un grupo y subprograma en una semana (CU023 a
     CU026), atada a una clase de referencia del grupo en esa semana: la asistencia de esa
-    clase decide qué filas admiten datos de lectura. El `mes` es el de la fecha de su
-    clase de referencia."""
+    clase decide qué filas admiten datos de lectura.
+
+    Identidad: una sola tabla por grupo, subprograma y semana (UNIQUE). Una semana que cae
+    en dos meses tiene una sola tabla. `id_anio_escolar` y `mes` no son identidad: solo la
+    ubican en los filtros (el mes de la fecha de su clase de referencia; cambia si se
+    cambia la clase a una de otro mes)."""
 
     __tablename__ = "lectura_semanal"
     __table_args__ = (
         ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_lectura_semanal_seccion"),
         UniqueConstraint(
-            "id_colegio", "id_grado", "id_seccion", "id_programa", "id_anio_escolar", "mes", "id_semana",
-            name="uq_lectura_semanal_grupo_semana",
+            "id_colegio", "id_grado", "id_seccion", "id_programa", "id_semana", name="uq_lectura_semanal_grupo_semana",
         ),
         UniqueConstraint(*UNICA_TABLA_POR_CLASE_Y_SUBPROGRAMA, name="uq_lectura_semanal_clase_programa"),
         CheckConstraint("mes BETWEEN 1 AND 12", name="ck_lectura_semanal_mes"),
@@ -295,6 +298,53 @@ class LecturaSemanal(SQLModel, table=True):
     creado_en: datetime = Field(sa_type=UTCDateTime)
     modificado_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
     modificado_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+
+
+class LecturaNoRealizada(SQLModel, table=True):
+    """Historial de declaraciones "No realizada" de una tabla de lectura (CU026). Una fila
+    por declaración, con su justificación y quién, con qué actividad y autorización y
+    cuándo la hizo. "Habilitar registro de lectura" la revierte completando los campos
+    de reversión: nada se borra. Solo una declaración vigente (no revertida) por tabla.
+    `lectura_semanal.estado` y `motivo_no_realizada` siguen siendo el estado actual."""
+
+    __tablename__ = "lectura_no_realizada"
+    __table_args__ = (
+        CheckConstraint("length(trim(motivo)) > 0", name="ck_lectura_no_realizada_motivo"),
+        CheckConstraint(
+            "(revertida_por IS NULL AND motivo_correccion IS NULL AND fecha_registro_reversion IS NULL "
+            "AND revertida_en IS NULL AND id_actividad_reversion IS NULL AND id_permiso_reversion IS NULL) OR "
+            "(revertida_por IS NOT NULL AND motivo_correccion IS NOT NULL AND fecha_registro_reversion IS NOT NULL "
+            "AND revertida_en IS NOT NULL)",
+            name="ck_lectura_no_realizada_reversion",
+        ),
+        CheckConstraint(
+            "motivo_correccion IS NULL OR length(trim(motivo_correccion)) > 0",
+            name="ck_lectura_no_realizada_motivo_correccion",
+        ),
+        Index(
+            "uq_lectura_no_realizada_vigente", "id_lectura_semanal", unique=True,
+            postgresql_where=text("revertida_en IS NULL"), sqlite_where=text("revertida_en IS NULL"),
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    id_lectura_semanal: int = Field(foreign_key="lectura_semanal.id", ondelete="CASCADE")
+    motivo: str = Field(sa_type=Text)
+    declarada_por: int = Field(foreign_key=FK_USUARIO)
+    id_docente: int = Field(foreign_key=FK_DOCENTE)
+    id_actividad: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
+    # Momento original de la declaración (puede venir de una operación sin conexión).
+    fecha_registro: datetime = Field(sa_type=UTCDateTime)
+    creado_en: datetime = Field(sa_type=UTCDateTime)
+
+    revertida_por: Optional[int] = Field(default=None, foreign_key=FK_USUARIO)
+    motivo_correccion: Optional[str] = Field(default=None, sa_type=Text)
+    id_actividad_reversion: Optional[uuid.UUID] = Field(default=None, sa_type=Uuid, foreign_key=FK_ACTIVIDAD)
+    id_permiso_reversion: Optional[int] = Field(default=None, foreign_key=FK_PERMISO)
+    # Momento original de la reversión.
+    fecha_registro_reversion: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
+    revertida_en: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
 class LecturaSemanalAlumno(SQLModel, table=True):
@@ -342,16 +392,14 @@ class LecturaSemanalAlumno(SQLModel, table=True):
 
 class RubricaMensual(SQLModel, table=True):
     """Evaluación mensual de un alumno en su grupo de ese mes (CU029, CU030): Fluidez y
-    Comprensión (null = "Sin evaluar"; se puede guardar incompleta). `id_periodo_academico`
-    es el PA del mes (REGLA PROVISIONAL R1: el de su último día lectivo)."""
+    Comprensión (null = "Sin evaluar"; se puede guardar incompleta). Una sola por alumno,
+    año y mes, en cualquier grupo (R2). `id_periodo_academico` es el PA del mes (R1: el de
+    más días lectivos del mes)."""
 
     __tablename__ = "rubrica_mensual"
     __table_args__ = (
         ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_rubrica_mensual_seccion"),
-        UniqueConstraint(
-            "id_alumno", "id_anio_escolar", "mes", "id_colegio", "id_grado", "id_seccion", "id_programa",
-            name="uq_rubrica_mensual_alumno_mes_grupo",
-        ),
+        UniqueConstraint("id_alumno", "id_anio_escolar", "mes", name="uq_rubrica_mensual_alumno_mes"),
         CheckConstraint("mes BETWEEN 1 AND 12", name="ck_rubrica_mensual_mes"),
         Index("ix_rubrica_mensual_colegio_periodo", "id_colegio", "id_periodo_academico"),
     )
@@ -410,6 +458,9 @@ class RegistroVuelo(SQLModel, table=True):
     id_nivel_proyeccion: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)
     observacion: Optional[str] = Field(default=None, sa_type=Text)
     id_rubrica_referencia: Optional[int] = Field(default=None, foreign_key="rubrica_mensual.id")
+    # La decisión del PA anterior que dio la entrada al decidir (null en PA1 o si estaba
+    # pendiente); puede ser de otro colegio (traslado).
+    id_registro_entrada: Optional[int] = Field(default=None, foreign_key="registro_vuelo.id", ondelete="SET NULL")
     rubrica_version: Optional[int] = None
     resultado_decimas: Optional[int] = None
     id_nivel_entrada_al_decidir: Optional[int] = Field(default=None, foreign_key=FK_NIVEL_RAZKIDS)

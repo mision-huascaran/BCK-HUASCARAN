@@ -8,6 +8,10 @@ Dos tablas sostienen todo:
   rechazada o descartada (le ganó un registro más reciente, o el usuario descartó su
   rechazo con "Cargar versión actual"). Hace idempotente el envío.
 
+Las dos guardan la clave canónica del registro (`clave_registro`,
+app/services/claves_registro.py): al llegar una operación se borran también los avisos
+anteriores de su mismo registro, y la Salud del Sistema cuenta por registro.
+
 `procesar_operacion` es el único camino de escritura de los módulos con cola offline: la
 aplica en un SAVEPOINT, registra el resultado y borra su aviso de pendiente.
 
@@ -63,7 +67,9 @@ ACTIVIDAD_REQUERIDA = "actividad_requerida"
 REALIZADO_EN_FUTURO = "realizado_en_futuro"
 OPERACION_AJENA = "operacion_ajena"
 MENSAJE_FUERA_DE_ACTIVIDAD = "La operación se realizó fuera de una actividad de trabajo del docente."
-MENSAJE_ACTIVIDAD_REQUERIDA = "Inicia una actividad de trabajo para registrar información."
+# Mensaje único de actividad no iniciada en los módulos operativos (Asistencias, Lectura
+# semanal, Rúbrica mensual, Registro de Vuelo). Alumnos (CU014) conserva el suyo.
+MENSAJE_ACTIVIDAD_REQUERIDA = "Debes iniciar una actividad de trabajo para registrar o modificar información."
 MENSAJE_REALIZADO_EN_FUTURO = "La hora de la operación es posterior a la hora actual."
 MENSAJE_OPERACION_AJENA = "El identificador de la operación ya fue usado."
 MENSAJE_OPERACION_NO_ENCONTRADA = "La operación no existe."
@@ -169,12 +175,14 @@ class OperacionDescartada(Exception):
 @dataclass(frozen=True)
 class Operacion:
     """Qué toca la operación: módulo, tabla y clave del registro. `mensaje_sin_actividad`
-    reemplaza el mensaje genérico de `actividad_requerida` (cada CU tiene el suyo)."""
+    reemplaza el mensaje genérico de `actividad_requerida` (cada CU tiene el suyo);
+    `clave_registro`, la clave canónica del registro (Salud del Sistema)."""
 
     modulo: str
     entidad: str
     id_entidad: str
     mensaje_sin_actividad: Optional[str] = None
+    clave_registro: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -289,9 +297,16 @@ def _registrar(
             respuesta=resultado.model_dump(mode="json"),
             fecha_realizacion=en,
             recibida_en=ahora,
+            clave_registro=operacion.clave_registro,
         )
     )
     db.exec(delete(OperacionPendiente).where(OperacionPendiente.id_operacion == item.id_operacion))
+    if operacion.clave_registro is not None:
+        # Las modificaciones anteriores del mismo registro ya no están pendientes.
+        db.exec(delete(OperacionPendiente).where(
+            OperacionPendiente.clave_registro == operacion.clave_registro,
+            OperacionPendiente.fecha_realizacion <= en,
+        ))
     if actividad is not None:
         actividad.sincronizado_en = ahora
         db.add(actividad)
@@ -364,6 +379,7 @@ def registrar_pendientes(db: Session, usuario: Usuario, items: list[PendienteInf
             "modulo": i.modulo,
             "fecha_realizacion": i.realizado_en,
             "informado_en": ahora,
+            "clave_registro": i.clave_registro,
         }
         for i in items
         if i.id_operacion not in procesadas

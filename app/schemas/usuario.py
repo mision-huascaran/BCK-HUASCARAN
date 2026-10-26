@@ -15,12 +15,21 @@ from app.schemas.comun import Dni, ParcheSinNulos, Texto
 InicioAsignacion = Literal["retroactivo", "proximo"]
 
 
-class AsignacionCrear(BaseModel):
+class ColegioDeAsignacion(BaseModel):
     id_colegio: int
-    id_anio_escolar: int
-    # Sin `grados`: todos los que ofrece el colegio. Si viene, no puede estar vacía.
+    # Sin `grados`: en un alta, todos los que ofrece el colegio; en una edición, los que el
+    # Docente ya tenía en ese colegio en el periodo de inicio (o todos, si no lo tenía).
+    # Si viene, no puede estar vacía.
     grados: Optional[list[int]] = Field(default=None, min_length=1)
     inicio_asignacion: Optional[InicioAsignacion] = None
+
+
+class AsignacionDocente(BaseModel):
+    """Colegios y grados del Docente en un año escolar. En PATCH es el conjunto completo
+    deseado para ese año: los colegios que no vienen se liberan en sus PA no terminados."""
+
+    id_anio_escolar: int
+    colegios: list[ColegioDeAsignacion] = Field(min_length=1)
 
 
 class UsuarioCrear(BaseModel):
@@ -30,17 +39,7 @@ class UsuarioCrear(BaseModel):
     correo: CorreoValido
     id_rol: int
     # Obligatoria para Docente, prohibida para los demás roles.
-    asignacion: Optional[AsignacionCrear] = None
-
-
-class AsignacionEditar(ParcheSinNulos):
-    id_colegio: Optional[int] = None
-    grados: Optional[list[int]] = Field(default=None, min_length=1)
-    id_anio_escolar: Optional[int] = None
-    # Id del periodo desde el que aplica el cambio; por defecto el vigente (en un receso,
-    # según `inicio_asignacion`).
-    desde_periodo: Optional[int] = None
-    inicio_asignacion: Optional[InicioAsignacion] = None
+    asignacion: Optional[AsignacionDocente] = None
 
 
 class UsuarioEditar(ParcheSinNulos):
@@ -49,7 +48,7 @@ class UsuarioEditar(ParcheSinNulos):
     dni: Optional[Dni] = None
     correo: Optional[CorreoValido] = None
     id_rol: Optional[int] = None
-    asignacion: Optional[AsignacionEditar] = None
+    asignacion: Optional[AsignacionDocente] = None
 
 
 # ── Responses ───────────────────────────────────────────────────────────────────────
@@ -78,15 +77,22 @@ class GradoAsignado(BaseModel):
 class PeriodoAsignado(BaseModel):
     id_periodo: int
     numero: int
+    # Si es el PA en que hoy está ese colegio (CU027).
     vigente: bool
+    # Habilitado con "Retroactivo" durante el PR que le sigue.
+    retroactiva: bool
+    grados: list[GradoAsignado]
+
+
+class ColegioAsignadoDetalle(BaseModel):
     id_colegio: int
     colegio: str
-    grados: list[GradoAsignado]
+    periodos: list[PeriodoAsignado]
 
 
 class AsignacionDetalle(BaseModel):
     id_anio_escolar: int
-    periodos: list[PeriodoAsignado]
+    colegios: list[ColegioAsignadoDetalle]
 
 
 class UsuarioDetalle(UsuarioItem):

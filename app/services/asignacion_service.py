@@ -1,24 +1,31 @@
-"""Asignaciones de los Docentes (CU016): qué colegio y grados atiende en cada periodo.
+"""Asignaciones de los Docentes (CU016): qué colegios y grados atiende en cada periodo.
 
 Reglas de negocio:
-- Un docente trabaja en un solo colegio y, por ahora, enseña todos los grados que ese
-  colegio ofrece (`colegio_grado`). Cada asignación se guarda como una fila por grado y
-  periodo en `docente_colegio_grado`, para que en el futuro pueda enseñar solo algunos.
+- Un docente puede atender varios colegios en un año escolar, cada uno con sus grados
+  (por defecto, todos los que el colegio ofrece en `colegio_grado`). Cada asignación se
+  guarda como una fila por colegio, grado y periodo en `docente_colegio_grado`.
 - Un solo docente por (colegio, grado, periodo) (UNIQUE en la BD).
 - Solo se crean o reemplazan filas en PA no terminados (su fin, en el calendario del
   colegio de la asignación, es hoy o después): los PA pasados son historial y nunca se
-  tocan. "Vigente", "terminado" y "próximo" siempre se miden con el calendario del colegio
-  (CU027): dos colegios pueden estar en periodos distintos el mismo día.
-- Si el colegio está hoy en un receso (PR n), el request elige `inicio_asignacion`:
-  "retroactivo" crea además la fila del PA n recién culminado (`retroactiva`), que no
-  puede sustituir a su titular; "proximo" empieza en el PA n + 1 (no existe en el PR4).
+  tocan. "Vigente", "terminado" y "próximo" siempre se miden con el calendario de cada
+  colegio (CU027): dos colegios pueden estar en periodos distintos el mismo día.
+- El inicio se decide por colegio: si su año no empezó, desde el PA1; si está en un PA,
+  desde ese PA; si está en un receso (PR n), el request elige `inicio_asignacion` para ese
+  colegio: "retroactivo" crea además la fila del PA n recién culminado (`retroactiva`),
+  que no puede sustituir a su titular; si el mismo docente ya era su titular, se conserva
+  su fila y se marca `retroactiva`: la asignación ordinaria no habilita por sí sola la
+  regularización durante el PR. "proximo" empieza en el PA n + 1 (no existe en el PR4).
+- En una edición, la lista de colegios es el conjunto completo del año: los colegios que
+  el docente deja se liberan en sus PA no terminados (como al inactivarlo).
+- Primero se valida todo, para todos los colegios, y recién después se escribe: un
+  conflicto en un colegio no deja escrito otro.
 
 Las asignaciones se cambian con POST y PATCH /usuarios; aquí no se hace commit.
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Iterable, Optional
 
 from fastapi import status
 from sqlalchemy import and_, delete, func, or_
@@ -26,6 +33,7 @@ from sqlmodel import Session, col, select
 
 from app.core.ciclo import calcular_ciclo, ordenar_ciclos
 from app.core.errores import ErrorNegocio, error_de_campo
+from app.core.texto import comparable, comparable_sql
 from app.core.tiempo import hoy_lima
 from app.models.organizacion import (
     Alumno,
@@ -43,7 +51,13 @@ from app.models.organizacion import (
 )
 from app.schemas.asignacion import AsignacionItem, GradoACargo, MiAsignacion, TotalesACargo
 from app.schemas.comun import ItemCatalogo
-from app.schemas.usuario import AsignacionDetalle, GradoAsignado, PeriodoAsignado
+from app.schemas.usuario import (
+    AsignacionDetalle,
+    ColegioAsignadoDetalle,
+    ColegioDeAsignacion,
+    GradoAsignado,
+    PeriodoAsignado,
+)
 from app.services.habilitacion import pares_a_cargo
 from app.services.calendario import (
     CalendarioResuelto,
@@ -58,15 +72,12 @@ from app.services.calendario import (
 SIN_ASIGNACION = "Sin asignación"
 RETROACTIVO = "retroactivo"
 PROXIMO = "proximo"
-CAMPO_INICIO = "asignacion.inicio_asignacion"
+CAMPO_COLEGIOS = "asignacion.colegios"
 MENSAJE_SIN_PROXIMO = (
     "Este año escolar ya no tiene otro periodo académico. Para asignar al Docente al "
     "siguiente año, selecciona ese año escolar."
 )
-MENSAJE_INICIO_AMBIGUO = (
-    "Indica el periodo desde el que aplica el cambio o cómo empieza la asignación en el "
-    "receso, pero no ambos."
-)
+MENSAJE_COLEGIO_REPETIDO = "El colegio ya está en la asignación: selecciónalo una sola vez."
 ULTIMO_PA = 4
 
 
@@ -74,9 +85,14 @@ def _no_procesable(detail: str, motivo: str) -> ErrorNegocio:
     return ErrorNegocio(status.HTTP_422_UNPROCESSABLE_CONTENT, detail, motivo=motivo)
 
 
+def campo_del_colegio(indice: int, nombre: str) -> str:
+    """Ruta del campo de un colegio de la asignación: `asignacion.colegios.1.id_colegio`."""
+    return f"{CAMPO_COLEGIOS}.{indice}.{nombre}"
+
+
 @dataclass(frozen=True)
 class Asignacion:
-    """Colegio y grados de un docente a partir de un periodo de un año escolar.
+    """Grados de un docente en un colegio a partir de un periodo de un año escolar.
     `retroactivo`: el PA recién culminado que se agrega con "Retroactivo" (también está
     primero en `periodos`)."""
 
@@ -87,15 +103,47 @@ class Asignacion:
     retroactivo: Optional[PeriodoAcademico] = None
 
     def resumen(self) -> str:
-        return resumen_asignacion(self.colegio.nombre, self.grados, self.periodos[0], self.anio)
+        return resumen_asignacion(
+            self.colegio.nombre, self.grados, self.periodos[0], self.anio, self.retroactivo is not None
+        )
+
+    def pares(self) -> set[tuple[int, int]]:
+        """(colegio, periodo) que esta asignación reescribe."""
+        return {(self.colegio.id_colegio, p.id_periodo_academico) for p in self.periodos}
+
+
+@dataclass(frozen=True)
+class PlanAsignacion:
+    """Lo que queda del docente en un año escolar, ya validado: una `Asignacion` por colegio
+    pedido y las filas de los colegios que deja (de PA no terminados), que se liberan."""
+
+    anio: AnioEscolar
+    colegios: list[Asignacion]
+    liberadas: list[DocenteColegioGrado] = field(default_factory=list)
+
+    def resumen(self) -> str:
+        por_nombre = sorted(self.colegios, key=lambda a: (comparable(a.colegio.nombre), a.colegio.id_colegio))
+        return unir_resumenes(a.resumen() for a in por_nombre)
+
+    def pares(self) -> set[tuple[int, int]]:
+        """(colegio, periodo) que el plan reescribe o libera: de ahí sale el "antes"."""
+        liberados = {(f.id_colegio, f.id_periodo_academico) for f in self.liberadas}
+        return liberados.union(*(a.pares() for a in self.colegios))
 
 
 def resumen_asignacion(
-    colegio: str, grados: list[Grado], desde: PeriodoAcademico, anio: AnioEscolar
+    colegio: str, grados: list[Grado], desde: PeriodoAcademico, anio: AnioEscolar, retroactivo: bool = False
 ) -> str:
-    """Texto legible para la auditoría: `AMASHCA [1.º, 2.º] desde P3 2026`."""
+    """Texto legible para la auditoría: `AMASHCA [1.º, 2.º] desde P3 2026`, con
+    ` (P3 retroactivo)` si ese primer PA está habilitado con "Retroactivo"."""
     nombres = ", ".join(g.nombre for g in sorted(grados, key=lambda g: g.id_grado))
-    return f"{colegio} [{nombres}] desde P{desde.numero} {anio.nombre}"
+    marca = f" (P{desde.numero} retroactivo)" if retroactivo else ""
+    return f"{colegio} [{nombres}] desde P{desde.numero} {anio.nombre}{marca}"
+
+
+def unir_resumenes(resumenes: Iterable[str]) -> str:
+    """Los resúmenes de cada colegio, unidos por "; " (SIN_ASIGNACION si no hay ninguno)."""
+    return "; ".join(resumenes) or SIN_ASIGNACION
 
 
 # ── Validación de los datos de una asignación ───────────────────────────────────────
@@ -186,59 +234,44 @@ def _pa_numero(anio: AnioDelColegio, numero: int) -> Optional[PeriodoAcademico]:
     return next((p for p in anio.periodos if p.numero == numero), None)
 
 
-def _inicio_en_receso(anio: AnioDelColegio, colegio: Colegio, numero: int, inicio: Optional[str]) -> Inicio:
+def _inicio_en_receso(
+    anio: AnioDelColegio, colegio: Colegio, numero: int, inicio: Optional[str], campo: str
+) -> Inicio:
     """El colegio está en el PR `numero`: "retroactivo" agrega el PA culminado y sigue
     con el próximo; "proximo" empieza en el PA siguiente. Sin elección, 422."""
     if inicio is None:
+        detalle = (
+            f"El colegio {colegio.nombre} está en receso (PR{numero}): indica si la asignación es "
+            f"retroactiva al PA{numero} o empieza en el próximo periodo."
+        )
         raise ErrorNegocio(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"El colegio {colegio.nombre} está en receso (PR{numero}): indica si la asignación es "
-            f"retroactiva al PA{numero} o empieza en el próximo periodo.",
+            detalle,
             motivo="inicio_asignacion_requerido",
-            extra={"id_colegio": colegio.id_colegio, "colegio": colegio.nombre, "periodo": f"PR{numero}"},
+            extra={
+                "id_colegio": colegio.id_colegio, "colegio": colegio.nombre, "periodo": f"PR{numero}",
+                "errores": [{"campo": campo, "mensaje": detalle}],
+            },
         )
     siguiente = _pa_numero(anio, numero + 1)
     if inicio == RETROACTIVO:
         return Inicio(siguiente, retroactivo=_pa_numero(anio, numero))
     if numero >= ULTIMO_PA or siguiente is None:
-        raise error_de_campo(CAMPO_INICIO, MENSAJE_SIN_PROXIMO)
+        raise error_de_campo(campo, MENSAJE_SIN_PROXIMO)
     return Inicio(siguiente)
 
 
-def inicio_de(
-    anio: AnioDelColegio, colegio: Colegio, id_periodo: Optional[int], inicio: Optional[str] = None
-) -> Inicio:
-    """Desde qué PA del año aplica una asignación, según el calendario del colegio (CU016).
-
-    Con `id_periodo`, ese (del año y no terminado); con él y `inicio` a la vez, 422: no
-    hay prioridad silenciosa. Sin él: si hoy el colegio está en un
-    PA, ese; si está en un PR, lo que diga `inicio` ("retroactivo" o "proximo"); si hoy
-    no cae en ese año (p. ej. todavía no empezó), desde el primer PA no terminado.
-    """
-    if id_periodo is not None and inicio is not None:
-        raise _no_procesable(MENSAJE_INICIO_AMBIGUO, "inicio_asignacion_ambiguo")
-    if id_periodo is not None:
-        return Inicio(periodo_de_inicio(anio, id_periodo))
+def inicio_de(anio: AnioDelColegio, colegio: Colegio, inicio: Optional[str], campo: str) -> Inicio:
+    """Desde qué PA del año aplica la asignación de un colegio, según su calendario (CU016):
+    si hoy el colegio está en un PA, ese; si está en un PR, lo que diga `inicio`
+    ("retroactivo" o "proximo"); si hoy no cae en ese año (p. ej. todavía no empezó),
+    desde el primer PA no terminado. `campo`: dónde se informa el error de `inicio`."""
     actual = anio.calendario.periodo_de(hoy_lima())
     if actual is None:
         return Inicio(None)
     if actual.es_pa:
         return Inicio(_pa_numero(anio, actual.numero))
-    return _inicio_en_receso(anio, colegio, actual.numero, inicio)
-
-
-def periodo_de_inicio(anio: AnioDelColegio, id_periodo: int) -> PeriodoAcademico:
-    """El PA `id_periodo`, que debe ser del año y no estar terminado (en el calendario del
-    colegio)."""
-    elegido = next((p for p in anio.periodos if p.id_periodo_academico == id_periodo), None)
-    if elegido is None:
-        raise _no_procesable(
-            "El periodo indicado no pertenece al año escolar de la asignación.",
-            "periodo_fuera_del_anio",
-        )
-    if not anio.no_terminado(elegido):
-        raise _no_procesable("El periodo indicado ya terminó.", "periodo_terminado")
-    return elegido
+    return _inicio_en_receso(anio, colegio, actual.numero, inicio, campo)
 
 
 def periodos_asignables(anio: AnioDelColegio, inicio: Optional[Inicio] = None) -> list[PeriodoAcademico]:
@@ -260,8 +293,6 @@ def periodos_asignables(anio: AnioDelColegio, inicio: Optional[Inicio] = None) -
     return asignables
 
 
-# ── Escritura ───────────────────────────────────────────────────────────────────────
-
 def grado_asignado(
     colegio: Optional[str] = None,
     grado: Optional[str] = None,
@@ -281,10 +312,10 @@ def grado_asignado(
     return ErrorNegocio(status.HTTP_409_CONFLICT, detalle, motivo="grado_asignado")
 
 
-def _verificar_grados_libres(db: Session, id_docente: int, asignacion: Asignacion) -> None:
+def _verificar_grados_libres(db: Session, id_docente: Optional[int], asignacion: Asignacion) -> None:
     """409 si alguno de esos grados ya lo tiene otro docente en alguno de esos periodos
-    (incluido el retroactivo: no se sustituye al titular histórico). Todo o nada."""
-    ocupada = db.exec(
+    (incluido el retroactivo: no se sustituye al titular histórico)."""
+    consulta = (
         select(Grado.nombre, PeriodoAcademico.numero)
         .select_from(DocenteColegioGrado)
         .join(Grado, Grado.id_grado == DocenteColegioGrado.id_grado)
@@ -295,206 +326,263 @@ def _verificar_grados_libres(db: Session, id_docente: int, asignacion: Asignacio
             col(DocenteColegioGrado.id_periodo_academico).in_(
                 [p.id_periodo_academico for p in asignacion.periodos]
             ),
-            DocenteColegioGrado.id_docente != id_docente,
         )
-        .order_by(PeriodoAcademico.numero, Grado.id_grado)
-        .limit(1)
-    ).first()
+    )
+    if id_docente is not None:
+        consulta = consulta.where(DocenteColegioGrado.id_docente != id_docente)
+    ocupada = db.exec(consulta.order_by(PeriodoAcademico.numero, Grado.id_grado).limit(1)).first()
     if ocupada is not None:
         grado, numero = ocupada
         raise grado_asignado(asignacion.colegio.nombre, grado, numero, asignacion.anio.nombre)
 
 
-def reemplazar_asignaciones(
+# ── Planificación (solo lee) ────────────────────────────────────────────────────────
+
+def planificar_asignacion(
+    db: Session, id_anio_escolar: int, pedidos: list[ColegioDeAsignacion], id_docente: Optional[int] = None
+) -> PlanAsignacion:
+    """Valida la asignación completa de un año (alta, edición o paso a Docente) sin escribir
+    nada: colegios, grados, año, inicio y grados libres de todos los colegios.
+
+    `id_docente`: el docente que ya existe (None en un alta). Con él, los grados no
+    enviados se toman de lo que ya tiene en ese colegio y los colegios que tiene en el año
+    y no vienen en `pedidos` se liberan en sus PA no terminados.
+    """
+    _sin_colegios_repetidos(pedidos)
+    renovacion = id_docente is not None and not _tiene_filas_en_el_anio(db, id_docente, id_anio_escolar)
+    colegios = [
+        _planificar_colegio(db, id_anio_escolar, indice, pedido, id_docente, renovacion)
+        for indice, pedido in enumerate(pedidos)
+    ]
+    anio = colegios[0].anio
+    liberadas = _filas_que_deja(db, id_docente, anio, {p.id_colegio for p in pedidos})
+    return PlanAsignacion(anio, colegios, liberadas)
+
+
+def _sin_colegios_repetidos(pedidos: list[ColegioDeAsignacion]) -> None:
+    vistos: set[int] = set()
+    for indice, pedido in enumerate(pedidos):
+        if pedido.id_colegio in vistos:
+            raise error_de_campo(campo_del_colegio(indice, "id_colegio"), MENSAJE_COLEGIO_REPETIDO)
+        vistos.add(pedido.id_colegio)
+
+
+def _planificar_colegio(
+    db: Session,
+    id_anio_escolar: int,
+    indice: int,
+    pedido: ColegioDeAsignacion,
+    id_docente: Optional[int],
+    renovacion: bool,
+) -> Asignacion:
+    """Valida un colegio de la asignación: inicio según su calendario, grados y que estén
+    libres en esos periodos."""
+    colegio = colegio_activo(db, pedido.id_colegio)
+    anio = anio_del_colegio(db, id_anio_escolar, colegio.id_colegio)
+    inicio = inicio_de(anio, colegio, pedido.inicio_asignacion, campo_del_colegio(indice, "inicio_asignacion"))
+    # Una renovación parte de lo último que tuvo en el colegio; el mismo año, del periodo de inicio.
+    referencia = None if renovacion else inicio.desde
+    actuales = _grados_actuales(db, id_docente, colegio.id_colegio, referencia)
+    grados = _grados_de(db, colegio, pedido.grados, actuales)
+    asignacion = Asignacion(colegio, grados, anio.anio, periodos_asignables(anio, inicio), inicio.retroactivo)
+    _verificar_grados_libres(db, id_docente, asignacion)
+    return asignacion
+
+
+def _tiene_filas_en_el_anio(db: Session, id_docente: int, id_anio_escolar: int) -> bool:
+    return db.exec(
+        select(DocenteColegioGrado.id)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .where(DocenteColegioGrado.id_docente == id_docente, PeriodoAcademico.id_anio_escolar == id_anio_escolar)
+        .limit(1)
+    ).first() is not None
+
+
+def _grados_actuales(
+    db: Session, id_docente: Optional[int], id_colegio: int, periodo: Optional[PeriodoAcademico]
+) -> list[int]:
+    """Grados del docente en ese colegio en `periodo` o, sin él, en el último periodo en
+    que lo atendió. Vacío si no lo atendía."""
+    if id_docente is None:
+        return []
+    consulta = (
+        select(DocenteColegioGrado.id_grado, DocenteColegioGrado.id_periodo_academico)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
+        .where(DocenteColegioGrado.id_docente == id_docente, DocenteColegioGrado.id_colegio == id_colegio)
+    )
+    if periodo is not None:
+        consulta = consulta.where(DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico)
+    filas = db.exec(
+        consulta.order_by(col(AnioEscolar.fecha_inicio).desc(), col(PeriodoAcademico.numero).desc())
+    ).all()
+    if not filas:
+        return []
+    ultimo = filas[0][1]
+    return sorted(id_grado for id_grado, id_periodo in filas if id_periodo == ultimo)
+
+
+def _grados_de(
+    db: Session, colegio: Colegio, ids_grados: Optional[list[int]], actuales: list[int]
+) -> list[Grado]:
+    """Los grados enviados; sin ellos, los que ya tenía en el colegio o, si no lo atendía,
+    todos los que ofrece."""
+    if ids_grados is not None or not actuales:
+        return resolver_grados(db, colegio, ids_grados)
+    # Se conservan los grados actuales tal como están asignados.
+    return list(db.exec(select(Grado).where(col(Grado.id_grado).in_(actuales)).order_by(Grado.id_grado)).all())
+
+
+def _filas_que_deja(
+    db: Session, id_docente: Optional[int], anio: AnioEscolar, conservados: set[int]
+) -> list[DocenteColegioGrado]:
+    """Filas del docente en ese año en colegios que no conserva, de PA no terminados en el
+    calendario de cada uno (los culminados, incluido el retroactivo en su PR, son historial)."""
+    if id_docente is None:
+        return []
+    filas = db.exec(
+        select(DocenteColegioGrado, PeriodoAcademico)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .where(
+            DocenteColegioGrado.id_docente == id_docente,
+            PeriodoAcademico.id_anio_escolar == anio.id_anio_escolar,
+            col(DocenteColegioGrado.id_colegio).not_in(conservados),
+        )
+    ).all()
+    return [fila for fila, _ in _de_pa_no_terminados(db, filas)]
+
+
+def _de_pa_no_terminados(
+    db: Session, filas: list[tuple[DocenteColegioGrado, PeriodoAcademico]]
+) -> list[tuple[DocenteColegioGrado, PeriodoAcademico]]:
+    """Las filas cuyo PA no terminó en el calendario de su colegio."""
+    if not filas:
+        return []
+    calendarios = cargar_calendarios(db, ids_colegio={f.id_colegio for f, _ in filas})
+    hoy = hoy_lima()
+    return [(f, p) for f, p in filas if not calendarios.pa_terminado(f.id_colegio, p, hoy)]
+
+
+# ── Escritura ───────────────────────────────────────────────────────────────────────
+
+def aplicar_asignacion(
+    db: Session, id_docente: int, plan: PlanAsignacion, id_actor: int, ahora: datetime
+) -> None:
+    """Escribe un plan ya validado: reemplaza cada colegio pedido y libera los que deja."""
+    if plan.liberadas:
+        _borrar(db, [f.id for f in plan.liberadas])
+    for asignacion in plan.colegios:
+        _reemplazar_en_colegio(db, id_docente, asignacion, id_actor, ahora)
+
+
+def _borrar(db: Session, ids: list[int]) -> None:
+    db.execute(delete(DocenteColegioGrado).where(col(DocenteColegioGrado.id).in_(ids)))
+
+
+def _reemplazar_en_colegio(
     db: Session, id_docente: int, asignacion: Asignacion, id_actor: int, ahora: datetime
 ) -> None:
-    """Deja al docente con ese colegio y grados en esos periodos (y solo en esos).
+    """Deja al docente con esos grados del colegio en esos periodos; no toca sus filas de
+    otros colegios.
 
     Solo borra las filas que sobran e inserta las que faltan: las que no cambian se
     conservan con su `creado_en`, que así indica desde cuándo el docente atiende ese
     colegio y grado (lo usa la alerta de inactividad, CU011). Son periodos vigentes o
     futuros, así que no se pierde historial; en el PA retroactivo (ya culminado) solo se
-    agregan filas, marcadas `retroactiva`.
+    agregan filas, marcadas `retroactiva`, o se marcan las que el docente ya tenía como
+    titular (sin crear otra ni cambiar al titular).
     """
-    _verificar_grados_libres(db, id_docente, asignacion)
-    ids_periodo = [p.id_periodo_academico for p in asignacion.periodos]
     id_retroactivo = asignacion.retroactivo.id_periodo_academico if asignacion.retroactivo else None
-    deseadas = {
-        (asignacion.colegio.id_colegio, grado.id_grado, id_periodo)
-        for id_periodo in ids_periodo
-        for grado in asignacion.grados
-    }
+    deseadas = {(g.id_grado, p.id_periodo_academico) for p in asignacion.periodos for g in asignacion.grados}
     actuales = db.exec(
         select(DocenteColegioGrado).where(
             DocenteColegioGrado.id_docente == id_docente,
-            col(DocenteColegioGrado.id_periodo_academico).in_(ids_periodo),
+            DocenteColegioGrado.id_colegio == asignacion.colegio.id_colegio,
+            col(DocenteColegioGrado.id_periodo_academico).in_([p.id_periodo_academico for p in asignacion.periodos]),
         )
     ).all()
-    conservadas = set()
-    sobrantes = []
+    conservadas = {(f.id_grado, f.id_periodo_academico) for f in actuales} & deseadas
     for fila in actuales:
-        clave = (fila.id_colegio, fila.id_grado, fila.id_periodo_academico)
-        if clave in deseadas:
-            conservadas.add(clave)
-        elif fila.id_periodo_academico != id_retroactivo:
-            sobrantes.append(fila.id)
+        clave = (fila.id_grado, fila.id_periodo_academico)
+        if clave in deseadas and fila.id_periodo_academico == id_retroactivo and not fila.retroactiva:
+            _marcar_retroactiva(db, fila, id_actor, ahora)
+    sobrantes = [
+        f.id for f in actuales
+        if (f.id_grado, f.id_periodo_academico) not in deseadas and f.id_periodo_academico != id_retroactivo
+    ]
     if sobrantes:
-        db.execute(delete(DocenteColegioGrado).where(col(DocenteColegioGrado.id).in_(sobrantes)))
+        _borrar(db, sobrantes)
     db.add_all(
         DocenteColegioGrado(
             id_docente=id_docente,
-            id_colegio=id_colegio,
+            id_colegio=asignacion.colegio.id_colegio,
             id_grado=id_grado,
             id_periodo_academico=id_periodo,
             retroactiva=id_periodo == id_retroactivo,
             creado_por=id_actor,
             creado_en=ahora,
         )
-        for id_colegio, id_grado, id_periodo in sorted(deseadas - conservadas)
+        for id_grado, id_periodo in sorted(deseadas - conservadas)
     )
 
 
-def planificar_asignacion_nueva(
-    db: Session,
-    id_colegio: int,
-    id_anio_escolar: int,
-    ids_grados: Optional[list[int]],
-    desde_periodo: Optional[int] = None,
-    inicio_asignacion: Optional[str] = None,
-) -> Asignacion:
-    """Asignación de un docente que no tiene una previa (alta o paso a Docente)."""
-    colegio = colegio_activo(db, id_colegio)
-    grados = resolver_grados(db, colegio, ids_grados)
-    anio = anio_del_colegio(db, id_anio_escolar, colegio.id_colegio)
-    return _armar(colegio, grados, anio, inicio_de(anio, colegio, desde_periodo, inicio_asignacion))
+def _marcar_retroactiva(db: Session, fila: DocenteColegioGrado, id_actor: int, ahora: datetime) -> None:
+    fila.retroactiva = True
+    fila.modificado_por = id_actor
+    fila.modificado_en = ahora
+    db.add(fila)
 
 
-def _armar(colegio: Colegio, grados: list[Grado], anio: AnioDelColegio, inicio: Inicio) -> Asignacion:
-    return Asignacion(colegio, grados, anio.anio, periodos_asignables(anio, inicio), inicio.retroactivo)
-
-
-@dataclass(frozen=True)
-class EstadoActual:
-    """Último periodo asignado del docente, con su colegio y grados."""
-
-    periodo: PeriodoAcademico
-    id_colegio: int
-    ids_grados: list[int]
-
-
-def estado_en(db: Session, id_docente: int, periodo: Optional[PeriodoAcademico] = None) -> Optional[EstadoActual]:
-    """Colegio y grados del docente en `periodo` o, sin él, en su último periodo asignado."""
-    consulta = (
-        select(DocenteColegioGrado, PeriodoAcademico)
-        .join(
-            PeriodoAcademico,
-            PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico,
-        )
-        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
-        .where(DocenteColegioGrado.id_docente == id_docente)
-    )
-    if periodo is not None:
-        consulta = consulta.where(
-            DocenteColegioGrado.id_periodo_academico == periodo.id_periodo_academico
-        )
+def resumen_actual(db: Session, id_docente: Optional[int], pares: set[tuple[int, int]], anio: AnioEscolar) -> str:
+    """Resumen de lo que el docente tiene hoy en esos (colegio, periodo) de un año: el
+    "antes" de un cambio. Por colegio, sus grados en el primero de esos periodos en que lo
+    atiende, unidos por "; " y en orden de nombre."""
+    if id_docente is None or not pares:
+        return SIN_ASIGNACION
     filas = db.exec(
-        consulta.order_by(col(AnioEscolar.fecha_inicio).desc(), col(PeriodoAcademico.numero).desc())
-    ).all()
-    if not filas:
-        return None
-    ultimo = filas[0][1]
-    del_ultimo = [fila for fila, p in filas if p.id_periodo_academico == ultimo.id_periodo_academico]
-    return EstadoActual(
-        periodo=ultimo,
-        id_colegio=del_ultimo[0].id_colegio,
-        ids_grados=sorted(f.id_grado for f in del_ultimo),
-    )
-
-
-def planificar_cambio(
-    db: Session,
-    id_docente: int,
-    id_colegio: Optional[int],
-    ids_grados: Optional[list[int]],
-    id_anio_escolar: Optional[int],
-    desde_periodo: Optional[int],
-    inicio_asignacion: Optional[str] = None,
-) -> Asignacion:
-    """Nueva asignación de un docente que ya tiene una (PATCH /usuarios).
-
-    - Mismo año: aplica desde `desde_periodo` (por defecto el vigente o el próximo).
-      Sin `grados`: si cambia el colegio, todos los del colegio nuevo; si no, los actuales.
-    - Otro año (renovación): los periodos vigentes o futuros de ese año, con el colegio y
-      los grados enviados o, si no se envían, los de su último periodo asignado.
-    """
-    ultimo = estado_en(db, id_docente)
-    if ultimo is None:
-        if id_colegio is None or id_anio_escolar is None:
-            raise _no_procesable(
-                "El docente no tiene asignaciones: se requieren id_colegio e id_anio_escolar.",
-                "asignacion_incompleta",
-            )
-        return planificar_asignacion_nueva(
-            db, id_colegio, id_anio_escolar, ids_grados, desde_periodo, inicio_asignacion
+        select(DocenteColegioGrado, PeriodoAcademico, Colegio, Grado)
+        .join(PeriodoAcademico, PeriodoAcademico.id_periodo_academico == DocenteColegioGrado.id_periodo_academico)
+        .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
+        .join(Grado, Grado.id_grado == DocenteColegioGrado.id_grado)
+        .where(
+            DocenteColegioGrado.id_docente == id_docente,
+            col(DocenteColegioGrado.id_periodo_academico).in_({p for _, p in pares}),
         )
-
-    id_anio = id_anio_escolar if id_anio_escolar is not None else ultimo.periodo.id_anio_escolar
-    # "Desde cuándo" se mide con el calendario del colegio de destino (el nuevo si cambia).
-    destino = colegio_activo(db, id_colegio) if id_colegio is not None else db.get(Colegio, ultimo.id_colegio)
-    anio = anio_del_colegio(db, id_anio, destino.id_colegio)
-    inicio = inicio_de(anio, destino, desde_periodo, inicio_asignacion)
-    renovacion = id_anio != ultimo.periodo.id_anio_escolar
-    base = _base_del_cambio(db, id_docente, ultimo, inicio, renovacion)
-    colegio = colegio_activo(db, id_colegio if id_colegio is not None else base.id_colegio)
-    grados = _grados_del_cambio(db, colegio, ids_grados, base)
-    return _armar(colegio, grados, anio, inicio)
+        .order_by(comparable_sql(Colegio.nombre), Colegio.id_colegio, PeriodoAcademico.numero, Grado.id_grado)
+    ).all()
+    primeros: dict[int, _PrimerPeriodo] = {}
+    for fila, periodo, colegio, grado in filas:
+        if (fila.id_colegio, periodo.id_periodo_academico) in pares:
+            primeros.setdefault(fila.id_colegio, _PrimerPeriodo(colegio, periodo)).sumar(fila, periodo, grado)
+    return unir_resumenes(p.resumen(anio) for p in primeros.values())
 
 
-def _base_del_cambio(
-    db: Session, id_docente: int, ultimo: EstadoActual, inicio: Inicio, renovacion: bool
-) -> EstadoActual:
-    """Qué asignación toma el cambio como punto de partida: en una renovación, su último
-    periodo asignado; en el mismo año, lo que tiene en el periodo desde el que aplica."""
-    if renovacion or inicio.desde is None:
-        return ultimo
-    return estado_en(db, id_docente, inicio.desde) or ultimo
+@dataclass
+class _PrimerPeriodo:
+    """Grados de un colegio en el primer periodo en que el docente lo atiende."""
 
+    colegio: Colegio
+    periodo: PeriodoAcademico
+    grados: list[Grado] = field(default_factory=list)
+    retroactiva: bool = False
 
-def _grados_del_cambio(
-    db: Session, colegio: Colegio, ids_grados: Optional[list[int]], base: EstadoActual
-) -> list[Grado]:
-    """Los grados enviados; sin ellos, todos los del colegio si cambió, o los actuales."""
-    if ids_grados is not None:
-        return resolver_grados(db, colegio, ids_grados)
-    if colegio.id_colegio != base.id_colegio:
-        return resolver_grados(db, colegio, None)
-    # Se conservan los grados actuales tal como están asignados.
-    return list(
-        db.exec(
-            select(Grado).where(col(Grado.id_grado).in_(base.ids_grados)).order_by(Grado.id_grado)
-        ).all()
-    )
+    def sumar(self, fila: DocenteColegioGrado, periodo: PeriodoAcademico, grado: Grado) -> None:
+        if periodo.id_periodo_academico == self.periodo.id_periodo_academico:
+            self.grados.append(grado)
+            self.retroactiva = self.retroactiva or fila.retroactiva
 
-
-def resumen_actual(db: Session, id_docente: int, periodos: list[PeriodoAcademico], anio: AnioEscolar) -> str:
-    """Resumen de lo que el docente tiene hoy en esos periodos (el "antes" de un cambio)."""
-    for periodo in periodos:
-        estado = estado_en(db, id_docente, periodo)
-        if estado is not None:
-            colegio = db.get(Colegio, estado.id_colegio)
-            grados = list(db.exec(select(Grado).where(col(Grado.id_grado).in_(estado.ids_grados))).all())
-            return resumen_asignacion(colegio.nombre, grados, periodo, anio)
-    return SIN_ASIGNACION
+    def resumen(self, anio: AnioEscolar) -> str:
+        return resumen_asignacion(self.colegio.nombre, self.grados, self.periodo, anio, self.retroactiva)
 
 
 def liberar_asignaciones(db: Session, id_docente: int) -> str:
-    """Quita al docente de sus grados desde el PA vigente de su colegio (incluido) en
+    """Quita al docente de sus grados desde el PA vigente de cada colegio (incluido) en
     adelante.
 
     Se usa al desactivarlo y al pasarlo a otro rol: así otro docente puede tomar esos
     grados de inmediato. Las asignaciones de PA terminados (en el calendario de su
-    colegio) se conservan como historial. Devuelve el resumen de lo liberado (para la
-    auditoría) o SIN_ASIGNACION.
+    colegio) se conservan como historial. Devuelve el resumen de lo liberado en el primer
+    año afectado (para la auditoría) o SIN_ASIGNACION.
     """
     filas = db.exec(
         select(DocenteColegioGrado, PeriodoAcademico)
@@ -503,15 +591,13 @@ def liberar_asignaciones(db: Session, id_docente: int) -> str:
         .where(DocenteColegioGrado.id_docente == id_docente)
         .order_by(AnioEscolar.fecha_inicio, PeriodoAcademico.numero)
     ).all()
-    calendarios = cargar_calendarios(db, ids_colegio={f.id_colegio for f, _ in filas})
-    hoy = hoy_lima()
-    liberables = [(f, p) for f, p in filas if not calendarios.pa_terminado(f.id_colegio, p, hoy)]
+    liberables = _de_pa_no_terminados(db, list(filas))
     if not liberables:
         return SIN_ASIGNACION
-    no_terminados = list({p.id_periodo_academico: p for _, p in liberables}.values())
-    anio = db.get(AnioEscolar, no_terminados[0].id_anio_escolar)
-    resumen = resumen_actual(db, id_docente, no_terminados, anio)
-    db.execute(delete(DocenteColegioGrado).where(col(DocenteColegioGrado.id).in_([f.id for f, _ in liberables])))
+    anio = db.get(AnioEscolar, liberables[0][1].id_anio_escolar)
+    pares = {(f.id_colegio, p.id_periodo_academico) for f, p in liberables if p.id_anio_escolar == anio.id_anio_escolar}
+    resumen = resumen_actual(db, id_docente, pares, anio)
+    _borrar(db, [f.id for f, _ in liberables])
     return resumen
 
 
@@ -531,20 +617,21 @@ def colegios_vigentes_por_docente(db: Session, ids_docente: list[int]) -> dict[i
             en_pa_de_su_colegio(DocenteColegioGrado.id_colegio, DocenteColegioGrado.id_periodo_academico, pa_actual),
         )
         .distinct()
-        .order_by(Colegio.nombre, Colegio.id_colegio)
     ).all()
+    # Se ordena aquí: con DISTINCT, PostgreSQL no admite ordenar por una expresión fuera del SELECT.
     por_docente: dict[int, list[ItemCatalogo]] = defaultdict(list)
-    for id_docente, id_colegio, nombre in filas:
+    for id_docente, id_colegio, nombre in sorted(filas, key=lambda f: (comparable(f[2]), f[1])):
         por_docente[id_docente].append(ItemCatalogo(id=id_colegio, nombre=nombre))
     return por_docente
 
 
 def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetalle]:
-    """Asignación del docente para prellenar el formulario de edición.
+    """Asignación del docente para prellenar el formulario de edición, con un bloque por
+    colegio (por nombre) y sus periodos (por número).
 
     Los periodos del año escolar de referencia si tiene asignaciones en él; si no, los
     del año más reciente en que tenga. None si nunca tuvo asignaciones. `vigente` marca
-    el PA en que hoy está el colegio de la asignación.
+    el PA en que hoy está cada colegio y `retroactiva`, el PA habilitado con "Retroactivo".
     """
     filas = db.exec(
         select(DocenteColegioGrado, PeriodoAcademico, Colegio, Grado)
@@ -556,36 +643,50 @@ def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetal
         .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
         .join(Grado, Grado.id_grado == DocenteColegioGrado.id_grado)
         .where(DocenteColegioGrado.id_docente == id_docente)
-        .order_by(AnioEscolar.fecha_inicio, PeriodoAcademico.numero, Grado.id_grado)
+        .order_by(
+            AnioEscolar.fecha_inicio, comparable_sql(Colegio.nombre), Colegio.id_colegio,
+            PeriodoAcademico.numero, Grado.id_grado,
+        )
     ).all()
     if not filas:
         return None
+    id_anio = _anio_del_detalle(db, filas)
+    return AsignacionDetalle(
+        id_anio_escolar=id_anio,
+        colegios=_por_colegio([f for f in filas if f[1].id_anio_escolar == id_anio], pa_actual_de_colegios(db)),
+    )
 
+
+def _anio_del_detalle(db: Session, filas: list) -> int:
+    """El año de referencia si el docente tiene asignaciones en él; si no, el más reciente."""
     referencia = anio_de_referencia(db)
-    anios = {p.id_anio_escolar for _, p, _, _ in filas}
-    if referencia is not None and referencia.id_anio_escolar in anios:
-        id_anio = referencia.id_anio_escolar
-    else:
-        id_anio = filas[-1][1].id_anio_escolar  # el del periodo más reciente
-    pa_actual = pa_actual_de_colegios(db)
+    if referencia is not None and referencia.id_anio_escolar in {p.id_anio_escolar for _, p, _, _ in filas}:
+        return referencia.id_anio_escolar
+    return filas[-1][1].id_anio_escolar  # las filas vienen por fecha de inicio del año
 
-    periodos: dict[int, PeriodoAsignado] = {}
+
+def _por_colegio(filas: list, pa_actual: dict[int, PeriodoCalendario]) -> list[ColegioAsignadoDetalle]:
+    """Agrupa las filas (ya ordenadas) por colegio y periodo."""
+    colegios: dict[int, ColegioAsignadoDetalle] = {}
+    periodos: dict[tuple[int, int], PeriodoAsignado] = {}
     for fila, periodo, colegio, grado in filas:
-        if periodo.id_anio_escolar != id_anio:
-            continue
-        item = periodos.setdefault(
-            periodo.id_periodo_academico,
-            PeriodoAsignado(
+        bloque = colegios.setdefault(
+            colegio.id_colegio, ColegioAsignadoDetalle(id_colegio=colegio.id_colegio, colegio=colegio.nombre, periodos=[])
+        )
+        clave = (colegio.id_colegio, periodo.id_periodo_academico)
+        if clave not in periodos:
+            periodos[clave] = PeriodoAsignado(
                 id_periodo=periodo.id_periodo_academico,
                 numero=periodo.numero,
-                vigente=_es_pa_actual(pa_actual, fila.id_colegio, periodo.id_periodo_academico),
-                id_colegio=fila.id_colegio,
-                colegio=colegio.nombre,
+                vigente=_es_pa_actual(pa_actual, colegio.id_colegio, periodo.id_periodo_academico),
+                retroactiva=False,
                 grados=[],
-            ),
-        )
+            )
+            bloque.periodos.append(periodos[clave])
+        item = periodos[clave]
+        item.retroactiva = item.retroactiva or fila.retroactiva
         item.grados.append(GradoAsignado(id_grado=grado.id_grado, nombre=grado.nombre))
-    return AsignacionDetalle(id_anio_escolar=id_anio, periodos=list(periodos.values()))
+    return list(colegios.values())
 
 
 def _es_pa_actual(pa_actual: dict[int, PeriodoCalendario], id_colegio: int, id_periodo: int) -> bool:
@@ -620,7 +721,8 @@ def listar_asignaciones(
     if id_colegio is not None:
         consulta = consulta.where(DocenteColegioGrado.id_colegio == id_colegio)
     consulta = consulta.order_by(
-        AnioEscolar.fecha_inicio, PeriodoAcademico.numero, Colegio.nombre, Grado.id_grado, Docente.apellidos
+        AnioEscolar.fecha_inicio, PeriodoAcademico.numero, comparable_sql(Colegio.nombre), Colegio.id_colegio,
+        Grado.id_grado, comparable_sql(Docente.apellidos), comparable_sql(Docente.nombres), DocenteColegioGrado.id,
     )
     return [
         AsignacionItem(
@@ -744,7 +846,7 @@ def a_cargo(db: Session, usuario: Usuario) -> tuple[list[MiAsignacion], TotalesA
             ],
             **por_colegio[id_colegio].campos(),
         )
-        for id_colegio in sorted(ids_colegio, key=lambda c: colegios[c].nombre)
+        for id_colegio in sorted(ids_colegio, key=lambda c: (comparable(colegios[c].nombre), c))
     ]
     return asignaciones, TotalesACargo(**total.campos())
 

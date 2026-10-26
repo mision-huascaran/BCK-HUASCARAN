@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, or_, select
 
 from app.core.tiempo import ahora_utc, fecha_lima, limites_lima
 from app.models.organizacion import (
@@ -79,12 +79,15 @@ def docente_habilitable(db: Session, usuario: Usuario) -> Optional[int]:
 
 
 def permisos_vigentes(db: Session, id_docente: int, instante: datetime) -> list[PermisoCorreccion]:
-    """Permisos no revocados del docente cuya vigencia [inicio, fin) contiene el instante."""
+    """Permisos del docente cuya vigencia [inicio, fin) contiene el instante y que en ese
+    instante todavía no estaban revocados. Una revocación posterior no invalida una
+    operación hecha antes sin conexión (CU022, CU028); con el instante actual equivale a
+    "no revocado", porque `revocado_en` nunca está en el futuro."""
     return list(
         db.exec(
             select(PermisoCorreccion).where(
                 PermisoCorreccion.id_docente == id_docente,
-                col(PermisoCorreccion.revocado_en).is_(None),
+                or_(col(PermisoCorreccion.revocado_en).is_(None), col(PermisoCorreccion.revocado_en) > instante),
                 PermisoCorreccion.inicio <= instante,
                 PermisoCorreccion.fin > instante,
             )

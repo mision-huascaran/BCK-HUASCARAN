@@ -7,13 +7,15 @@ Directivo: 403.
 from datetime import date
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import APIRouter, Body, Depends, Query, status
 from sqlmodel import Session
 
 from app.core.database import get_db
 from app.dependencies import require_role
 from app.models.organizacion import Usuario
 from app.schemas.calendario import (
+    ANIO_MAXIMO,
+    ANIO_MINIMO,
     CalendarioCrear,
     CalendarioEditar,
     CalendarioParticularCrear,
@@ -36,17 +38,20 @@ def consultar_calendario(
     usuario: Annotated[Usuario, Depends(require_role(SUPERVISOR, DOCENTE))],
     id_anio_escolar: Optional[int] = None,
     id_colegio: Optional[int] = None,
+    anio: Annotated[Optional[int], Query(ge=ANIO_MINIMO, le=ANIO_MAXIMO)] = None,
 ):
     """Calendario aplicable: sin `id_colegio`, el general del año; con él, el particular
-    activo del colegio o, si no tiene, el general (`origen`). `id_anio_escolar` por
-    defecto es el año de referencia. Incluye `version` (para editar) y `periodo_actual`
-    (null = "Sin periodo aplicable a la fecha actual").
+    activo del colegio o, si no tiene, el general (`origen`). El año se elige con
+    `id_anio_escolar` o con `anio` (año calendario, p. ej. 2027), no ambos; por defecto,
+    el año de referencia. Un `anio` sin año escolar responde 404
+    `calendario_no_configurado` y no crea nada. Incluye `version` (para editar) y
+    `periodo_actual` (null = "Sin periodo aplicable a la fecha actual").
 
-    Errores: 404 `calendario_no_configurado`, 422 `anio_inexistente` y
-    `colegio_inexistente`, 403 `colegio_fuera_de_alcance` (Docente: solo sus colegios y
-    con `id_colegio`).
+    Errores: 404 `calendario_no_configurado`, 422 `anio_inexistente`, `validacion` (año
+    por id y por valor a la vez) y `colegio_inexistente`, 403 `colegio_fuera_de_alcance`
+    (Docente: solo sus colegios y con `id_colegio`).
     """
-    return calendario_gestion.consultar(db, usuario, id_anio_escolar, id_colegio)
+    return calendario_gestion.consultar(db, usuario, id_anio_escolar, id_colegio, anio)
 
 
 @router.get("/periodo", response_model=PeriodoEnFecha)
@@ -69,11 +74,15 @@ def periodo_en_fecha(
 @router.post("", response_model=CalendarioRespuesta, status_code=status.HTTP_201_CREATED)
 def crear_calendario_general(data: CalendarioCrear, db: Db, supervisor: SoloSupervisor):
     """Crea el calendario general del año: los 8 periodos (PA1, PR1, ..., PR4) y sus días
-    no lectivos.
+    no lectivos. Con `anio`, si el año escolar no existe se crea en la misma transacción
+    (si algo falla, no queda ni el año ni el calendario). Las fechas del año pasan a ser
+    las del calendario (inicio del PA1 a fin del PR4) y se generan sus semanas. Crear el
+    año no lo declara vigente ni habilita a nadie.
 
     Errores: 409 `calendario_existente`, 422 `anio_inexistente` y 422 `validacion` (con
-    el campo afectado: periodos faltantes, repetidos, fuera de orden, superpuestos o con
-    inicio > fin; choque con el año vecino; días no lectivos fuera de un PA o
+    el campo afectado: `anio` e `id_anio_escolar` a la vez o ninguno; periodos
+    faltantes, repetidos, fuera de orden, superpuestos o con inicio > fin; más de 12
+    meses; choque con el año vecino; días no lectivos fuera de los periodos o
     superpuestos; motivo vacío).
     """
     return calendario_gestion.crear_general(db, data, supervisor)
@@ -94,11 +103,14 @@ def crear_calendario_particular(data: CalendarioParticularCrear, db: Db, supervi
 @router.put("/{id_calendario}", response_model=CalendarioRespuesta)
 def editar_calendario(id_calendario: int, data: CalendarioEditar, db: Db, supervisor: SoloSupervisor):
     """Reemplaza periodos y días no lectivos del general o de un particular. Requiere la
-    `version` leída; sin cambios reales no sube la versión ni audita.
+    `version` leída; sin cambios reales no sube la versión ni audita. Si es el general,
+    el año escolar pasa a las fechas del nuevo PA1 y PR4 y se ajustan sus semanas (las
+    fechas de un particular no cambian el año).
 
     Errores: 404 `calendario_no_encontrado`, 409 `modificacion_concurrente`,
     `calendario_inactivo` y `calendario_incompatible` (en el general se evalúan todos
-    los colegios que lo usan), 422 `validacion`.
+    los colegios que lo usan; también si una semana con tabla de lectura quedaría fuera
+    del año), 422 `validacion`.
     """
     return calendario_gestion.editar(db, id_calendario, data, supervisor)
 

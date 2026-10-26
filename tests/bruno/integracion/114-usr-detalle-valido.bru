@@ -15,5 +15,5 @@ auth:bearer {
 }
 
 tests {
-  test("con su asignación por periodo", function () { expect(res.status).to.equal(200); expect(res.body.asignacion.periodos.length).to.be.greaterThan(0); });
+  test("con su asignación por colegio y periodo", function () { expect(res.status).to.equal(200); expect(res.body.asignacion.colegios.length).to.be.greaterThan(0); expect(res.body.asignacion.colegios[0].periodos.length).to.be.greaterThan(0); });
 }

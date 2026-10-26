@@ -29,6 +29,7 @@ def listar_clases(
     id_seccion: Optional[int] = None,
     desde: Optional[date] = None,
     hasta: Optional[date] = None,
+    id_programa: Optional[int] = None,
     page: Annotated[Optional[int], Query(ge=1)] = None,
 ):
     """Clases del colegio (habituales calculadas, reprogramadas en su fecha nueva y
@@ -36,10 +37,16 @@ def listar_clases(
     calendario del colegio que contiene hoy. Con `page`, paginado de 40; sin él, el
     arreglo completo. Supervisor: cualquier colegio; Docente: su alcance de lectura.
 
+    Cada clase trae `subprogramas`: los de sus alumnos en su fecha vigente. Con
+    `id_programa`, solo las clases con alumnos de ese subprograma (antes de paginar); el
+    filtro no crea clases por subprograma.
+
     Errores: 403 `aula_fuera_de_alcance`, 404 `colegio_no_encontrado`, 422
     `rango_fechas_invalido`.
     """
-    return clase_service.listar_clases(db, usuario, FiltroGrupos(id_colegio, id_grado, id_seccion), (desde, hasta), page)
+    return clase_service.listar_clases(
+        db, usuario, FiltroGrupos(id_colegio, id_grado, id_seccion), (desde, hasta), page, id_programa
+    )
 
 
 @router.post(

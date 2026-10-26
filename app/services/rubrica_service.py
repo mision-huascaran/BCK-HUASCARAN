@@ -1,16 +1,18 @@
 """Rúbrica mensual (CU029, CU030).
 
-Una evaluación por alumno y mes, en el grupo (colegio × grado × sección × subprograma)
-que le corresponde ese mes, con Fluidez y Comprensión en códigos 0-4 (null = "Sin
-evaluar"). Se puede guardar incompleta.
+Una sola evaluación por alumno, año escolar y mes (UNIQUE en la BD), en el grupo
+(colegio × grado × sección × subprograma) que le corresponde ese mes, con Fluidez y
+Comprensión en códigos 0-4 (null = "Sin evaluar"). Se puede guardar incompleta.
 
 - El mes: no se evalúan meses futuros ni meses sin días lectivos de un PA en el
-  calendario del colegio (422 `mes_futuro`, `mes_sin_actividad`). Su PA es el de su
-  último día lectivo (REGLA PROVISIONAL R1); con él se habilita la escritura (módulo
-  `rubrica`) y se guarda la evaluación.
-- Los alumnos del mes: los que pertenecieron al grupo algún día del mes y, si cambiaron
-  de grupo, solo en el grupo del último día lectivo del mes en que estuvieron (REGLA
-  PROVISIONAL R2). Los hoy inactivos también salen (`inactivo: true`).
+  calendario del colegio (422 `mes_futuro`, `mes_sin_actividad`). Su PA es el que tiene
+  más días lectivos del mes (R1); con él se habilita la escritura (módulo `rubrica`) y se
+  guarda la evaluación.
+- Los alumnos del mes (R2): el que ya tiene su evaluación del mes sale solo en el grupo
+  en que se guardó, aunque después haya cambiado de grupo (ahí se corrige; en otro grupo
+  no se puede crear una segunda: `evaluacion_en_otro_grupo`). El que no la tiene sale en
+  el grupo de su última pertenencia en un día lectivo ya transcurrido del mes. Los hoy
+  inactivos también salen (`inactivo: true`).
 - Lectura: el Docente en su alcance de lectura; el Supervisor, de todo y en solo lectura.
   Escritura (solo Docente): cada evaluación es una operación (`procesar_operacion`) con
   actividad y habilitación a la hora real, y control de versión: una `version` distinta
@@ -21,12 +23,13 @@ from datetime import date
 from typing import Any, Optional
 
 from fastapi import status
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlmodel import Session, col, select
 
 from app.core.ciclo import calcular_ciclo
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
+from app.core.texto import comparable
 from app.core.paginacion import TAMANO_PAGINA, pagina
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.evaluacion import DescriptorRubrica, NivelRubrica, RubricaMensual
@@ -34,6 +37,7 @@ from app.models.organizacion import Alumno, AlumnoPertenencia, AnioEscolar, Cicl
 from app.schemas.rubrica import Criterio, RubricaAlumno, RubricaGuardar, RubricasDelMes
 from app.schemas.sincronizacion import ResultadoOperacion
 from app.services.asistencia_service import exigir_seccion
+from app.services import claves_registro
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import PeriodoCalendario, cargar_calendarios, en_pa_de_su_colegio, rango_del_mes
 from app.services.clase_service import colegio_existente, grados_visibles
@@ -43,7 +47,13 @@ from app.services.motor_sugerencias import COMPRENSION, FLUIDEZ, resultado_decim
 from app.services.pertenencia import alumnos_del_grupo_en_rango
 from app.services.programacion import FiltroGrupos
 from app.services.reglas_provisionales import regla_grupo_del_mes, regla_mes_a_pa
-from app.services.sincronizacion import ContextoOperacion, Operacion, RechazoOperacion, procesar_operacion
+from app.services.sincronizacion import (
+    MENSAJE_ACTIVIDAD_REQUERIDA,
+    ContextoOperacion,
+    Operacion,
+    RechazoOperacion,
+    procesar_operacion,
+)
 
 MODULO = "rubrica"
 TABLA = "rubrica_mensual"
@@ -61,11 +71,15 @@ MENSAJE_VALOR_NO_PERMITIDO = "Selecciona una valoración permitida para esta dim
 MENSAJE_SIN_HABILITACION = (
     "No tienes una habilitación vigente para registrar o modificar las rúbricas del grupo y mes seleccionados."
 )
-MENSAJE_SIN_ACTIVIDAD = "Debes iniciar una actividad de trabajo para registrar o modificar las rúbricas."
+MENSAJE_SIN_ACTIVIDAD = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_CONCURRENTE = (
     "Esta evaluación fue modificada desde que la consultaste. Revisa la versión actual antes de guardar nuevamente."
 )
 MENSAJE_FUERA_DEL_GRUPO = "El estudiante no pertenecía a este grupo en el mes seleccionado."
+MENSAJE_EN_OTRO_GRUPO = (
+    "Este alumno ya tiene una evaluación registrada para este mes. Para corregirla, contacta al "
+    "Docente que la registró o a tu Supervisor."
+)
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta las rúbricas en solo lectura."
 MENSAJE_PROGRAMA_INEXISTENTE = "El subprograma no existe."
 MENSAJE_CICLO_INEXISTENTE = "El ciclo no existe."
@@ -158,20 +172,49 @@ def _intervalos(db: Session, ids_alumno: list[int], mes: MesEvaluado) -> dict[in
     return por_alumno
 
 
+def _dias_transcurridos(mes: MesEvaluado) -> list[date]:
+    """Los días lectivos del mes hasta hoy (inclusive): en un mes en curso, los futuros no
+    deciden el grupo (R2)."""
+    hoy = hoy_lima()
+    return [dia for dia in mes.dias_lectivos if dia <= hoy]
+
+
+def _grupos_evaluados(db: Session, grupo: GrupoMes, ids_alumno: Optional[list[int]] = None) -> dict[int, tuple]:
+    """{id_alumno: clave del grupo} de las evaluaciones ya guardadas del año y mes, en
+    cualquier grupo, de esos alumnos; sin `ids_alumno`, las guardadas en este grupo."""
+    filtro = col(RubricaMensual.id_alumno).in_(ids_alumno) if ids_alumno is not None else and_(*_del_grupo(grupo))
+    filas = db.exec(
+        select(
+            RubricaMensual.id_alumno, RubricaMensual.id_colegio, RubricaMensual.id_grado,
+            RubricaMensual.id_seccion, RubricaMensual.id_programa,
+        ).where(RubricaMensual.id_anio_escolar == grupo.id_anio_escolar, RubricaMensual.mes == grupo.mes, filtro)
+    ).all()
+    return {id_alumno: tuple(clave) for id_alumno, *clave in filas}
+
+
 def alumnos_del_mes(db: Session, grupo: GrupoMes, mes: MesEvaluado) -> list[Alumno]:
-    """Los alumnos que corresponde evaluar en el grupo ese mes (R2), por apellidos."""
+    """Los alumnos que corresponde evaluar en el grupo ese mes (R2), por apellidos: los
+    evaluados aquí y los que, sin evaluación del mes en ningún grupo, hoy le corresponden."""
     candidatos = alumnos_del_grupo_en_rango(
         db, grupo.id_colegio, grupo.id_grado, grupo.id_seccion, mes.desde, mes.hasta, grupo.id_programa
     )
-    intervalos = _intervalos(db, [a.id_alumno for a in candidatos], mes)
+    faltantes = set(_grupos_evaluados(db, grupo)) - {a.id_alumno for a in candidatos}
+    if faltantes:
+        candidatos += db.exec(select(Alumno).where(col(Alumno.id_alumno).in_(faltantes))).all()
+        candidatos.sort(key=lambda a: (comparable(a.apellidos), comparable(a.nombres), a.id_alumno))
+    evaluados = _grupos_evaluados(db, grupo, [a.id_alumno for a in candidatos])
+    intervalos = _intervalos(db, [a.id_alumno for a in candidatos if a.id_alumno not in evaluados], mes)
+    dias = _dias_transcurridos(mes)
     return [
         a for a in candidatos
-        if regla_grupo_del_mes(intervalos[a.id_alumno], mes.dias_lectivos) == grupo.clave_grupo
+        if evaluados.get(a.id_alumno) == grupo.clave_grupo
+        or (a.id_alumno in intervalos and regla_grupo_del_mes(intervalos[a.id_alumno], dias) == grupo.clave_grupo)
     ]
 
 
 def _pertenece(db: Session, id_alumno: int, grupo: GrupoMes, mes: MesEvaluado) -> bool:
-    return regla_grupo_del_mes(_intervalos(db, [id_alumno], mes)[id_alumno], mes.dias_lectivos) == grupo.clave_grupo
+    intervalos = _intervalos(db, [id_alumno], mes)[id_alumno]
+    return regla_grupo_del_mes(intervalos, _dias_transcurridos(mes)) == grupo.clave_grupo
 
 
 def ciclo_de(db: Session, programa: Programa, id_grado: int) -> CicloEbr:
@@ -323,10 +366,11 @@ def _registro(db: Session, alumno: Alumno, fila: Optional[RubricaMensual]) -> di
     return _item(alumno, fila, _valores(db)).model_dump(mode="json")
 
 
-def _guardar(db: Session, item: RubricaGuardar, periodo: int, captura: _Captura) -> Optional[RubricaMensual]:
+def _guardar(
+    db: Session, item: RubricaGuardar, fila: Optional[RubricaMensual], periodo: int, captura: _Captura
+) -> Optional[RubricaMensual]:
     """Crea o actualiza la evaluación; sin cambios no escribe ni audita."""
     nuevos = _ids_nuevos(db, item)
-    fila = _fila_bloqueada(db, item)
     if fila is None:
         if not any(v is not None for v in nuevos.values()):
             return None
@@ -341,6 +385,15 @@ def _guardar(db: Session, item: RubricaGuardar, periodo: int, captura: _Captura)
     return fila
 
 
+def _exigir_nueva_en_su_grupo(db: Session, alumno: Optional[Alumno], grupo: GrupoMes, mes: MesEvaluado) -> None:
+    """Una evaluación nueva: el alumno debe corresponder al grupo (R2) y no tener ya la
+    del mes en otro grupo."""
+    if alumno is None or not _pertenece(db, alumno.id_alumno, grupo, mes):
+        raise RechazoOperacion("alumno_fuera_del_grupo", MENSAJE_FUERA_DEL_GRUPO)
+    if _grupos_evaluados(db, grupo, [alumno.id_alumno]):
+        raise RechazoOperacion("evaluacion_en_otro_grupo", MENSAJE_EN_OTRO_GRUPO)
+
+
 def _aplicador(db: Session, usuario: Usuario, item: RubricaGuardar):
     def aplicar(contexto: ContextoOperacion) -> dict[str, Any]:
         grupo = GrupoMes.de(item)
@@ -353,9 +406,11 @@ def _aplicador(db: Session, usuario: Usuario, item: RubricaGuardar):
         if not habilitacion.permitido:
             raise RechazoOperacion("sin_habilitacion", MENSAJE_SIN_HABILITACION)
         alumno = db.get(Alumno, item.id_alumno)
-        if alumno is None or not _pertenece(db, alumno.id_alumno, grupo, mes):
-            raise RechazoOperacion("alumno_fuera_del_grupo", MENSAJE_FUERA_DEL_GRUPO)
-        fila = _guardar(db, item, periodo, _Captura(usuario, contexto, habilitacion.id_permiso))
+        fila = _fila_bloqueada(db, item) if alumno is not None else None
+        # Una evaluación existente se corrige en su grupo aunque el alumno ya no pertenezca a él.
+        if fila is None:
+            _exigir_nueva_en_su_grupo(db, alumno, grupo, mes)
+        fila = _guardar(db, item, fila, periodo, _Captura(usuario, contexto, habilitacion.id_permiso))
         return _registro(db, alumno, fila)
 
     return aplicar
@@ -371,7 +426,8 @@ def guardar(db: Session, usuario: Usuario, items: list[RubricaGuardar]) -> list[
     resultados = [
         procesar_operacion(
             db, usuario, item, _aplicador(db, usuario, item),
-            Operacion(MODULO, TABLA, _id_entidad(item), MENSAJE_SIN_ACTIVIDAD),
+            Operacion(MODULO, TABLA, _id_entidad(item), MENSAJE_SIN_ACTIVIDAD,
+                      claves_registro.rubrica(item.id_alumno, item.id_anio_escolar, item.mes)),
         )
         for item in items
     ]

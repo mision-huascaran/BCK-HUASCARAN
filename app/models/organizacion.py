@@ -32,9 +32,13 @@ ORIGEN_MANUAL = "manual"
 
 
 class AnioEscolar(SQLModel, table=True):
-    """Antes `PeriodoAcademico` (v1). Ver diseno_bd_sicedu_v2.md §1.2 sobre el swap de nombres."""
+    """Antes `PeriodoAcademico` (v1). Ver diseno_bd_sicedu_v2.md §1.2 sobre el swap de nombres.
+
+    `nombre` es el año en texto ("2026") y no se repite. Sus fechas son las de su
+    calendario general: inicio del PA1 a fin del PR4 (app/services/anio_escolar.py)."""
 
     __tablename__ = "año_escolar"
+    __table_args__ = (UniqueConstraint("nombre", name="uq_anio_escolar_nombre"),)
 
     id_anio_escolar: Optional[int] = Field(default=None, primary_key=True)
     nombre: str
@@ -443,7 +447,7 @@ class CalendarioPeriodo(SQLModel, table=True):
 
 
 class DiaNoLectivo(SQLModel, table=True):
-    """Feriado o suspensión de un calendario (CU027): rango inclusivo dentro de un PA, sin
+    """Feriado o suspensión de un calendario (CU027): rango inclusivo dentro de los periodos (PA o PR), sin
     superponerse con otro del mismo calendario (validado en el servicio). Reemplaza a
     `dia_no_laborable`, que era global."""
 

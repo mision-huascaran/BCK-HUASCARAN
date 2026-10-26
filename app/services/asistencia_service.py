@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
+from app.core.texto import comparable_sql
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.evaluacion import TIPO_ADICIONAL, TIPO_HABITUAL, Asistencia, Clase, ClaseAlumno
 from app.models.organizacion import Alumno, Seccion, Usuario
@@ -36,6 +37,7 @@ from app.schemas.asistencia import (
     Escritura,
     RegistroAsistencia,
 )
+from app.services import claves_registro
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import Calendarios, PeriodoCalendario, cargar_calendarios
 from app.services.clase_service import colegio_existente, grados_visibles
@@ -53,6 +55,7 @@ from app.services.programacion import (
     fila_de_programada,
 )
 from app.services.sincronizacion import (
+    MENSAJE_ACTIVIDAD_REQUERIDA,
     ContextoOperacion,
     Operacion,
     OperacionDescartada,
@@ -81,7 +84,7 @@ AVISO_TRASLADADA = (
 MENSAJE_SIN_HABILITACION = (
     "No tienes una habilitación vigente para registrar o corregir asistencias en la fecha seleccionada."
 )
-MENSAJE_ACTIVIDAD = "Inicia una actividad de trabajo para registrar asistencias."
+MENSAJE_ACTIVIDAD = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta las asistencias en solo lectura."
 MENSAJE_FUERA_DE_LA_CLASE = "El alumno no está en la lista de esta clase."
 MENSAJE_SIN_CLASE = "No hay una clase programada para esta fecha. Para registrarla, márcala como clase adicional."
@@ -158,7 +161,7 @@ def _lista(db: Session, filtro: FiltroGrupos, clase: Optional[ClaseProgramada], 
             select(Alumno, ClaseAlumno.id_programa)
             .join(ClaseAlumno, ClaseAlumno.id_alumno == Alumno.id_alumno)
             .where(ClaseAlumno.id_clase == fila.id_clase)
-            .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+            .order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
         ).all()
     )
 
@@ -366,6 +369,11 @@ def _id_entidad(destino: _Destino, id_alumno: int) -> str:
     return f"{filtro.id_colegio}-{filtro.id_grado}-{filtro.id_seccion}-{destino.fecha.isoformat()}:{id_alumno}"
 
 
+def _clave(destino: _Destino, id_alumno: int) -> str:
+    filtro = destino.filtro
+    return claves_registro.asistencia(filtro.id_colegio, filtro.id_grado, filtro.id_seccion, destino.fecha, id_alumno)
+
+
 def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -> AsistenciaGuardada:
     """Registra la asistencia de uno o varios alumnos de una clase (CU022). Cada registro
     es una operación con su resultado (aceptada o rechazada); un lote puede tener de las
@@ -378,7 +386,8 @@ def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -
     resultados = [
         procesar_operacion(
             db, usuario, registro, _aplicador(db, usuario, destino, registro),
-            Operacion(MODULO, TABLA, _id_entidad(destino, registro.id_alumno)),
+            Operacion(MODULO, TABLA, _id_entidad(destino, registro.id_alumno),
+                      clave_registro=_clave(destino, registro.id_alumno)),
         )
         for registro in data.registros
     ]

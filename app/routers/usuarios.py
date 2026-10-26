@@ -23,7 +23,10 @@ def listar_usuarios(
     _: Supervisor,
     rol: Optional[Literal["Docente", "Supervisor", "Directivo"]] = None,
     activo: bool = True,
-    q: Annotated[Optional[str], Query(description="Busca en nombres y apellidos")] = None,
+    q: Annotated[Optional[str], Query(
+        description="Busca por nombre o correo: cada palabra en nombres y apellidos (sin "
+        "distinguir mayúsculas ni tildes) o el texto en el correo"
+    )] = None,
     page: Pagina = 1,
 ):
     return usuario_service.listar_usuarios(db, rol, activo, q, page)

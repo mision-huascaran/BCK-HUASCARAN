@@ -54,7 +54,7 @@ def test_cu005_recuperar_envia_un_pin_de_6_digitos(client, entorno, correos):
     respuesta = pedir_pin(client)
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {"mensaje": "Si el correo está registrado y activo, recibirá un PIN."}
+    assert respuesta.json() == {"mensaje": "Si el correo está registrado y activo, recibirás un PIN."}
     pin = correos.pin(DOCENTE)
     assert len(pin) == 6
     assert pin.isdigit()
@@ -70,7 +70,7 @@ def test_cu005_recuperar_responde_igual_sin_enviar_nada(client, db, entorno, cor
 
     respuesta = pedir_pin(client, correo)
 
-    assert respuesta.json()["mensaje"] == "Si el correo está registrado y activo, recibirá un PIN."
+    assert respuesta.json()["mensaje"] == "Si el correo está registrado y activo, recibirás un PIN."
     assert correos == []
 
 
@@ -122,7 +122,7 @@ def test_cu006_pin_incorrecto_suma_un_intento(client, db, entorno, correos):
 
     assert respuesta.status_code == 400
     assert respuesta.json() == {
-        "detail": "El código ingresado es incorrecto. Inténtelo nuevamente.",
+        "detail": "El código ingresado es incorrecto. Inténtalo nuevamente.",
         "motivo": "incorrecto",
     }
     assert releer(db, Usuario, entorno.docente.id_usuario).codigo_verificacion_intentos == 1
@@ -143,7 +143,7 @@ def test_cu006_pin_vencido_a_los_15_minutos(client, entorno, correos, reloj):
     respuesta = client.post("/password/verificar-codigo", json={"correo": DOCENTE, "codigo": correos.pin(DOCENTE)})
 
     assert respuesta.status_code == 400
-    assert respuesta.json()["detail"] == "El código ha expirado. Solicite un nuevo PIN."
+    assert respuesta.json()["detail"] == "El código ha expirado. Solicita un nuevo PIN."
     assert motivo(respuesta) == "expirado"
 
 
@@ -165,7 +165,7 @@ def test_cu006_agotado_se_mantiene_hasta_pedir_otro_pin(client, entorno, correos
     for respuesta in (verificar(client, correcto), verificar(client, "000000"), restablecer(client, correcto)):
         assert respuesta.status_code == 400
         assert respuesta.json() == {
-            "detail": "Ha agotado los intentos permitidos. Solicite un nuevo PIN para continuar.",
+            "detail": "Has agotado los intentos permitidos. Solicita un nuevo PIN para continuar.",
             "motivo": "intentos_agotados",
         }
 
@@ -325,7 +325,7 @@ def test_me_password_flujo_completo_conserva_la_sesion_actual(client, db, entorn
     otra = cabecera_de(db, entorno.docente)
     cabecera = cabeceras["Docente"]
 
-    assert client.post("/me/password/codigo", headers=cabecera).json() == {"mensaje": "Se envió un PIN a su correo."}
+    assert client.post("/me/password/codigo", headers=cabecera).json() == {"mensaje": "Se envió un PIN a tu correo."}
     pin = correos.pin(DOCENTE)
     assert client.post("/me/password/verificar-codigo", json={"codigo": pin}, headers=cabecera).json() == {"valido": True}
     respuesta = client.post(
@@ -367,9 +367,12 @@ def test_me_password_codigo_con_correo_caido_da_503(client, entorno, cabeceras, 
 
 
 def test_me_password_codigo_limite_por_hora_da_429(client, entorno, cabeceras):
-    codigos = [client.post("/me/password/codigo", headers=cabeceras["Docente"]).status_code for _ in range(6)]
+    respuestas = [client.post("/me/password/codigo", headers=cabeceras["Docente"]) for _ in range(6)]
 
-    assert codigos == [200] * 5 + [429]
+    assert [r.status_code for r in respuestas] == [200] * 5 + [429]
+    assert respuestas[-1].json()["detail"] == (
+        "Se alcanzó el límite de solicitudes de PIN. Inténtalo nuevamente más tarde."
+    )
 
 
 def test_me_password_requiere_sesion(client, entorno):
