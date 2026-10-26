@@ -44,12 +44,12 @@ PIN_EXPIRADO = "expirado"
 PIN_INTENTOS_AGOTADOS = "intentos_agotados"
 
 MENSAJES_PIN = {
-    PIN_INCORRECTO: "El código ingresado es incorrecto. Inténtelo nuevamente.",
-    PIN_EXPIRADO: "El código ha expirado. Solicite un nuevo PIN.",
-    PIN_INTENTOS_AGOTADOS: "Ha agotado los intentos permitidos. Solicite un nuevo PIN para continuar.",
+    PIN_INCORRECTO: "El código ingresado es incorrecto. Inténtalo nuevamente.",
+    PIN_EXPIRADO: "El código ha expirado. Solicita un nuevo PIN.",
+    PIN_INTENTOS_AGOTADOS: "Has agotado los intentos permitidos. Solicita un nuevo PIN para continuar.",
 }
 
-MENSAJE_PIN_ENVIADO = "Si el correo está registrado y activo, recibirá un PIN."
+MENSAJE_PIN_ENVIADO = "Si el correo está registrado y activo, recibirás un PIN."
 MENSAJE_PIN_ENVIADO_CON_SESION = "Se envió un PIN a su correo."
 MENSAJE_CONTRASENA_ACTUALIZADA = "Contraseña actualizada correctamente."
 MENSAJE_NO_COINCIDEN = "Las contraseñas no coinciden."
@@ -331,7 +331,7 @@ def confirmar_cambio(db: Session) -> None:
         logger.exception("Error al actualizar la contraseña")
         raise ErrorNegocio(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "Error al actualizar la contraseña. Inténtelo nuevamente.",
+            "Error al actualizar la contraseña. Inténtalo nuevamente.",
             motivo="error_actualizacion",
         ) from error
 

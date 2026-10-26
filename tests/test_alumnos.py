@@ -11,6 +11,7 @@ from app.models.organizacion import AlumnoPertenencia
 from app.models.trazabilidad import Auditoria
 from app.services import alumno_detalle_service
 from tests.conftest import (
+    crear_alumno,
     crear_colegio,
     decision_de_vuelo,
     hoy_iso,
@@ -103,6 +104,19 @@ def test_cu014_el_supervisor_no_ve_alumnos_de_colegios_inactivos(client, db, ent
     assert (filtrado.status_code, filtrado.json()["total"], nombres(filtrado)) == (200, 0, [])
 
 
+def test_cu014_orden_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, cabeceras):
+    andino, segundo = entorno.colegios["Andino"], entorno.grados["2.º"]
+    comprension = entorno.programas["Comprensión Lectora"]
+    for nombre, apellidos in [("Zoe", "álvarez"), ("Bea", "Ávila"), ("Abel", "Ávila"), ("Iris", "ALVA"), ("Olga", "Ñahui"), ("Eva", "nuñez")]:
+        crear_alumno(db, nombre, apellidos, andino, segundo, comprension, entorno.supervisor.id_usuario)
+    db.commit()
+
+    respuesta = client.get("/alumnos", params={"id_colegio": andino.id_colegio}, headers=cabeceras["Supervisor"])
+
+    # "Pérez Quispe" (Luis) y "Torres" (Ana) son del entorno. La Ñ se compara como N.
+    assert nombres(respuesta) == ["Iris", "Zoe", "Abel", "Bea", "Olga", "Eva", "Luis", "Ana"]
+
+
 def test_cu014_lista_y_ciclo_calculado(client, entorno, cabeceras):
     item = client.get("/alumnos", params={"q": "mario"}, headers=cabeceras["Supervisor"]).json()["items"][0]
 
@@ -132,7 +146,7 @@ def test_cu014_el_docente_sin_actividad_no_escribe(client, entorno, cabeceras):
     respuesta = client.post("/alumnos", json=nuevo(entorno), headers=cabeceras["Docente"])
 
     assert (respuesta.status_code, motivo(respuesta)) == (409, "actividad_requerida")
-    assert respuesta.json()["detail"] == "Debe iniciar una actividad para realizar cambios."
+    assert respuesta.json()["detail"] == "Debes iniciar una actividad de trabajo para registrar o modificar información."
 
 
 def test_cu014_el_supervisor_crea_sin_actividad_en_cualquier_colegio(client, entorno, cabeceras):

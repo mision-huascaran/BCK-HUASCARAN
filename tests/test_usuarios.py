@@ -33,11 +33,20 @@ def nuevo(id_rol, n=1, **extra):
     }
 
 
-def asignacion(entorno, colegio="Lejano", grados=None, **extra):
-    datos = {"id_colegio": entorno.colegios[colegio].id_colegio, "id_anio_escolar": entorno.anio.id_anio_escolar, **extra}
+def del_colegio(entorno, colegio="Lejano", grados=None, **extra):
+    """Un colegio de la asignación (sin `grados`, el backend decide cuáles)."""
+    datos = {"id_colegio": entorno.colegios[colegio].id_colegio, **extra}
     if grados is not None:
         datos["grados"] = grados
     return datos
+
+
+def asignacion(entorno, colegio="Lejano", grados=None, *otros, **extra):
+    """Asignación del año del entorno: ese colegio y, si se pasan, `otros` (de `del_colegio`)."""
+    return {
+        "id_anio_escolar": entorno.anio.id_anio_escolar,
+        "colegios": [del_colegio(entorno, colegio, grados, **extra), *otros],
+    }
 
 
 def asignaciones_de(db, id_docente):
@@ -153,19 +162,20 @@ def test_cu016_un_aula_solo_tiene_un_docente(client, entorno, sup):
 )
 def test_cu016_asignacion_invalida(client, db, entorno, sup, preparar, esperado):
     datos = asignacion(entorno)
+    pedido = datos["colegios"][0]
     colegio = entorno.colegios["Lejano"]
     if preparar == "inactivo":
         colegio.activo = False
         db.add(colegio)
     elif preparar == "inexistente":
-        datos["id_colegio"] = 999
+        pedido["id_colegio"] = 999
     elif preparar == "sin_grados":
-        datos["id_colegio"] = crear_colegio(db, "Colegio Vacío", [], [], entorno.supervisor.id_usuario).id_colegio
+        pedido["id_colegio"] = crear_colegio(db, "Colegio Vacío", [], [], entorno.supervisor.id_usuario).id_colegio
     elif preparar == "grado_no_ofrecido":
-        datos["id_colegio"] = crear_colegio(
+        pedido["id_colegio"] = crear_colegio(
             db, "Colegio Chico", [entorno.grados["1.º"]], [], entorno.supervisor.id_usuario
         ).id_colegio
-        datos["grados"] = [entorno.grados["6.º"]]
+        pedido["grados"] = [entorno.grados["6.º"]]
     elif preparar == "anio_inexistente":
         datos["id_anio_escolar"] = 999
     else:
@@ -278,9 +288,11 @@ def test_cu016_paginacion_de_40_en_40(client, db, entorno, sup):
 def test_cu016_detalle_de_un_docente_trae_su_asignacion(client, entorno, sup):
     cuerpo = client.get(f"/usuarios/{entorno.docente.id_usuario}", headers=sup).json()
 
-    periodos = cuerpo["asignacion"]["periodos"]
     assert cuerpo["asignacion"]["id_anio_escolar"] == entorno.anio.id_anio_escolar
-    assert [p["vigente"] for p in periodos] == [False, True]
+    [andino] = cuerpo["asignacion"]["colegios"]
+    assert (andino["id_colegio"], andino["colegio"]) == (entorno.colegios["Andino"].id_colegio, "Colegio Andino")
+    periodos = andino["periodos"]
+    assert [(p["numero"], p["vigente"], p["retroactiva"]) for p in periodos] == [(1, False, False), (2, True, False)]
     assert [g["nombre"] for g in periodos[1]["grados"]] == ["1.º", "2.º"]
 
 
@@ -393,7 +405,7 @@ def test_cu016_asignacion_en_un_rol_que_no_la_admite(client, entorno, sup):
 def test_cu016_rotar_de_colegio_desde_el_periodo_vigente(client, db, entorno, sup):
     respuesta = client.patch(
         f"/usuarios/{entorno.docente.id_usuario}",
-        json={"asignacion": {"id_colegio": entorno.colegios["Lejano"].id_colegio}},
+        json={"asignacion": asignacion(entorno)},
         headers=sup,
     )
 
@@ -414,7 +426,7 @@ def test_cu016_cambiar_grados_conserva_las_filas_que_no_cambian(client, db, ento
 
     client.patch(
         f"/usuarios/{entorno.docente.id_usuario}",
-        json={"asignacion": {"grados": [entorno.grados["1.º"], entorno.grados["3.º"]]}},
+        json={"asignacion": asignacion(entorno, "Andino", [entorno.grados["1.º"], entorno.grados["3.º"]])},
         headers=sup,
     )
 
@@ -437,7 +449,7 @@ def test_cu016_renovar_para_otro_anio(client, db, entorno, sup):
 
     respuesta = client.patch(
         f"/usuarios/{entorno.docente.id_usuario}",
-        json={"asignacion": {"id_anio_escolar": otro.id_anio_escolar}},
+        json={"asignacion": {**asignacion(entorno, "Andino"), "id_anio_escolar": otro.id_anio_escolar}},
         headers=sup,
     )
 
@@ -446,42 +458,32 @@ def test_cu016_renovar_para_otro_anio(client, db, entorno, sup):
     assert {f.id_grado for f in nuevas} == {entorno.grados["1.º"], entorno.grados["2.º"]}
 
 
-@pytest.mark.parametrize("periodo, esperado", [("pasado", "periodo_terminado"), ("otro_anio", "periodo_fuera_del_anio")])
-def test_cu016_desde_periodo_invalido(client, db, entorno, sup, periodo, esperado):
-    if periodo == "otro_anio":
-        otro = AnioEscolar(nombre="X", fecha_inicio=entorno.hoy, fecha_fin=entorno.hoy, creado_por=1, creado_en=ahora_utc())
-        db.add(otro)
-        db.flush()
-        fila = PeriodoAcademico(id_anio_escolar=otro.id_anio_escolar, numero=1, creado_por=1, creado_en=ahora_utc())
-        db.add(fila)
-        db.commit()
-        id_periodo = fila.id_periodo_academico
+@pytest.mark.parametrize(
+    "cambio, campo",
+    [
+        ({"id_anio_escolar": None}, "asignacion.id_anio_escolar"),
+        ({"colegios": []}, "asignacion.colegios"),
+        ({"colegios": None}, "asignacion.colegios"),
+        ({"grados": []}, "asignacion.colegios.0.grados"),
+        ({"repetido": True}, "asignacion.colegios.1.id_colegio"),
+    ],
+)
+def test_cu016_forma_invalida_de_la_asignacion(client, entorno, sup, cambio, campo):
+    datos = asignacion(entorno, "Lejano", None, del_colegio(entorno, "Andino"))
+    if "repetido" in cambio:
+        datos["colegios"][1] = del_colegio(entorno, "Lejano")
+    elif "grados" in cambio:
+        datos["colegios"][0]["grados"] = []
     else:
-        id_periodo = entorno.periodos[periodo].id_periodo_academico
+        datos.update(cambio)
+        datos = {k: v for k, v in datos.items() if v is not None}
 
-    respuesta = client.patch(
-        f"/usuarios/{entorno.docente.id_usuario}", json={"asignacion": {"desde_periodo": id_periodo}}, headers=sup
-    )
+    alta = client.post("/usuarios", json=nuevo(entorno.roles["Docente"], asignacion=datos), headers=sup)
+    edicion = client.patch(f"/usuarios/{entorno.docente.id_usuario}", json={"asignacion": datos}, headers=sup)
 
-    assert motivo(respuesta) == esperado
-
-
-def test_cu016_docente_sin_asignaciones_necesita_colegio_y_anio(client, db, entorno, sup):
-    otro = crear_docente(db, entorno, "Sin", "sin@sicedu.test", "70000000")
-    db.commit()
-
-    incompleta = client.patch(f"/usuarios/{otro.id_usuario}", json={"asignacion": {"grados": [1]}}, headers=sup)
-    completa = client.patch(
-        f"/usuarios/{otro.id_usuario}",
-        json={"asignacion": {**asignacion(entorno), "desde_periodo": entorno.periodos["futuro"].id_periodo_academico}},
-        headers=sup,
-    )
-
-    assert motivo(incompleta) == "asignacion_incompleta"
-    assert completa.status_code == 200
-    assert {f.id_periodo_academico for f in asignaciones_de(db, otro.id_docente)} == {
-        entorno.periodos["futuro"].id_periodo_academico, entorno.periodos["cuarto"].id_periodo_academico
-    }
+    for respuesta in (alta, edicion):
+        assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
+        assert campo in [e["campo"] for e in respuesta.json()["errores"]]
 
 
 # ── Activar / desactivar ────────────────────────────────────────────────────────────

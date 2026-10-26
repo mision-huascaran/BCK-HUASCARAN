@@ -48,14 +48,14 @@ MOTIVO_CREDENCIALES_INVALIDAS = "credenciales_invalidas"
 MENSAJE_CREDENCIALES_INVALIDAS = "Correo o contraseña incorrectos."
 MOTIVO_CUENTA_DESACTIVADA = "cuenta_desactivada"
 MENSAJE_CUENTA_DESACTIVADA = (
-    "Su cuenta se encuentra desactivada. Comuníquese con el Supervisor para solicitar su habilitación."
+    "Tu cuenta se encuentra desactivada. Comunícate con el Supervisor para solicitar su habilitación."
 )
 MOTIVO_CAMBIO_REQUERIDO = "cambio_contrasena_requerido"
 MENSAJE_CAMBIO_REQUERIDO = "Debe establecer una nueva contraseña para continuar."
 # Texto provisional: análisis puede ajustarlo.
 MOTIVO_TEMPORAL_EXPIRADA = "contrasena_temporal_expirada"
 MENSAJE_TEMPORAL_EXPIRADA = (
-    "Su contraseña temporal ha expirado. Use '¿Olvidó su contraseña?' para generar una nueva."
+    "Tu contraseña temporal ha expirado. Usa '¿Olvidaste tu contraseña?' para generar una nueva."
 )
 
 

@@ -25,7 +25,7 @@ from app.core.tiempo import ahora_utc
 from app.models.organizacion import Docente, Rol, Usuario
 from app.schemas.comun import ItemCatalogo
 from app.schemas.usuario import (
-    AsignacionEditar,
+    AsignacionDocente,
     UsuarioCrear,
     UsuarioDetalle,
     UsuarioEditar,
@@ -227,10 +227,7 @@ def crear_usuario(db: Session, data: UsuarioCrear, actor: Usuario) -> UsuarioCre
     _verificar_unicos(db, data.correo, data.dni)
     plan = None
     if data.asignacion is not None:
-        plan = asignaciones.planificar_asignacion_nueva(
-            db, data.asignacion.id_colegio, data.asignacion.id_anio_escolar, data.asignacion.grados,
-            inicio_asignacion=data.asignacion.inicio_asignacion,
-        )
+        plan = asignaciones.planificar_asignacion(db, data.asignacion.id_anio_escolar, data.asignacion.colegios)
 
     ahora = ahora_utc()
     auditoria = {"creado_por": actor.id_usuario, "creado_en": ahora}
@@ -258,7 +255,7 @@ def crear_usuario(db: Session, data: UsuarioCrear, actor: Usuario) -> UsuarioCre
     db.add(usuario)
     db.flush()
     if plan is not None:
-        asignaciones.reemplazar_asignaciones(db, docente.id_docente, plan, actor.id_usuario, ahora)
+        asignaciones.aplicar_asignacion(db, docente.id_docente, plan, actor.id_usuario, ahora)
     registrar_auditoria(
         db, tabla=TABLA, id_registro=usuario.id_usuario, accion=CREAR,
         id_usuario=actor.id_usuario, fecha=ahora,
@@ -286,7 +283,7 @@ def cambiar_rol(
     usuario: Usuario,
     rol_anterior: str,
     rol_nuevo: Rol,
-    asignacion: Optional[AsignacionEditar],
+    asignacion: Optional[AsignacionDocente],
     actor: Usuario,
     ahora,
 ) -> Optional[str]:
@@ -331,17 +328,18 @@ def cambiar_rol(
     return None
 
 
-def _aplicar_asignacion(
-    db: Session, usuario: Usuario, cambio: AsignacionEditar, actor: Usuario, ahora
-) -> tuple[str, str]:
-    """Aplica el cambio de asignación y devuelve (antes, después) para la auditoría."""
-    plan = asignaciones.planificar_cambio(
-        db, usuario.id_docente, cambio.id_colegio, cambio.grados,
-        cambio.id_anio_escolar, cambio.desde_periodo, cambio.inicio_asignacion,
-    )
-    antes = asignaciones.resumen_actual(db, usuario.id_docente, plan.periodos, plan.anio)
-    asignaciones.reemplazar_asignaciones(db, usuario.id_docente, plan, actor.id_usuario, ahora)
-    return antes, plan.resumen()
+@dataclass(frozen=True)
+class CambioDeAsignacion:
+    """Asignación nueva ya validada y el resumen de lo que el docente tenía (para la auditoría)."""
+
+    plan: asignaciones.PlanAsignacion
+    antes: str
+
+
+def _planificar_cambio(db: Session, usuario: Usuario, cambio: AsignacionDocente) -> CambioDeAsignacion:
+    """Valida la asignación completa del año antes de tocar nada de la cuenta."""
+    plan = asignaciones.planificar_asignacion(db, cambio.id_anio_escolar, cambio.colegios, usuario.id_docente)
+    return CambioDeAsignacion(plan, asignaciones.resumen_actual(db, usuario.id_docente, plan.pares(), plan.anio))
 
 
 def _rol_nuevo(db: Session, usuario: Usuario, data: UsuarioEditar, actor: Usuario) -> Optional[Rol]:
@@ -383,6 +381,7 @@ def actualizar_usuario(db: Session, id_usuario: int, data: UsuarioEditar, actor:
     rol_final = rol_nuevo.nombre if rol_nuevo is not None else rol_anterior
     if data.asignacion is not None and rol_final != DOCENTE:
         _exigir_asignacion_segun_rol(rol_final, True)
+    cambio = _planificar_cambio(db, usuario, data.asignacion) if data.asignacion is not None else None
 
     _verificar_unicos(
         db,
@@ -404,8 +403,9 @@ def actualizar_usuario(db: Session, id_usuario: int, data: UsuarioEditar, actor:
         if liberado is not None:
             cambios["asignacion"] = (liberado, asignaciones.SIN_ASIGNACION)
 
-    if data.asignacion is not None:
-        cambios["asignacion"] = _aplicar_asignacion(db, usuario, data.asignacion, actor, ahora)
+    if cambio is not None:
+        asignaciones.aplicar_asignacion(db, usuario.id_docente, cambio.plan, actor.id_usuario, ahora)
+        cambios["asignacion"] = (cambio.antes, cambio.plan.resumen())
 
     if {"nombres", "apellidos"} & enviados:
         _sincronizar_ficha(db, usuario, actor, ahora)

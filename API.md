@@ -711,9 +711,9 @@ activar/desactivar.
 
 ### `POST /usuarios`
 
-Crea una cuenta. Para crear **Docentes** se sigue usando
-[`POST /profesores`](#post-profesores--requiere-supervisor), que además crea la ficha
-de docente.
+Crea una cuenta. Para un **Docente** se envía también `asignacion` (obligatoria para ese
+rol y prohibida para los demás): el backend crea su ficha y sus asignaciones en la misma
+transacción (ver [Asignación de un Docente](#asignación-de-un-docente-cu016-d67)).
 
 **Body:**
 
@@ -756,10 +756,70 @@ de docente.
 
 | Código | Cuándo                                                |
 | ------ | ------------------------------------------------------ |
-| `400`  | `id_rol` es el de `Docente` (usa `POST /profesores`)   |
 | `403`  | El `id_rol` está fuera de tu parcela                   |
 | `404`  | El `id_rol` no existe                                  |
 | `409`  | El correo ya está registrado                           |
+
+#### Asignación de un Docente (CU016, D67)
+
+Un Docente puede atender **varios colegios** en un año escolar. El mismo objeto se usa en
+`POST /usuarios` y en `PATCH /usuarios/{id_usuario}`:
+
+```json
+"asignacion": {
+  "id_anio_escolar": 2,
+  "colegios": [
+    {"id_colegio": 1, "grados": [1, 2, 3], "inicio_asignacion": null},
+    {"id_colegio": 4, "grados": [5], "inicio_asignacion": "retroactivo"}
+  ]
+}
+```
+
+| Campo                          | Regla                                                                                                                                                                                                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id_anio_escolar`              | Obligatorio.                                                                                                                                                                                                                                                                                           |
+| `colegios`                     | Obligatorio, al menos 1. Un `id_colegio` repetido es `422` en `asignacion.colegios.{i}.id_colegio`.                                                                                                                                                                                                   |
+| `colegios[].grados`            | Opcional; si viene, no vacío. Sin él: en un alta, todos los grados del colegio; en una edición, los que el Docente ya tenía en ese colegio en el periodo de inicio (o todos, si no lo tenía).                                                                                                           |
+| `colegios[].inicio_asignacion` | `"retroactivo"` o `"proximo"`. Obligatorio solo si **ese** colegio está hoy en un PR; si falta, `422 inicio_asignacion_requerido` con `id_colegio`, `colegio`, `periodo` y `errores[].campo` = `asignacion.colegios.{i}.inicio_asignacion`. En un PA o en un año que no empezó se ignora. `"proximo"` en el PR4 es `422`. |
+
+- El **inicio** de cada colegio sale de su calendario (CU027): año sin empezar, desde el
+  PA1; en un PA, desde ese PA; en un PR, lo que diga su `inicio_asignacion`.
+  `desde_periodo` **ya no existe**.
+- Se valida **todo** (colegios activos, grados, año, inicio y grados libres) antes de
+  escribir. Si una combinación colegio-grado ya tiene otro Docente en alguno de los PA
+  afectados: `409 grado_asignado` con "No se puede guardar la asignación. El colegio
+  [colegio], grado [grado], ya tiene un Docente asignado en PA[n] del año escolar
+  [año]." y no se guarda nada (en un alta, tampoco la cuenta).
+- **En `PATCH`, `colegios` es el conjunto completo del año**: cada colegio de la lista
+  queda exactamente con esos grados en sus PA no terminados (más el retroactivo si
+  corresponde); los colegios que el Docente tenía en ese año y no vienen se liberan en
+  sus PA no terminados según su propio calendario (los culminados, incluido el
+  retroactivo durante su PR, quedan como historial). Otros años no se tocan. Para quitarle
+  todas las asignaciones se inactiva la cuenta.
+- La auditoría guarda el antes y el después como texto, un bloque por colegio unido por
+  `; `: `AMASHCA [1.º, 2.º] desde P3 2026; HUARAZ [5.º] desde P3 2026 (P2 retroactivo)`.
+
+### `GET /usuarios/{id_usuario}`
+
+La cuenta con `asignacion` (solo Docentes con asignaciones; `null` en los demás casos),
+agrupada por colegio para prellenar el formulario: los colegios por nombre y sus
+periodos por número. Es el año de referencia si el Docente tiene asignaciones en él; si
+no, el más reciente en que tenga.
+
+```json
+"asignacion": {
+  "id_anio_escolar": 2,
+  "colegios": [
+    {"id_colegio": 1, "colegio": "AMASHCA", "periodos": [
+      {"id_periodo": 10, "numero": 3, "vigente": true, "retroactiva": false,
+       "grados": [{"id_grado": 1, "nombre": "1.º"}]}
+    ]}
+  ]
+}
+```
+
+`vigente`: es el PA en que hoy está ese colegio. `retroactiva`: ese PA está habilitado con
+"Retroactivo" durante el PR que le sigue.
 
 ### `GET /usuarios`
 
@@ -796,6 +856,10 @@ apellidos y nombres sin distinguir mayúsculas ni tildes ("de Prueba" antes que
 Corrige los datos de una cuenta. Parcial: solo los campos enviados se modifican.
 
 **Body** (campos opcionales): `{ "nombres": "Ana", "apellidos": "Torres", "correo": "ana@sicedu.test" }`
+
+Para un Docente, `asignacion` reemplaza sus colegios y grados del año indicado (ver
+[Asignación de un Docente](#asignación-de-un-docente-cu016-d67)). Pasar a Docente desde
+otro rol exige `asignacion`.
 
 **Respuesta `200`:** la cuenta actualizada.
 

@@ -17,7 +17,7 @@ from tests.conftest import CORREOS, PASSWORD, motivo, releer
 NUEVO = "nuevo.docente@sicedu.test"
 ORIGINAL = CORREOS["Original"]
 NUEVA = "Definitiva-9"
-TEMPORAL_EXPIRADA = "Su contraseña temporal ha expirado. Use '¿Olvidó su contraseña?' para generar una nueva."
+TEMPORAL_EXPIRADA = "Tu contraseña temporal ha expirado. Usa '¿Olvidaste tu contraseña?' para generar una nueva."
 
 
 @pytest.fixture
@@ -71,6 +71,7 @@ def test_la_cuenta_nueva_debe_cambiar_su_temporal_en_48_horas(client, db, cabece
     assert timedelta(hours=47, minutes=59) < restante <= timedelta(hours=48)
     texto = correos.ultimo_texto(NUEVO)
     assert "vence en 48 horas" in texto
+    assert "¿Olvidaste tu contraseña?" in texto
     assert "primer ingreso" in texto
 
 

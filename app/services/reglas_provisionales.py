@@ -70,15 +70,11 @@ def regla_decision_vigente(decisiones: list[tuple[datetime, Optional[T]]]) -> Op
     return max(con_nivel, key=lambda par: par[0])[1] if con_nivel else None
 
 
-# REGLA PROVISIONAL I1 (Inicio, CU011 "Docentes activos"): en un receso (PR), qué
-# asignaciones hacen que un docente cuente como activo. Duda pendiente con el analista:
-# CU011 v2 incluye en el receso "las asignaciones retroactivas y las asignaciones próximas
-# que estén efectivamente habilitadas para operar conforme a CU016" y "no considera
-# habilitada una asignación futura únicamente porque ya fue creada"; pero al asignar se
-# crean filas para todos los PA que faltan del año, así que contar las del PA siguiente
-# cuenta en el receso a casi todos los docentes.
-# - B (vigente, True): cuentan las retroactivas del PA anterior y las del PA siguiente.
-# - A (False): cuentan solo las retroactivas; las del PA siguiente no operan en el receso.
-# "Colegios operando" (CU012) no depende de esta regla: ahí el CU sí cuenta las del PA
-# siguiente.
-DOCENTES_ACTIVOS_INCLUYE_PA_SIGUIENTE = True
+# REGLA CONFIRMADA I1 (CU011 semana 12, "Docentes activos"): durante un PA cuentan los
+# Docentes con una asignación habilitada para ese periodo conforme a CU016. Durante un PR,
+# los que tienen al menos una asignación Retroactiva habilitada del PA inmediatamente
+# anterior, un permiso excepcional vigente que autorice registrar o corregir, o una
+# asignación válida para el PA inmediatamente siguiente aunque todavía no haya empezado;
+# una asignación para un PA posterior a ese no basta. Cada Docente cuenta una vez, y su
+# inclusión por una asignación próxima no le permite registrar durante el receso. Se
+# aplica en `asignaciones_habilitadas.habilitantes` y en `inicio_service.docentes_activos`.

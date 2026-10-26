@@ -171,7 +171,8 @@ def listar_alumnos(
     page: int,
     id_seccion: Optional[int] = None,
 ) -> Paginado[AlumnoItem]:
-    """Listado paginado, ordenado por apellidos y nombres.
+    """Listado paginado, ordenado por apellidos y nombres sin distinguir mayúsculas ni
+    tildes, y por `id_alumno` si empatan.
 
     `q`: cada palabra debe aparecer en "nombres apellidos", sin distinguir mayúsculas ni
     tildes y en cualquier orden ("juan perez" encuentra a "Juan Carlos Pérez Quispe").
@@ -200,7 +201,7 @@ def listar_alumnos(
         nombre_completo = comparable_sql(Alumno.nombres + " " + Alumno.apellidos)
         for palabra in palabras_buscadas(q):
             consulta = consulta.where(nombre_completo.contains(palabra, autoescape=True))
-    consulta = consulta.order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+    consulta = consulta.order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
 
     filas, total = paginar(db, consulta, page)
     return pagina([_item(f) for f in filas], total, page)

@@ -23,7 +23,7 @@ from tests.conftest import (
     releer,
 )
 
-MENSAJE_BLOQUEO = "Demasiados intentos fallidos. Por seguridad, intente nuevamente en 15 minutos."
+MENSAJE_BLOQUEO = "Demasiados intentos fallidos. Por seguridad, inténtalo nuevamente en 15 minutos."
 
 
 def login(client, correo, password=PASSWORD):
@@ -78,6 +78,9 @@ def test_cu002_cuenta_desactivada_avisa_y_cuenta_como_fallo(client, db, entorno)
 
     assert respuesta.status_code == 403
     assert motivo(respuesta) == "cuenta_desactivada"
+    assert respuesta.json()["detail"] == (
+        "Tu cuenta se encuentra desactivada. Comunícate con el Supervisor para solicitar su habilitación."
+    )
     assert releer(db, ControlAccesoCorreo, CORREOS["Docente"]).intentos_fallidos == 1
 
 
