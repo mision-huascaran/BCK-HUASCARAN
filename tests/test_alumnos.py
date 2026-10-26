@@ -88,6 +88,21 @@ def test_cu014_docente_sin_alcance_recibe_una_pagina_vacia(client, db, entorno, 
     assert client.get("/alumnos", headers=cabeceras["Docente"]).json()["total"] == 0
 
 
+def test_cu014_el_supervisor_no_ve_alumnos_de_colegios_inactivos(client, db, entorno, cabeceras):
+    # D63: Mario (activo) es del Lejano.
+    lejano = entorno.colegios["Lejano"]
+    lejano.activo = False
+    db.add(lejano)
+    db.commit()
+    sup = cabeceras["Supervisor"]
+
+    general = client.get("/alumnos", headers=sup)
+    filtrado = client.get("/alumnos", params={"id_colegio": lejano.id_colegio}, headers=sup)
+
+    assert nombres(general) == ["Luis", "Ana"]
+    assert (filtrado.status_code, filtrado.json()["total"], nombres(filtrado)) == (200, 0, [])
+
+
 def test_cu014_lista_y_ciclo_calculado(client, entorno, cabeceras):
     item = client.get("/alumnos", params={"q": "mario"}, headers=cabeceras["Supervisor"]).json()["items"][0]
 

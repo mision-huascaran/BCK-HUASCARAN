@@ -11,19 +11,21 @@
 - Borrado lógico: activar / inactivar; ningún alumno se elimina.
 - Colegio inactivo (CU013): no afecta a sus alumnos. El Supervisor puede corregir sus
   nombres y apellidos; cambiar su ubicación (colegio, grado, subprograma) o activarlo
-  exige un colegio activo. El Docente no los ve: quedan fuera de su alcance.
+  exige un colegio activo. No salen en el listado (tampoco para el Supervisor); el
+  Docente no los ve: quedan fuera de su alcance.
 """
 import uuid
 from datetime import date
 from typing import Any, Optional
 
 from fastapi import status
-from sqlalchemy import and_, func, or_
-from sqlmodel import Session, select
+from sqlalchemy import and_, or_
+from sqlmodel import Session, col, select
 
 from app.core.ciclo import calcular_ciclo, ciclo_sql, programa_permitido_en_grado
 from app.core.errores import ErrorNegocio, error_de_campo
 from app.core.paginacion import Paginado, pagina, paginar
+from app.core.texto import comparable_sql, palabras_buscadas
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     Alumno,
@@ -52,11 +54,6 @@ CAMPO_PERTENECE_DESDE = "pertenece_desde"
 CAMPO_CAMBIO_GRUPO_DESDE = "cambio_grupo_desde"
 CAMPO_APLICAR_DESDE = "aplicar_desde"
 MENSAJE_FECHA_DE_CAMBIO = "Indica desde qué fecha el alumno pertenece a su nuevo grupo."
-
-# Quien busca escribe "perez", no "Pérez": se comparan ambos lados sin tildes. Se usa
-# translate() en vez de la extensión unaccent porque no requiere instalar nada en la BD.
-CON_TILDES = "áéíóúüñÁÉÍÓÚÜÑ"
-SIN_TILDES = "aeiouunAEIOUUN"
 
 # Campo auditado -> atributo del modelo (el subprograma se guarda en `id_programa_actual`).
 CAMPOS_AUDITADOS = {
@@ -184,7 +181,9 @@ def listar_alumnos(
     if alcance is not None and not alcance:
         return pagina([], 0, page)
 
-    consulta = _consulta_items().where(Alumno.activo == activo)
+    # CU014: el contexto global del Supervisor es el de los colegios activos (al Docente
+    # ya lo recorta `pares_visibles`). Un `id_colegio` inactivo da una lista vacía.
+    consulta = _consulta_items().where(Alumno.activo == activo, col(Colegio.activo).is_(True))
     if alcance is not None:
         consulta = consulta.where(or_(*(and_(Alumno.id_colegio == c, Alumno.id_grado == g) for c, g in alcance)))
     if id_colegio is not None:
@@ -198,10 +197,8 @@ def listar_alumnos(
     if ciclo is not None:
         consulta = consulta.where(ciclo_sql(Programa.nombre, CicloEbr.nombre) == ciclo)
     if q and q.strip():
-        nombre_completo = func.translate(
-            func.lower(Alumno.nombres + " " + Alumno.apellidos), CON_TILDES, SIN_TILDES
-        )
-        for palabra in q.strip().lower().translate(str.maketrans(CON_TILDES, SIN_TILDES)).split():
+        nombre_completo = comparable_sql(Alumno.nombres + " " + Alumno.apellidos)
+        for palabra in palabras_buscadas(q):
             consulta = consulta.where(nombre_completo.contains(palabra, autoescape=True))
     consulta = consulta.order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from fastapi import status
-from sqlalchemy import case
+from sqlalchemy import and_, case
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, or_, select
 
@@ -20,6 +20,7 @@ from app.core.errores import ErrorNegocio
 from app.core.paginacion import Paginado, pagina, paginar
 from app.core.politica_contrasena import VIGENCIA_CONTRASENA_TEMPORAL, generar_contrasena_temporal
 from app.core.security import hash_password
+from app.core.texto import comparable_sql, palabras_buscadas
 from app.core.tiempo import ahora_utc
 from app.models.organizacion import Docente, Rol, Usuario
 from app.schemas.comun import ItemCatalogo
@@ -148,7 +149,13 @@ def listar_usuarios(
     db: Session, rol: Optional[str], activo: bool, q: Optional[str], page: int
 ) -> Paginado[UsuarioItem]:
     """Docentes, Supervisores y Directivos, en ese orden; dentro de cada grupo por
-    apellidos y nombres. `q` busca en nombres y apellidos sin distinguir mayúsculas."""
+    apellidos y nombres sin distinguir mayúsculas ni tildes ("de Prueba" antes que
+    "QA Ronda3"), y por id si empatan.
+
+    `q`: o cada palabra aparece en "nombres apellidos" (sin distinguir mayúsculas ni
+    tildes y en cualquier orden, como en Alumnos), o el texto aparece en el correo (sin
+    distinguir mayúsculas). Los caracteres % y _ se buscan literalmente.
+    """
     orden_rol = case({DOCENTE: 0, SUPERVISOR: 1, DIRECTIVO: 2}, value=Rol.nombre, else_=3)
     consulta = (
         select(Usuario, Rol.nombre)
@@ -158,15 +165,16 @@ def listar_usuarios(
     if rol is not None:
         consulta = consulta.where(Rol.nombre == rol)
     if q and q.strip():
-        texto = q.strip()
+        nombre_completo = comparable_sql(Usuario.nombres + " " + Usuario.apellidos)
         consulta = consulta.where(
             or_(
-                col(Usuario.nombres).icontains(texto, autoescape=True),
-                col(Usuario.apellidos).icontains(texto, autoescape=True),
-                (Usuario.nombres + " " + Usuario.apellidos).icontains(texto, autoescape=True),
+                and_(*(nombre_completo.contains(p, autoescape=True) for p in palabras_buscadas(q))),
+                col(Usuario.correo).icontains(q.strip(), autoescape=True),
             )
         )
-    consulta = consulta.order_by(orden_rol, Usuario.apellidos, Usuario.nombres, Usuario.id_usuario)
+    consulta = consulta.order_by(
+        orden_rol, comparable_sql(Usuario.apellidos), comparable_sql(Usuario.nombres), Usuario.id_usuario
+    )
 
     filas, total = paginar(db, consulta, page)
     colegios = asignaciones.colegios_vigentes_por_docente(

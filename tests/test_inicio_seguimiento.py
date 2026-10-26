@@ -6,7 +6,7 @@ import pytest
 from sqlmodel import select
 
 from app.models.organizacion import Calendario, CalendarioPeriodo, DocenteColegioGrado
-from app.services import registros_vencidos
+from app.services import reglas_provisionales, registros_vencidos
 from app.services.calendario import cargar_calendarios
 from tests.conftest import (
     a_las,
@@ -182,6 +182,23 @@ def test_cu011_en_un_receso_cuentan_las_del_pa_siguiente_y_las_retroactivas(clie
     db.add(retro)
     db.commit()
     assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 2
+
+
+def test_cu011_regla_i1_en_a_solo_cuentan_las_retroactivas(client, db, entorno, reloj, monkeypatch):
+    """Con la regla provisional I1 en A, en el PR1 Rosa (solo PA2, el siguiente) no cuenta
+    y el de la retroactiva sí. Colegios operando (CU012) sigue contando el PA siguiente."""
+    monkeypatch.setattr(reglas_provisionales, "DOCENTES_ACTIVOS_INCLUYE_PA_SIGUIENTE", False)
+    retro = crear_docente(db, entorno, "Retro", "retro@sicedu.test", "70000012")
+    asignar(db, retro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["pasado"], 1)
+    fila = db.exec(select(DocenteColegioGrado).where(DocenteColegioGrado.id_docente == retro.id_docente)).one()
+    fila.retroactiva = True
+    db.add(fila)
+    db.commit()
+    reloj.fijar(a_las(entorno.fin("pasado") + timedelta(days=10)))
+    directivo_ = cabecera_de(db, entorno.usuarios["Directivo"])
+
+    assert client.get("/inicio/supervisor", headers=cabecera_de(db, entorno.supervisor)).json()["docentes_activos"] == 1
+    assert client.get("/inicio/directivo", headers=directivo_).json()["colegios_operando"] == 2
 
 
 def test_cu011_solo_cuenta_asignaciones_del_periodo_vigente(client, db, entorno, cabeceras):

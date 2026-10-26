@@ -38,6 +38,7 @@ from app.services.calendario import (
     en_pa_de_su_colegio,
     pa_actual_de_colegios,
 )
+from app.services import reglas_provisionales
 from app.services.permiso_service import vigentes_del_docente
 from app.services.registros_vencidos import EstadoRegistros, RegistroObligatorio, estado_de_registros, por_modulo
 from app.services.salud_sistema import salud_sistema
@@ -109,8 +110,13 @@ def _ids_colegios_activos(db: Session) -> list[int]:
 def docentes_activos(db: Session, calendarios: Calendarios) -> int:
     """CU011: docentes con cuenta activa y alguna asignación habilitada hoy según el
     calendario de su colegio (en un PA, la de ese PA; en un PR, las retroactivas
-    habilitadas y las del PA siguiente). Cada docente cuenta una vez."""
-    condicion = asignacion_habilitada_sql(habilitantes(calendarios, _ids_colegios_activos(db), hoy_lima()))
+    habilitadas y, según la regla provisional I1, las del PA siguiente). Cada docente
+    cuenta una vez."""
+    por_colegio = habilitantes(
+        calendarios, _ids_colegios_activos(db), hoy_lima(),
+        incluir_pa_siguiente=reglas_provisionales.DOCENTES_ACTIVOS_INCLUYE_PA_SIGUIENTE,
+    )
+    condicion = asignacion_habilitada_sql(por_colegio)
     return db.exec(_de_docentes_asignados(select(func.count(func.distinct(Usuario.id_usuario))), condicion)).one()
 
 

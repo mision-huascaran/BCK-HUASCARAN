@@ -2,7 +2,8 @@
 calendario de ese colegio:
 
 - en un PA: las de ese PA;
-- en un PR: las retroactivas habilitadas del PA anterior y las del PA siguiente;
+- en un PR: las retroactivas habilitadas del PA anterior y, con `incluir_pa_siguiente`
+  (por defecto), las del PA siguiente;
 - con `cierre_usa_ultimo_pa` (Colegios Operando), en el PR4 o después del fin del año:
   las del último PA del año.
 
@@ -42,11 +43,16 @@ def _ultimo_pa_terminado(calendarios: Calendarios, id_colegio: int, hoy: date) -
 
 
 def _en_receso(
-    calendarios: Calendarios, id_colegio: int, periodo: PeriodoCalendario, hoy: date, cierre_usa_ultimo_pa: bool
+    calendarios: Calendarios,
+    id_colegio: int,
+    periodo: PeriodoCalendario,
+    hoy: date,
+    cierre_usa_ultimo_pa: bool,
+    incluir_pa_siguiente: bool,
 ) -> Habilitantes:
     if cierre_usa_ultimo_pa and periodo.numero == ULTIMO_PR:
         return Habilitantes(periodos={periodo.id_periodo_academico})
-    siguiente = _siguiente_pa(calendarios, id_colegio, hoy)
+    siguiente = _siguiente_pa(calendarios, id_colegio, hoy) if incluir_pa_siguiente else None
     return Habilitantes(
         periodos={siguiente.id_periodo_academico} if siguiente else set(),
         retroactivas={periodo.id_periodo_academico},
@@ -54,21 +60,32 @@ def _en_receso(
 
 
 def habilitantes_del_colegio(
-    calendarios: Calendarios, id_colegio: int, hoy: date, cierre_usa_ultimo_pa: bool = False
+    calendarios: Calendarios,
+    id_colegio: int,
+    hoy: date,
+    cierre_usa_ultimo_pa: bool = False,
+    incluir_pa_siguiente: bool = True,
 ) -> Habilitantes:
     periodo = calendarios.periodo_de(id_colegio, hoy)
     if periodo is None:
         ultimo = _ultimo_pa_terminado(calendarios, id_colegio, hoy) if cierre_usa_ultimo_pa else None
         return Habilitantes(periodos={ultimo.id_periodo_academico} if ultimo else set())
     if periodo.tipo == TIPO_PR:
-        return _en_receso(calendarios, id_colegio, periodo, hoy, cierre_usa_ultimo_pa)
+        return _en_receso(calendarios, id_colegio, periodo, hoy, cierre_usa_ultimo_pa, incluir_pa_siguiente)
     return Habilitantes(periodos={periodo.id_periodo_academico})
 
 
 def habilitantes(
-    calendarios: Calendarios, ids_colegio: list[int], hoy: date, cierre_usa_ultimo_pa: bool = False
+    calendarios: Calendarios,
+    ids_colegio: list[int],
+    hoy: date,
+    cierre_usa_ultimo_pa: bool = False,
+    incluir_pa_siguiente: bool = True,
 ) -> dict[int, Habilitantes]:
-    return {c: habilitantes_del_colegio(calendarios, c, hoy, cierre_usa_ultimo_pa) for c in ids_colegio}
+    return {
+        c: habilitantes_del_colegio(calendarios, c, hoy, cierre_usa_ultimo_pa, incluir_pa_siguiente)
+        for c in ids_colegio
+    }
 
 
 def asignacion_habilitada_sql(por_colegio: dict[int, Habilitantes]) -> ColumnElement[bool]:

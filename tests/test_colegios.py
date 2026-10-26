@@ -114,7 +114,7 @@ def test_cu013_colegio_cargado_sin_dias_los_muestra_en_null(client, entorno, sup
 def test_cu013_nombre_duplicado_sin_distinguir_mayusculas_tildes_ni_espacios(client, entorno, sup, nombre):
     respuesta = client.post("/colegios", json=datos(entorno, nombre=nombre), headers=sup)
 
-    assert respuesta.status_code == 409
+    assert (respuesta.status_code, respuesta.json()["detail"]) == (409, "Ya existe un colegio registrado con ese nombre.")
     assert motivo(respuesta) == "colegio_duplicado"
 
 
@@ -311,9 +311,11 @@ def test_cu013_inactivar_no_toca_alumnos_y_saca_al_colegio_del_alcance(client, d
 
     assert respuesta.json()["activo"] is False
     assert client.patch(f"/colegios/{andino}/desactivar", headers=sup).status_code == 200
-    assert client.get("/alumnos", headers=sup, params={"id_colegio": andino}).json()["total"] == 2
+    # D63: sus alumnos siguen activos, pero no salen en el listado mientras esté inactivo.
+    assert client.get("/alumnos", headers=sup, params={"id_colegio": andino}).json()["total"] == 0
     assert client.get("/colegios", headers=cabeceras["Docente"]).json()["total"] == 0
     assert client.patch(f"/colegios/{andino}/activar", headers=sup).json()["activo"] is True
+    assert client.get("/alumnos", headers=sup, params={"id_colegio": andino}).json()["total"] == 2
     acciones = db.exec(select(Auditoria.accion).order_by(Auditoria.id_auditoria)).all()
     assert acciones == ["inactivar", "activar"]
     assert client.patch("/colegios/999/activar", headers=sup).status_code == 404

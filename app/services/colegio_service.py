@@ -234,7 +234,7 @@ def _verificar_nombre_libre(db: Session, nombre: str, excepto: Optional[int] = N
         if id_colegio != excepto and nombre_comparable(existente) == buscado:
             raise ErrorNegocio(
                 status.HTTP_409_CONFLICT,
-                f"Ya existe un colegio llamado {existente}.",
+                "Ya existe un colegio registrado con ese nombre.",
                 motivo="colegio_duplicado",
             )
 

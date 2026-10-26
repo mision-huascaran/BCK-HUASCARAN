@@ -339,6 +339,39 @@ def test_put_guarda_el_permiso_usado(client, db, entorno, doc, actividad):
     assert auditoria.id_permiso == permiso.id_permiso
 
 
+@pytest.fixture
+def permiso_revocado_9_10(db, entorno, miercoles, actividad):
+    """D69: permiso de Asistencias de 8:00 a 10:00, revocado a las 9:10; el reloj, a las 9:20."""
+    permiso = crear_permiso(db, entorno, entorno.id_docente, "Andino", "2.º", modulo="asistencias",
+                            revocado_por=entorno.supervisor.id_usuario, revocado_en=a_las(HOY, 9, 10),
+                            motivo_revocacion="Ya no corresponde")
+    miercoles.avanzar(minutes=20)
+    return permiso
+
+
+def test_sincronizar_operacion_previa_a_la_revocacion(client, db, entorno, doc, actividad, permiso_revocado_9_10):
+    marca = registro(entorno, realizado_en=iso(a_las(HOY, 9, 5)), id_actividad=actividad["id"])
+
+    [resultado] = guardar(client, doc, db, entorno, LUNES_DEL_PA1, [marca]).json()["resultados"]
+
+    assert resultado["estado"] == "aceptada"
+    auditoria = db.exec(select(Auditoria).where(Auditoria.tabla == "asistencia")).one()
+    assert auditoria.id_permiso == permiso_revocado_9_10.id_permiso
+
+
+@pytest.mark.parametrize("campos", [
+    pytest.param({"realizado_en": iso(a_las(HOY, 9, 15))}, id="sin_conexion_despues"),
+    pytest.param({}, id="en_linea_despues"),
+])
+def test_operacion_posterior_a_la_revocacion(client, db, entorno, doc, actividad, permiso_revocado_9_10, campos):
+    marca = registro(entorno, id_actividad=actividad["id"], **campos)
+
+    [resultado] = guardar(client, doc, db, entorno, LUNES_DEL_PA1, [marca]).json()["resultados"]
+
+    assert (resultado["estado"], resultado["motivo"]) == ("rechazada", "sin_habilitacion")
+    assert filas(db) == []
+
+
 def test_put_observacion_sin_estado_no_completa_la_fila(client, db, entorno, doc, actividad):
     marca = {"id_operacion": str(uuid.uuid4()), "id_alumno": entorno.alumnos["ana"].id_alumno, "observacion": "Llegó"}
 

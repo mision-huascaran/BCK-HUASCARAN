@@ -68,3 +68,17 @@ def regla_decision_vigente(decisiones: list[tuple[datetime, Optional[T]]]) -> Op
     alumno en un PA, en cualquier grupo, la más reciente con nivel; None si no hay."""
     con_nivel = [(fecha, decision) for fecha, decision in decisiones if decision is not None]
     return max(con_nivel, key=lambda par: par[0])[1] if con_nivel else None
+
+
+# REGLA PROVISIONAL I1 (Inicio, CU011 "Docentes activos"): en un receso (PR), qué
+# asignaciones hacen que un docente cuente como activo. Duda pendiente con el analista:
+# CU011 v2 incluye en el receso "las asignaciones retroactivas y las asignaciones próximas
+# que estén efectivamente habilitadas para operar conforme a CU016" y "no considera
+# habilitada una asignación futura únicamente porque ya fue creada"; pero al asignar se
+# crean filas para todos los PA que faltan del año, así que contar las del PA siguiente
+# cuenta en el receso a casi todos los docentes.
+# - B (vigente, True): cuentan las retroactivas del PA anterior y las del PA siguiente.
+# - A (False): cuentan solo las retroactivas; las del PA siguiente no operan en el receso.
+# "Colegios operando" (CU012) no depende de esta regla: ahí el CU sí cuenta las del PA
+# siguiente.
+DOCENTES_ACTIVOS_INCLUYE_PA_SIGUIENTE = True

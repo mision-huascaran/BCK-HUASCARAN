@@ -196,6 +196,8 @@ Cierre de sesión local. El backend responde con éxito pero no revoca el token 
 **Errores:**
 
 - `403` si el usuario autenticado no tiene rol `Supervisor`
+- `409` `colegio_duplicado` si otro colegio (activo o no) ya tiene ese nombre, sin distinguir
+  mayúsculas, tildes ni espacios: `"Ya existe un colegio registrado con ese nombre."`
 
 ---
 
@@ -386,6 +388,7 @@ Corrige un colegio. Parcial, igual que el de alumnos.
 
 **Respuesta `200`:** el colegio completo actualizado.
 **Error `404`:** `{"detail": "No existe un colegio con id_colegio=999"}`
+**Error `409`:** `colegio_duplicado`, con `"Ya existe un colegio registrado con ese nombre."`, igual que en el alta.
 
 ---
 
@@ -763,6 +766,15 @@ de docente.
 Lista las cuentas **de tu parcela**, con el nombre del rol ya resuelto.
 
 **Parámetro opcional:** `?rol=Supervisor` acota aún más, dentro de la parcela.
+
+**Búsqueda `?q=`:** busca por nombre o correo. Encuentra la cuenta si cada palabra
+aparece en "nombres apellidos" (sin distinguir mayúsculas ni tildes y en cualquier orden:
+`perez` encuentra a "Pérez") **o** si el texto aparece en el correo (sin distinguir
+mayúsculas). `%` y `_` se buscan literalmente.
+
+**Orden:** Docentes, Supervisores y Directivos, en ese orden; dentro de cada grupo por
+apellidos y nombres sin distinguir mayúsculas ni tildes ("de Prueba" antes que
+"QA Ronda3"), y por `id_usuario` si empatan.
 
 ```json
 [

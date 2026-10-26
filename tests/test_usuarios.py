@@ -228,6 +228,40 @@ def test_cu016_filtros_del_listado(client, entorno, sup, params, correos):
     assert [u["correo"] for u in cuerpo["items"]] == correos
 
 
+@pytest.fixture
+def docentes_de_d66(db, entorno):
+    """D66: apellidos con mayúsculas y tildes mezcladas (los dos Álvarez empatan)."""
+    for n, apellidos in enumerate(("QA Ronda3", "alvarez", "de Prueba", "Álvarez", "Pérez Soto")):
+        usuario = crear_docente(db, entorno, "Ana", f"d66.{n}@colegio-qa.test", f"6100000{n}")
+        usuario.apellidos = apellidos
+        db.add(usuario)
+    db.commit()
+
+
+def test_cu016_orden_sin_distinguir_mayusculas_ni_tildes(client, entorno, sup, docentes_de_d66):
+    cuerpo = client.get("/usuarios", params={"rol": "Docente"}, headers=sup).json()
+
+    assert [u["apellidos"] for u in cuerpo["items"]] == [
+        "alvarez", "Álvarez", "de Prueba", "Pérez Soto", "QA Ronda3", "Quispe",
+    ]
+
+
+@pytest.mark.parametrize(
+    "q, apellidos",
+    [
+        ("perez", ["Pérez Soto"]),
+        ("SOTO ana", ["Pérez Soto"]),
+        ("COLEGIO-QA", ["alvarez", "Álvarez", "de Prueba", "Pérez Soto", "QA Ronda3"]),
+        ("d66.3@", ["Álvarez"]),
+        ("d66_3", []),
+    ],
+)
+def test_cu016_busqueda_por_nombre_o_correo(client, entorno, sup, docentes_de_d66, q, apellidos):
+    cuerpo = client.get("/usuarios", params={"q": q}, headers=sup).json()
+
+    assert [u["apellidos"] for u in cuerpo["items"]] == apellidos
+
+
 def test_cu016_paginacion_de_40_en_40(client, db, entorno, sup):
     for n in range(TAMANO_PAGINA):
         crear_docente(db, entorno, f"Extra{n:02d}", f"extra{n}@sicedu.test", f"600000{n:02d}")
