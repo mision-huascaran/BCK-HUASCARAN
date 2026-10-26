@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from app.core.texto import comparable, comparable_sql
 from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
 from app.models.organizacion import Alumno, Colegio, DocenteColegioGrado, PermisoCorreccion, Rol, Usuario
 from app.models.seguridad import Sesion
@@ -292,7 +293,8 @@ def alertas_sede(db: Session, estado: EstadoRegistros) -> list[AlertaOperativa]:
     if not sin_registros:
         return []
     nombres = db.exec(
-        select(Colegio.nombre).where(col(Colegio.id_colegio).in_(sin_registros)).order_by(Colegio.nombre)
+        select(Colegio.nombre).where(col(Colegio.id_colegio).in_(sin_registros))
+        .order_by(comparable_sql(Colegio.nombre), Colegio.id_colegio)
     ).all()
     return [
         _alerta(
@@ -318,7 +320,7 @@ def alertas_operativas(
             )
             .group_by(Usuario.id_usuario)
         ).all(),
-        key=lambda fila: (fila[0].nombres, fila[0].apellidos, fila[0].id_usuario),
+        key=lambda fila: (comparable(fila[0].nombres), comparable(fila[0].apellidos), fila[0].id_usuario),
     )
     if not docentes:
         return []

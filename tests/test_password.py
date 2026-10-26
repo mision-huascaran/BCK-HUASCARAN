@@ -325,7 +325,7 @@ def test_me_password_flujo_completo_conserva_la_sesion_actual(client, db, entorn
     otra = cabecera_de(db, entorno.docente)
     cabecera = cabeceras["Docente"]
 
-    assert client.post("/me/password/codigo", headers=cabecera).json() == {"mensaje": "Se envió un PIN a su correo."}
+    assert client.post("/me/password/codigo", headers=cabecera).json() == {"mensaje": "Se envió un PIN a tu correo."}
     pin = correos.pin(DOCENTE)
     assert client.post("/me/password/verificar-codigo", json={"codigo": pin}, headers=cabecera).json() == {"valido": True}
     respuesta = client.post(
@@ -367,9 +367,12 @@ def test_me_password_codigo_con_correo_caido_da_503(client, entorno, cabeceras, 
 
 
 def test_me_password_codigo_limite_por_hora_da_429(client, entorno, cabeceras):
-    codigos = [client.post("/me/password/codigo", headers=cabeceras["Docente"]).status_code for _ in range(6)]
+    respuestas = [client.post("/me/password/codigo", headers=cabeceras["Docente"]) for _ in range(6)]
 
-    assert codigos == [200] * 5 + [429]
+    assert [r.status_code for r in respuestas] == [200] * 5 + [429]
+    assert respuestas[-1].json()["detail"] == (
+        "Se alcanzó el límite de solicitudes de PIN. Inténtalo nuevamente más tarde."
+    )
 
 
 def test_me_password_requiere_sesion(client, entorno):

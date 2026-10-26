@@ -50,7 +50,7 @@ MENSAJES_PIN = {
 }
 
 MENSAJE_PIN_ENVIADO = "Si el correo está registrado y activo, recibirás un PIN."
-MENSAJE_PIN_ENVIADO_CON_SESION = "Se envió un PIN a su correo."
+MENSAJE_PIN_ENVIADO_CON_SESION = "Se envió un PIN a tu correo."
 MENSAJE_CONTRASENA_ACTUALIZADA = "Contraseña actualizada correctamente."
 MENSAJE_NO_COINCIDEN = "Las contraseñas no coinciden."
 
@@ -240,7 +240,7 @@ def solicitar_pin_con_sesion(db: Session, usuario_actual: Usuario) -> None:
         db.commit()
         raise ErrorNegocio(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            "Se alcanzó el límite de solicitudes de PIN. Intente nuevamente más tarde.",
+            "Se alcanzó el límite de solicitudes de PIN. Inténtalo nuevamente más tarde.",
             motivo="limite_solicitudes",
         )
     usuario = _bloquear_usuario(db, usuario_actual)

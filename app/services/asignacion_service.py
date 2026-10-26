@@ -33,6 +33,7 @@ from sqlmodel import Session, col, select
 
 from app.core.ciclo import calcular_ciclo, ordenar_ciclos
 from app.core.errores import ErrorNegocio, error_de_campo
+from app.core.texto import comparable, comparable_sql
 from app.core.tiempo import hoy_lima
 from app.models.organizacion import (
     Alumno,
@@ -121,7 +122,8 @@ class PlanAsignacion:
     liberadas: list[DocenteColegioGrado] = field(default_factory=list)
 
     def resumen(self) -> str:
-        return unir_resumenes(a.resumen() for a in sorted(self.colegios, key=lambda a: a.colegio.nombre))
+        por_nombre = sorted(self.colegios, key=lambda a: (comparable(a.colegio.nombre), a.colegio.id_colegio))
+        return unir_resumenes(a.resumen() for a in por_nombre)
 
     def pares(self) -> set[tuple[int, int]]:
         """(colegio, periodo) que el plan reescribe o libera: de ahí sale el "antes"."""
@@ -546,7 +548,7 @@ def resumen_actual(db: Session, id_docente: Optional[int], pares: set[tuple[int,
             DocenteColegioGrado.id_docente == id_docente,
             col(DocenteColegioGrado.id_periodo_academico).in_({p for _, p in pares}),
         )
-        .order_by(Colegio.nombre, Colegio.id_colegio, PeriodoAcademico.numero, Grado.id_grado)
+        .order_by(comparable_sql(Colegio.nombre), Colegio.id_colegio, PeriodoAcademico.numero, Grado.id_grado)
     ).all()
     primeros: dict[int, _PrimerPeriodo] = {}
     for fila, periodo, colegio, grado in filas:
@@ -615,10 +617,10 @@ def colegios_vigentes_por_docente(db: Session, ids_docente: list[int]) -> dict[i
             en_pa_de_su_colegio(DocenteColegioGrado.id_colegio, DocenteColegioGrado.id_periodo_academico, pa_actual),
         )
         .distinct()
-        .order_by(Colegio.nombre, Colegio.id_colegio)
     ).all()
+    # Se ordena aquí: con DISTINCT, PostgreSQL no admite ordenar por una expresión fuera del SELECT.
     por_docente: dict[int, list[ItemCatalogo]] = defaultdict(list)
-    for id_docente, id_colegio, nombre in filas:
+    for id_docente, id_colegio, nombre in sorted(filas, key=lambda f: (comparable(f[2]), f[1])):
         por_docente[id_docente].append(ItemCatalogo(id=id_colegio, nombre=nombre))
     return por_docente
 
@@ -641,7 +643,10 @@ def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetal
         .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
         .join(Grado, Grado.id_grado == DocenteColegioGrado.id_grado)
         .where(DocenteColegioGrado.id_docente == id_docente)
-        .order_by(AnioEscolar.fecha_inicio, Colegio.nombre, Colegio.id_colegio, PeriodoAcademico.numero, Grado.id_grado)
+        .order_by(
+            AnioEscolar.fecha_inicio, comparable_sql(Colegio.nombre), Colegio.id_colegio,
+            PeriodoAcademico.numero, Grado.id_grado,
+        )
     ).all()
     if not filas:
         return None
@@ -716,7 +721,8 @@ def listar_asignaciones(
     if id_colegio is not None:
         consulta = consulta.where(DocenteColegioGrado.id_colegio == id_colegio)
     consulta = consulta.order_by(
-        AnioEscolar.fecha_inicio, PeriodoAcademico.numero, Colegio.nombre, Grado.id_grado, Docente.apellidos
+        AnioEscolar.fecha_inicio, PeriodoAcademico.numero, comparable_sql(Colegio.nombre), Colegio.id_colegio,
+        Grado.id_grado, comparable_sql(Docente.apellidos), comparable_sql(Docente.nombres), DocenteColegioGrado.id,
     )
     return [
         AsignacionItem(
@@ -840,7 +846,7 @@ def a_cargo(db: Session, usuario: Usuario) -> tuple[list[MiAsignacion], TotalesA
             ],
             **por_colegio[id_colegio].campos(),
         )
-        for id_colegio in sorted(ids_colegio, key=lambda c: colegios[c].nombre)
+        for id_colegio in sorted(ids_colegio, key=lambda c: (comparable(colegios[c].nombre), c))
     ]
     return asignaciones, TotalesACargo(**total.campos())
 

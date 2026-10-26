@@ -38,6 +38,7 @@ from sqlmodel import Session, col, select
 
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio, error_de_campo
+from app.core.texto import comparable_sql
 from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
 from app.models.evaluacion import (
     ESTADOS_ASISTIO,
@@ -423,7 +424,7 @@ def _filas(
         .join(Alumno, Alumno.id_alumno == LecturaSemanalAlumno.id_alumno)
         .outerjoin(Asistencia, _asistencia_de_la_referencia())
         .where(LecturaSemanalAlumno.id_lectura_semanal == tabla.id)
-        .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+        .order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
     )
     if id_alumno is not None:
         consulta = consulta.where(LecturaSemanalAlumno.id_alumno == id_alumno)

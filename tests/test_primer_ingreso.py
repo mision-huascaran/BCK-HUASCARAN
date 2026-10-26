@@ -98,7 +98,7 @@ def test_login_con_la_temporal_pide_el_cambio_sin_abrir_sesion(client, db, nuevo
 
     assert respuesta.status_code == 403
     assert respuesta.json() == {
-        "detail": "Debe establecer una nueva contraseña para continuar.", "motivo": "cambio_contrasena_requerido",
+        "detail": "Debes establecer una nueva contraseña para continuar.", "motivo": "cambio_contrasena_requerido",
     }
     assert db.exec(select(Sesion).where(Sesion.id_usuario == nuevo["id"])).all() == []
     assert fallos(db) == 0  # credenciales correctas: cuenta como intento exitoso

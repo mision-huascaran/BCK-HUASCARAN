@@ -456,6 +456,18 @@ def test_cu020_filtros(client, db, entorno, cabeceras):
     assert nombres(activo="false") == []
 
 
+def test_cu020_orden_por_nombre_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, cabeceras):
+    for i, nombre in enumerate(("beto", "Álvaro", "Carla")):
+        crear_docente(db, entorno, nombre, f"docente{i}@sicedu.test", f"7200000{i}")
+    db.commit()
+
+    items = client.get(
+        "/seguimiento/docentes", params={"sincronizacion": "sin_informacion"}, headers=cabeceras["Supervisor"]
+    ).json()["items"]
+
+    assert [d["nombres"] for d in items] == ["Álvaro", "beto", "Carla", "Rosa"]
+
+
 def test_cu020_ultima_conexion_null_si_nunca_inicio_sesion(client, db, entorno, cabeceras):
     crear_docente(db, entorno, "Nunca", "nunca@sicedu.test", "70000003")
     db.commit()

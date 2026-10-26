@@ -31,6 +31,12 @@ def comparable_sql(expresion):
     return func.lower(func.translate(expresion, CON_TILDES, SIN_TILDES))
 
 
+def comparable(texto: str) -> str:
+    """El texto sin tildes y en minúsculas, con la misma tabla que `comparable_sql`: la clave
+    para ordenar en Python igual que en la BD ("ALVA" < "álvarez" < "Ávila" < "Ñahui")."""
+    return texto.translate(_A_SIN_TILDES).lower()
+
+
 def palabras_buscadas(q: str) -> list[str]:
     """Las palabras de una búsqueda, sin tildes y en minúsculas (como `comparable_sql`)."""
-    return q.translate(_A_SIN_TILDES).lower().split()
+    return comparable(q).split()

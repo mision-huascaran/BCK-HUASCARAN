@@ -139,6 +139,21 @@ def test_get_clase_programada_con_la_lista_del_grupo(client, db, entorno, doc):
     }]
 
 
+def test_lista_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, doc, actividad):
+    """La lista del grupo (sin clase guardada) y la lista congelada salen en el mismo orden."""
+    for nombre, apellidos in (("Zoe", "Ñahui"), ("Iris", "álvarez"), ("Abel", "ALVA"), ("Bea", "Ávila")):
+        crear_alumno(db, nombre, apellidos, entorno.colegios["Andino"], entorno.grados["2.º"],
+                     entorno.programas["Comprensión Lectora"], 1, desde=entorno.anio.fecha_inicio)
+    db.commit()
+    esperado = ["Abel ALVA", "Iris álvarez", "Bea Ávila", "Zoe Ñahui", "Ana Torres"]
+
+    del_grupo = [a["nombre"] for a in consultar(client, doc, db, entorno, LUNES).json()["alumnos"]]
+    assert guardar(client, doc, db, entorno, LUNES, [registro(entorno)]).status_code == 200
+    congelada = [a["nombre"] for a in consultar(client, doc, db, entorno, LUNES).json()["alumnos"]]
+
+    assert (del_grupo, congelada) == (esperado, esperado)
+
+
 def test_get_sin_clase_programada(client, db, entorno, doc):
     clase = consultar(client, doc, db, entorno, MARTES).json()["clase"]
 
@@ -398,6 +413,11 @@ def test_put_roles_y_validacion(client, db, entorno, cabeceras, doc):
     assert (sin_clase.status_code, motivo(sin_clase)) == (422, "validacion")
     assert (vacio.status_code, motivo(vacio)) == (422, "validacion")
     assert (ajeno.status_code, motivo(ajeno)) == (403, "aula_fuera_de_alcance")
+    sin_cambios = guardar(client, doc, db, entorno, LUNES, [
+        {"id_operacion": str(uuid.uuid4()), "version": None, "id_alumno": entorno.alumnos["ana"].id_alumno}
+    ])
+    assert (sin_cambios.status_code, motivo(sin_cambios)) == (422, "validacion")
+    assert [e["mensaje"] for e in sin_cambios.json()["errores"]] == ["Debes indicar el estado o la observación."]
 
 
 def test_put_clase_inexistente(client, doc, actividad):

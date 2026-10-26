@@ -350,7 +350,7 @@ def _rol_nuevo(db: Session, usuario: Usuario, data: UsuarioEditar, actor: Usuari
     rol = _rol_valido(db, data.id_rol)
     if usuario.id_usuario == actor.id_usuario:
         raise ErrorNegocio(
-            status.HTTP_409_CONFLICT, "No puede cambiar el rol de su propia cuenta.", motivo="auto_cambio_rol"
+            status.HTTP_409_CONFLICT, "No puedes cambiar el rol de tu propia cuenta.", motivo="auto_cambio_rol"
         )
     if usuario.es_supervisor_original:
         raise ErrorNegocio(
@@ -455,7 +455,7 @@ def cambiar_estado(db: Session, id_usuario: int, activo: bool, actor: Usuario) -
     usuario = _usuario(db, id_usuario)
     if not activo and usuario.id_usuario == actor.id_usuario:
         raise ErrorNegocio(
-            status.HTTP_409_CONFLICT, "No puede desactivar su propia cuenta.", motivo="auto_desactivacion"
+            status.HTTP_409_CONFLICT, "No puedes desactivar tu propia cuenta.", motivo="auto_desactivacion"
         )
     if not activo and usuario.es_supervisor_original:
         raise ErrorNegocio(

@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
+from app.core.texto import comparable_sql
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.evaluacion import TIPO_ADICIONAL, TIPO_HABITUAL, Asistencia, Clase, ClaseAlumno
 from app.models.organizacion import Alumno, Seccion, Usuario
@@ -160,7 +161,7 @@ def _lista(db: Session, filtro: FiltroGrupos, clase: Optional[ClaseProgramada], 
             select(Alumno, ClaseAlumno.id_programa)
             .join(ClaseAlumno, ClaseAlumno.id_alumno == Alumno.id_alumno)
             .where(ClaseAlumno.id_clase == fila.id_clase)
-            .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+            .order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
         ).all()
     )
 

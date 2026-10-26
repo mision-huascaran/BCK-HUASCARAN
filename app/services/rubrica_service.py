@@ -29,6 +29,7 @@ from sqlmodel import Session, col, select
 from app.core.ciclo import calcular_ciclo
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio
+from app.core.texto import comparable
 from app.core.paginacion import TAMANO_PAGINA, pagina
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.evaluacion import DescriptorRubrica, NivelRubrica, RubricaMensual
@@ -200,7 +201,7 @@ def alumnos_del_mes(db: Session, grupo: GrupoMes, mes: MesEvaluado) -> list[Alum
     faltantes = set(_grupos_evaluados(db, grupo)) - {a.id_alumno for a in candidatos}
     if faltantes:
         candidatos += db.exec(select(Alumno).where(col(Alumno.id_alumno).in_(faltantes))).all()
-        candidatos.sort(key=lambda a: (a.apellidos, a.nombres, a.id_alumno))
+        candidatos.sort(key=lambda a: (comparable(a.apellidos), comparable(a.nombres), a.id_alumno))
     evaluados = _grupos_evaluados(db, grupo, [a.id_alumno for a in candidatos])
     intervalos = _intervalos(db, [a.id_alumno for a in candidatos if a.id_alumno not in evaluados], mes)
     dias = _dias_transcurridos(mes)

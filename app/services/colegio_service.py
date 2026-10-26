@@ -16,7 +16,7 @@ from sqlmodel import Session, SQLModel, col, select
 
 from app.core.errores import ErrorNegocio
 from app.core.paginacion import Paginado, pagina, paginar
-from app.core.texto import nombre_comparable
+from app.core.texto import comparable, comparable_sql, nombre_comparable
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     Alumno,
@@ -160,7 +160,7 @@ def listar_colegios(
         consulta = consulta.where(_texto_comparable(Colegio.departamento) == departamento.strip().lower())
     if distrito and distrito.strip():
         consulta = consulta.where(_texto_comparable(Colegio.distrito) == distrito.strip().lower())
-    consulta = consulta.order_by(Colegio.nombre, Colegio.id_colegio)
+    consulta = consulta.order_by(comparable_sql(Colegio.nombre), Colegio.id_colegio)
     filas, total = paginar(db, consulta, page)
     return pagina([item_de(c) for c in filas], total, page)
 
@@ -170,16 +170,18 @@ def ubicaciones(db: Session, visibles: Optional[set[int]], departamento: Optiona
     if visibles is not None and not visibles:
         return Ubicaciones(departamentos=[], distritos=[])
     filtro = [] if visibles is None else [col(Colegio.id_colegio).in_(visibles)]
-    departamentos = db.exec(
-        select(Colegio.departamento).where(*filtro).distinct().order_by(Colegio.departamento)
-    ).all()
+    departamentos = db.exec(select(Colegio.departamento).where(*filtro).distinct()).all()
     filtro_distritos = [*filtro, col(Colegio.distrito).is_not(None)]
     if departamento and departamento.strip():
         filtro_distritos.append(_texto_comparable(Colegio.departamento) == departamento.strip().lower())
-    distritos = db.exec(
-        select(Colegio.distrito).where(*filtro_distritos).distinct().order_by(Colegio.distrito)
-    ).all()
-    return Ubicaciones(departamentos=list(departamentos), distritos=list(distritos))
+    distritos = db.exec(select(Colegio.distrito).where(*filtro_distritos).distinct()).all()
+    # Se ordenan aquí: con DISTINCT, PostgreSQL no admite ordenar por una expresión fuera del SELECT.
+    return Ubicaciones(departamentos=_por_nombre(departamentos), distritos=_por_nombre(distritos))
+
+
+def _por_nombre(textos) -> list[str]:
+    """Sin distinguir mayúsculas ni tildes, como `comparable_sql`; el texto tal cual desempata."""
+    return sorted(textos, key=lambda t: (comparable(t), t))
 
 
 def _estado_de(calendarios: Calendarios, id_colegio: int, id_anio_escolar: Optional[int]) -> Optional[EstadoCalendario]:
@@ -200,7 +202,9 @@ def _estado_de(calendarios: Calendarios, id_colegio: int, id_anio_escolar: Optio
 def estado_calendario(db: Session, id_anio_escolar: Optional[int]) -> list[ColegioEstadoCalendario]:
     """Colegios activos, por nombre, con el periodo en que hoy está cada uno según su
     calendario del año `id_anio_escolar` (o del que contenga hoy, si no se indica)."""
-    colegios = db.exec(select(Colegio).where(col(Colegio.activo).is_(True)).order_by(Colegio.nombre)).all()
+    colegios = db.exec(
+        select(Colegio).where(col(Colegio.activo).is_(True)).order_by(comparable_sql(Colegio.nombre), Colegio.id_colegio)
+    ).all()
     calendarios = cargar_calendarios(db, id_anio_escolar, ids_colegio=[c.id_colegio for c in colegios])
     return [
         ColegioEstadoCalendario(

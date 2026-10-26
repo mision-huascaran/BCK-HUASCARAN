@@ -134,6 +134,7 @@ def test_token_invalido_da_401_sesion_invalida(client, entorno, cabecera):
 
     assert respuesta.status_code == 401
     assert motivo(respuesta) == "sesion_invalida"
+    assert respuesta.json()["detail"] == "La sesión no es válida. Inicia sesión nuevamente."
     assert respuesta.headers["WWW-Authenticate"] == "Bearer"
 
 
@@ -151,6 +152,7 @@ def test_cu007_sesion_vencida_da_401_sesion_expirada_y_queda_cerrada(client, db,
 
     assert respuesta.status_code == 401
     assert motivo(respuesta) == "sesion_expirada"
+    assert respuesta.json()["detail"] == "La sesión ha expirado. Inicia sesión nuevamente."
     sesion = db.exec(select(Sesion).where(Sesion.id_usuario == entorno.docente.id_usuario)).one()
     db.refresh(sesion)
     assert sesion.tipo_cierre == "Automático por expiración"

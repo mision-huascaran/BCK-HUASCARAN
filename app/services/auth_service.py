@@ -51,7 +51,7 @@ MENSAJE_CUENTA_DESACTIVADA = (
     "Tu cuenta se encuentra desactivada. Comunícate con el Supervisor para solicitar su habilitación."
 )
 MOTIVO_CAMBIO_REQUERIDO = "cambio_contrasena_requerido"
-MENSAJE_CAMBIO_REQUERIDO = "Debe establecer una nueva contraseña para continuar."
+MENSAJE_CAMBIO_REQUERIDO = "Debes establecer una nueva contraseña para continuar."
 # Texto provisional: análisis puede ajustarlo.
 MOTIVO_TEMPORAL_EXPIRADA = "contrasena_temporal_expirada"
 MENSAJE_TEMPORAL_EXPIRADA = (

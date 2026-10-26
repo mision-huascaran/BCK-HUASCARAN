@@ -91,7 +91,8 @@ def test_d67_conflicto_en_el_segundo_colegio_no_crea_nada(client, db, entorno, s
         f"Docente asignado en PA2 del año escolar {entorno.anio.nombre}."
     )
     db.expire_all()
-    assert (len(db.exec(select(Usuario)).all()), len(db.exec(select(DocenteColegioGrado)).all())) == antes
+    despues = len(db.exec(select(Usuario)).all()), len(db.exec(select(DocenteColegioGrado)).all())
+    assert despues == antes
 
 
 def test_d67_el_colegio_en_receso_exige_su_inicio(client, entorno, sup, lejano_en_receso):

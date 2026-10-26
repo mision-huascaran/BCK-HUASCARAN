@@ -162,6 +162,19 @@ def test_get_con_tabla_filas_de_la_lista_historica_del_programa(client, db, ento
     }
 
 
+def test_filas_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, doc, actividad):
+    for nombre, apellidos in (("Zoe", "Ñahui"), ("Iris", "álvarez"), ("Abel", "ALVA"), ("Bea", "Ávila")):
+        crear_alumno(db, nombre, apellidos, entorno.colegios["Andino"], entorno.grados["2.º"],
+                     entorno.programas[COMPRENSION], 1, desde=entorno.anio.fecha_inicio)
+    db.commit()
+    assert crear(client, doc, db, entorno).status_code == 201
+
+    filas = consultar(client, doc, db, entorno).json()["filas"]
+
+    # Beto es de Alfabetización: no está en esta tabla.
+    assert [f["nombre"] for f in filas] == ["Abel ALVA", "Iris álvarez", "Bea Ávila", "Zoe Ñahui", "Ana Torres"]
+
+
 @pytest.mark.parametrize(("rol", "codigo"), [("Directivo", 403), (None, 401)])
 def test_get_roles(client, db, entorno, cabeceras, rol, codigo):
     assert consultar(client, cabeceras.get(rol, {}), db, entorno).status_code == codigo

@@ -130,6 +130,17 @@ def test_listado_r2_e_inactivos(client, entorno, doc, actividad):
     }
 
 
+def test_listado_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, doc):
+    for nombre, apellidos in (("Zoe", "Ñahui"), ("Iris", "álvarez"), ("Abel", "ALVA"), ("Bea", "Ávila")):
+        crear_alumno(db, nombre, apellidos, entorno.colegios["Andino"], entorno.grados["2.º"],
+                     entorno.programas[CL], 1, desde=entorno.anio.fecha_inicio)
+    db.commit()
+
+    assert nombres(listar(client, doc, entorno)) == [
+        "Abel ALVA", "Iris álvarez", "Bea Ávila", "Inés Inactiva", "Zoe Ñahui", "Ana Torres",
+    ]
+
+
 def test_listado_sin_alumnos(client, entorno, cabeceras):
     respuesta = listar(client, cabeceras["Supervisor"], entorno, grado="3.º")
 

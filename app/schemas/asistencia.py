@@ -77,7 +77,7 @@ class RegistroAsistencia(ItemOperacion, ParcheSinNulos):
     @model_validator(mode="after")
     def _algo_que_cambiar(self) -> "RegistroAsistencia":
         if not {"estado", "observacion"} & self.model_fields_set:
-            raise ValueError("Debe indicar el estado o la observación.")
+            raise ValueError("Debes indicar el estado o la observación.")
         if self.observacion is not None:
             self.observacion = self.observacion.strip() or None
         return self

@@ -347,6 +347,7 @@ def test_cu016_nadie_cambia_su_propio_rol_ni_el_del_original(client, entorno, su
     )
 
     assert (propio.status_code, motivo(propio)) == (409, "auto_cambio_rol")
+    assert propio.json()["detail"] == "No puedes cambiar el rol de tu propia cuenta."
     assert (original.status_code, motivo(original)) == (403, "supervisor_original_protegido")
 
 
@@ -526,6 +527,8 @@ def test_cu016_desactivaciones_no_permitidas(client, entorno, sup, quien, codigo
 
     assert respuesta.status_code == codigo
     assert motivo(respuesta) == esperado
+    if quien == "propio":
+        assert respuesta.json()["detail"] == "No puedes desactivar tu propia cuenta."
 
 
 def test_cu016_desactivar_un_directivo_lo_deja_en_el_listado_de_inactivos(client, entorno, sup):
