@@ -435,3 +435,36 @@ def test_cu028_el_permiso_no_habilita_escribir_alumnos(client, db, entorno, solo
     respuesta = client.patch(f"/alumnos/{entorno.alumnos['mario'].id_alumno}", json={"nombres": "M"}, headers=cabecera)
 
     assert (respuesta.status_code, motivo(respuesta)) == (403, "alumno_fuera_de_alcance")
+
+
+# ── GET /me/habilitaciones con nombres (Tanda I) ────────────────────────────────────
+
+def test_mis_habilitaciones_traen_colegio_y_grado_con_nombre(client, db, entorno, cabeceras):
+    permiso = crear_permiso(db, entorno, entorno.id_docente, "Lejano", "3.º")
+    andino, lejano = entorno.colegios["Andino"].id_colegio, entorno.colegios["Lejano"].id_colegio
+
+    cuerpo = client.get("/me/habilitaciones", headers=cabeceras["Docente"]).json()
+
+    [asignacion, *_] = cuerpo["asignaciones"]
+    assert (asignacion["id_colegio"], asignacion["id_grado"]) == (andino, entorno.grados["1.º"])
+    assert asignacion["colegio"] == {"id": andino, "nombre": "Colegio Andino"}
+    assert asignacion["grado"] == {"id": entorno.grados["1.º"], "nombre": "1.º"}
+    [vigente] = cuerpo["permisos"]
+    assert (vigente["id_permiso"], vigente["id_colegio"], vigente["id_grado"]) == (
+        permiso.id_permiso, lejano, entorno.grados["3.º"]
+    )
+    assert vigente["colegio"] == {"id": lejano, "nombre": "Colegio Lejano"}
+    assert vigente["grado"] == {"id": entorno.grados["3.º"], "nombre": "3.º"}
+
+
+def test_mis_habilitaciones_colegio_inactivo_no_aparece(client, db, entorno, cabeceras):
+    """El nombre no cambia el filtro: el permiso de un colegio inactivo sigue sin venir,
+    porque escribir allí se rechaza al sincronizar."""
+    crear_permiso(db, entorno, entorno.id_docente, "Lejano", "3.º")
+    entorno.colegios["Lejano"].activo = False
+    db.commit()
+
+    cuerpo = client.get("/me/habilitaciones", headers=cabeceras["Docente"]).json()
+
+    assert cuerpo["permisos"] == []
+    assert {a["colegio"]["nombre"] for a in cuerpo["asignaciones"]} == {"Colegio Andino"}

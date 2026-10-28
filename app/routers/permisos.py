@@ -15,6 +15,7 @@ from app.schemas.permiso import (
     PermisoCrear,
     PermisoDetalle,
     PermisoItem,
+    PermisoLoteCrear,
     PermisoRevocar,
 )
 from app.schemas.habilitacion import MisHabilitaciones
@@ -49,6 +50,23 @@ def listar_permisos(
         "estado": estado,
     }
     return permiso_service.listar(db, id_usuario, filtros, page)
+
+
+@router.post(
+    "/usuarios/{id_usuario}/permisos/lote", response_model=list[PermisoDetalle], status_code=status.HTTP_201_CREATED
+)
+def otorgar_permisos_en_lote(id_usuario: int, data: PermisoLoteCrear, db: Db, actor: Supervisor):
+    """Un permiso por cada combinación de grado y módulo (1 a 24), con el mismo año,
+    colegio, PA, vigencia y motivo. Todo o nada: si una combinación falla no se guarda
+    ninguna. Respuesta en el orden de `combinaciones`.
+
+    Errores: 404 `docente_no_encontrado`; 409 `docente_inactivo`; 422 por campo
+    (`motivo`, `inicio`, `fin`, `id_anio_escolar`, `id_colegio`, `id_periodo_academico`,
+    `combinaciones` repetidas, vacías o más de 24). Si fallan combinaciones (grado que el
+    colegio no ofrece: 422 en `combinaciones.{i}.id_grado`; superposición: 409
+    `permiso_superpuesto`), responde el status, `motivo` y `detail` de la primera, con
+    todas en `combinaciones_rechazadas`."""
+    return permiso_service.otorgar_lote(db, id_usuario, data, actor)
 
 
 @router.get("/usuarios/{id_usuario}/permisos/{id_permiso}", response_model=PermisoDetalle)

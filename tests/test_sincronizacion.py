@@ -488,6 +488,8 @@ def test_mis_habilitaciones(client, db, entorno, cabeceras):
     # La del PA1 ya terminó; la del PA2 sigue.
     assert cuerpo["asignaciones"] == [
         {"id_colegio": entorno.colegios["Andino"].id_colegio, "id_grado": entorno.grados[g],
+         "colegio": {"id": entorno.colegios["Andino"].id_colegio, "nombre": "Colegio Andino"},
+         "grado": {"id": entorno.grados[g], "nombre": g},
          "id_periodo_academico": vigente, "retroactiva": False}
         for g in ("1.º", "2.º")
     ]
