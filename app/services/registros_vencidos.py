@@ -10,8 +10,9 @@ exigen) y los colegios que ya tienen algún registro consolidado en su PA vigent
 - Lectura: por grupo, subprograma y semana con clase habitual o reprogramada en el PA en
   curso; vence el sábado 00:00 de esa semana. VENCIDA sin tabla; INCOMPLETA con filas
   "Pendiente". "No realizada" cumple; una semana sin clase no obliga.
-- Rúbrica: por alumno y mes del PA en curso (R1 y R2); vence el día 1 del mes siguiente.
-  VENCIDA sin ninguna dimensión; INCOMPLETA con una sola.
+- Rúbrica: por alumno y mes con días lectivos del PA en curso (R2, y DP-1 para un mes
+  partido entre dos PA); vence el día 1 del mes siguiente. VENCIDA sin ninguna
+  dimensión; INCOMPLETA con una sola.
 - Registro de Vuelo: por alumno y PA ya terminado del año; vence el día siguiente al fin
   del PA. VENCIDA sin fila; INCOMPLETA con fila pero sin nivel colocado (en cualquier
   grupo, V1). Los PA en curso y futuros no vencen.
@@ -48,7 +49,14 @@ from app.services.calendario import (
 from app.services.lectura_service import colegios_con_filas_confirmadas, tablas_con_pendientes
 from app.services.programacion import ClaseProgramada, FiltroGrupos, clases_programadas
 from app.services.registro_vuelo import colegios_con_decisiones
-from app.services.rubrica_service import GrupoMes, alumnos_del_mes, colegios_con_rubricas, mes_evaluado
+from app.services.reglas_provisionales import regla_mes_exigible_en_pa
+from app.services.rubrica_service import (
+    GrupoMes,
+    MesEvaluado,
+    alumnos_del_mes,
+    colegios_con_rubricas,
+    mes_evaluado,
+)
 
 UN_DIA = timedelta(days=1)
 # Lectura: la semana vence el sábado (lunes + 5) a las 00:00.
@@ -325,12 +333,25 @@ def _meses_vencidos(pa: PeriodoCalendario, hoy: date) -> list[tuple[int, int]]:
         anio, mes = siguiente.year, siguiente.month
 
 
+def _mes_exigible(mes: MesEvaluado, pa: PeriodoCalendario) -> bool:
+    """Si la rúbrica del mes se exige en el PA (DP-1, provisional): si alguno de los PA que
+    pueden evaluarlo es ese, es decir, si el mes tiene días lectivos de él."""
+    return regla_mes_exigible_en_pa(
+        mes.dias_lectivos, _pa_entre(mes.periodos_que_evaluan), pa.id_periodo_academico
+    )
+
+
+def _pa_entre(periodos: tuple[PeriodoCalendario, ...]) -> Callable[[date], Optional[PeriodoCalendario]]:
+    """`pa_de` restringido a esos PA (los del mes, ya resueltos con el calendario del colegio)."""
+    return lambda dia: next((p for p in periodos if p.fecha_inicio <= dia <= p.fecha_fin), None)
+
+
 def _rubrica_del_grupo(db: Session, grupo: GrupoMes, pa: PeriodoCalendario, docentes: list[int], estado: EstadoRegistros) -> None:
     try:
         mes = mes_evaluado(db, grupo)
     except ErrorNegocio:
         return
-    if mes.periodo.id_periodo_academico != pa.id_periodo_academico:
+    if not _mes_exigible(mes, pa):
         return
     evaluaciones = {
         r.id_alumno: r for r in db.exec(select(RubricaMensual).where(
