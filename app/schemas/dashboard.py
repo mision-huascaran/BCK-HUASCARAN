@@ -425,3 +425,76 @@ class DesgloseLibros(BaseModel):
     mes: int
     total: Optional[int]
     registros: list[RegistroLibros]
+
+
+# ── Evolución anual y comparación entre colegios (D6, CU033 y CU035) ────────────────
+
+class LibrosDeUnAnio(BaseModel):
+    """Total de libros del año (CU034): null sin información, nunca 0 inventado."""
+
+    total: Optional[int]
+    estado: EstadoLibros
+
+
+class CoberturaColegio(BaseModel):
+    colegio: ItemCatalogo
+    alumnos_atendidos: int
+
+
+class AnioEvolucion(BaseModel):
+    """Un año con alumnos atendidos. `parcial`: el año está en curso (acumulado hasta hoy)."""
+
+    anio_escolar: ItemCatalogo
+    parcial: bool
+    # Alumnos únicos del año en los colegios seleccionados (uno solo aunque cambie de colegio).
+    alumnos_atendidos: int
+    colegios_atendidos: int
+    libros: LibrosDeUnAnio
+    # Alumnos atendidos en cada colegio (un alumno que cambió de colegio está en los dos).
+    colegios: list[CoberturaColegio]
+
+
+class EvolucionAnual(BaseModel):
+    """CU033 (paso 9) y CU035 (paso 8): los años con información hasta el seleccionado.
+    El resumen anual de CU035 (paso 5) es el año seleccionado de esta lista más el
+    `resumen` de `/dashboard/libros` (total y promedio)."""
+
+    contexto: ContextoDashboard
+    anios: list[AnioEvolucion]
+    mensaje: Optional[str] = None
+
+
+IndicadorColegios = Literal["nivel_global_alfabetizacion", "nivel_global_comprension", "asistencia", "promedio_libros"]
+
+
+class PoblacionComparada(BaseModel):
+    descripcion: str
+    cantidad: int
+
+
+class ColegioComparado(BaseModel):
+    """Un colegio con el indicador. Sin posición si no hay con quién compararlo."""
+
+    posicion: Optional[int]
+    provisional: bool
+    colegio: ItemCatalogo
+    # Índice (2 decimales), porcentaje (1 decimal) o promedio (2 decimales), como su bloque.
+    valor: float
+    poblacion: PoblacionComparada
+    advertencias: list[str]
+
+
+class ColegioSinComparacion(BaseModel):
+    colegio: ItemCatalogo
+    motivo: str
+
+
+class ComparacionColegios(BaseModel):
+    """CU035 (paso 9): un indicador a la vez, sin puntuación general."""
+
+    contexto: ContextoDashboard
+    indicador: IndicadorColegios
+    intervalo: Literal["periodo", "anio"]
+    ranking: list[ColegioComparado]
+    sin_informacion: list[ColegioSinComparacion]
+    mensaje: Optional[str] = None

@@ -59,6 +59,7 @@ from app.schemas.dashboard import (
     RegistroLibros,
     ResumenLibros,
 )
+from app.services.calendario import CalendarioResuelto, Calendarios
 from app.services.dashboard.filtros import (
     FiltrosResueltos,
     colegios_del_alcance,
@@ -196,12 +197,14 @@ def _filas(
 
 # ── Aportes del año ─────────────────────────────────────────────────────────────────
 
-def _rangos(filtros: FiltrosResueltos, ids_colegio: list[int], hoy: date) -> dict[int, tuple[date, date]]:
+def _rangos(
+    calendarios: dict[int, CalendarioResuelto], ids_colegio: list[int], hoy: date
+) -> dict[int, tuple[date, date]]:
     """{colegio: (inicio de su año, min(fin, hoy))} de los colegios con calendario cuyo
     año ya empezó."""
     rangos = {}
     for id_colegio in ids_colegio:
-        calendario = filtros.calendarios.get(id_colegio)
+        calendario = calendarios.get(id_colegio)
         if calendario is not None and calendario.fecha_inicio <= hoy:
             rangos[id_colegio] = (calendario.fecha_inicio, min(calendario.fecha_fin, hoy))
     return rangos
@@ -231,17 +234,20 @@ def _aportes_sin_tabla(
     return aportes
 
 
-def aportes_del_anio(db: Session, filtros: FiltrosResueltos, ids_colegio: list[int]) -> list[Aporte]:
-    """Aportes de esos colegios en su año escolar hasta hoy. Consultas fijas por colegio
-    (las obligaciones de Lectura) más un número fijo en total."""
+def aportes_del_anio(
+    db: Session, calendarios: dict[int, CalendarioResuelto], cargados: Calendarios, ids_colegio: list[int]
+) -> list[Aporte]:
+    """Aportes de esos colegios en el año escolar de `calendarios` ({colegio: su calendario
+    aplicable de ese año}) hasta hoy. `cargados` debe incluir esos calendarios. Consultas
+    fijas por colegio (las obligaciones de Lectura) más un número fijo en total."""
     hoy = hoy_lima()
-    rangos = _rangos(filtros, ids_colegio, hoy)
+    rangos = _rangos(calendarios, ids_colegio, hoy)
     if not rangos:
         return []
     obligaciones = [
         (id_colegio, obligacion)
         for id_colegio, (desde, hasta) in rangos.items()
-        for obligacion in obligaciones_lectura(db, id_colegio, desde, hasta, filtros.cargados, hoy)
+        for obligacion in obligaciones_lectura(db, id_colegio, desde, hasta, cargados, hoy)
     ]
     esperadas = {o.tabla.id for _, o in obligaciones if o.tabla is not None}
     filas = _filas(db, list(rangos), min(r[0] for r in rangos.values()), max(r[1] for r in rangos.values()))
@@ -305,26 +311,41 @@ def _empieza_despues(filtros: FiltrosResueltos, ids_colegio: list[int], hoy: dat
 
 # ── GET /dashboard/libros ───────────────────────────────────────────────────────────
 
-def _sin_promedio(filtros: FiltrosResueltos, colegio: Colegio, acumulado: Acumulado) -> ColegioLibrosSinPromedio:
-    if colegio.id_colegio not in filtros.calendarios:
-        motivo = "sin_calendario"
-    else:
-        motivo = "sin_alumnos" if not acumulado.alumnos else "sin_informacion"
-    return ColegioLibrosSinPromedio(colegio=item_colegio(colegio), alumnos_incluidos=len(acumulado.alumnos), motivo=motivo)
+def motivo_sin_promedio(filtros: FiltrosResueltos, id_colegio: int, acumulado: Acumulado) -> str:
+    if id_colegio not in filtros.calendarios:
+        return "sin_calendario"
+    return "sin_alumnos" if not acumulado.alumnos else "sin_informacion"
+
+
+def acumulados_por_colegio(filtros: FiltrosResueltos, aportes: list[Aporte]) -> dict[int, Acumulado]:
+    """{colegio seleccionado: su acumulado del año} (vacío si no tiene aportes)."""
+    por_colegio: dict[int, list[Aporte]] = defaultdict(list)
+    for aporte in aportes:
+        por_colegio[aporte.id_colegio].append(aporte)
+    return {id_colegio: acumular(por_colegio[id_colegio]) for id_colegio in filtros.ids_colegio}
+
+
+def promedios_por_colegio(db: Session, filtros: FiltrosResueltos) -> dict[int, Acumulado]:
+    """El acumulado del año de cada colegio seleccionado (total, alumnos y promedio)."""
+    return acumulados_por_colegio(filtros, aportes_del_anio(db, filtros.calendarios, filtros.cargados, filtros.ids_colegio))
 
 
 def libros_del_anio(db: Session, filtros: FiltrosResueltos) -> LibrosDelAnio:
     hoy = hoy_lima()
-    aportes = aportes_del_anio(db, filtros, filtros.ids_colegio)
+    aportes = aportes_del_anio(db, filtros.calendarios, filtros.cargados, filtros.ids_colegio)
     meses = _meses_del_intervalo(filtros, filtros.ids_colegio)
     por_colegio: dict[int, list[Aporte]] = defaultdict(list)
     for aporte in aportes:
         por_colegio[aporte.id_colegio].append(aporte)
+    acumulados = acumulados_por_colegio(filtros, aportes)
     con_promedio, sin_promedio = [], []
     for colegio in filtros.colegios:
-        acumulado = acumular(por_colegio[colegio.id_colegio])
+        acumulado = acumulados[colegio.id_colegio]
         if acumulado.promedio is None:
-            sin_promedio.append(_sin_promedio(filtros, colegio, acumulado))
+            sin_promedio.append(ColegioLibrosSinPromedio(
+                colegio=item_colegio(colegio), alumnos_incluidos=len(acumulado.alumnos),
+                motivo=motivo_sin_promedio(filtros, colegio.id_colegio, acumulado),
+            ))
         else:
             con_promedio.append((colegio, acumulado))
     colegios = [
@@ -386,7 +407,7 @@ def libros_del_colegio(db: Session, usuario: Usuario, filtros: FiltrosResueltos,
     validar_colegio_seleccionado(db, usuario, filtros.ids_colegio, id_colegio)
     hoy = hoy_lima()
     colegio = next(c for c in filtros.colegios if c.id_colegio == id_colegio)
-    aportes = aportes_del_anio(db, filtros, [id_colegio])
+    aportes = aportes_del_anio(db, filtros.calendarios, filtros.cargados, [id_colegio])
     meses = _meses_del_intervalo(filtros, [id_colegio])
     por_grado: dict[int, list[Aporte]] = defaultdict(list)
     for aporte in aportes:

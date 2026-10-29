@@ -19,6 +19,7 @@ el porcentaje es null ("Sin información").
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, fields
 from datetime import date
+from fractions import Fraction
 from typing import Optional
 
 from sqlmodel import Session, col, select
@@ -100,6 +101,11 @@ class Conteo:
     @property
     def completadas(self) -> int:
         return self.presentes + self.tardanzas + self.ausentes
+
+    @property
+    def proporcion(self) -> Optional[Fraction]:
+        """(P + T) / (P + T + A) exacto, para ordenar; None sin estados."""
+        return Fraction(self.presentes + self.tardanzas, self.completadas) if self.completadas else None
 
     @property
     def porcentaje(self) -> Optional[float]:
@@ -211,8 +217,13 @@ def _mensual(filtros: FiltrosResueltos, clases: dict[int, ClasesDelConjunto]) ->
 
 # ── Bloque del periodo ──────────────────────────────────────────────────────────────
 
+def clases_por_colegio(db: Session, filtros: FiltrosResueltos) -> dict[int, ClasesDelConjunto]:
+    """Clases dictadas y sin registro del PA en cada colegio seleccionado."""
+    return clases_del_periodo(db, filtros, [FiltroGrupos(id_colegio) for id_colegio in filtros.ids_colegio])
+
+
 def asistencia_del_periodo(db: Session, filtros: FiltrosResueltos) -> AsistenciaDelPeriodo:
-    clases = clases_del_periodo(db, filtros, [FiltroGrupos(id_colegio) for id_colegio in filtros.ids_colegio])
+    clases = clases_por_colegio(db, filtros)
     total, por_colegio = Conteo(), []
     for colegio in filtros.colegios:
         conteo = clases[colegio.id_colegio].conteo()

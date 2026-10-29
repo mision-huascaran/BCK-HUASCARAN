@@ -6,14 +6,17 @@ from sqlmodel import Session
 
 from app.core.database import get_db
 from app.schemas.dashboard import (
-    AsistenciaDelPeriodo, AsistenciaPorClase, ComparacionResultados, DesgloseLibros, DistribucionSubprograma,
-    FiltrosDisponibles, LibrosDelAnio, LibrosDelColegio, ResultadosAprendizaje, TipoResultado, VistaComparacion,
+    AsistenciaDelPeriodo, AsistenciaPorClase, ComparacionColegios, ComparacionResultados, DesgloseLibros,
+    DistribucionSubprograma, EvolucionAnual, FiltrosDisponibles, IndicadorColegios, LibrosDelAnio, LibrosDelColegio,
+    ResultadosAprendizaje, TipoResultado, VistaComparacion,
 )
 from app.services.dashboard.aprendizaje import distribucion_subprograma, resultados_aprendizaje
 from app.services.dashboard.asistencia import asistencia_del_periodo, asistencia_por_clase
 from app.services.dashboard.carga_inicial import filtros_disponibles
+from app.services.dashboard.cobertura import evolucion_anual
 from app.services.dashboard.comparacion import ConsultaComparacion, comparacion_resultados
-from app.services.dashboard.filtros import FiltrosAnuales, FiltrosDelPeriodo
+from app.services.dashboard.comparacion_colegios import comparacion_colegios, requiere_periodo
+from app.services.dashboard.filtros import FiltrosAnuales, FiltrosDelPeriodo, ParametrosDashboard, resolver_filtros
 from app.services.dashboard.libros import desglose_libros, libros_del_anio, libros_del_colegio
 from app.services.dashboard.roles import SoloSupervisor, SupervisorODirectivo
 
@@ -155,3 +158,34 @@ def libros_desglose(
     no perteneció en el año a ningún colegio seleccionado, 403 `colegio_fuera_de_alcance` si
     solo perteneció a colegios fuera del alcance."""
     return desglose_libros(db, usuario, filtros, id_alumno, anio, mes)
+
+
+@router.get("/evolucion-anual", response_model=EvolucionAnual)
+def evolucion(db: Db, _usuario: SupervisorODirectivo, filtros: FiltrosAnuales):
+    """CU033 (paso 9) y CU035 (paso 8): por año escolar con información, hasta el
+    seleccionado, los alumnos únicos y los colegios atendidos (pertenencia histórica, sin
+    sumar los PA) y los libros leídos (CU034). Los años sin alumnos atendidos no aparecen;
+    `parcial` marca el año en curso. Con un solo año, `mensaje`. Sin variaciones
+    interanuales.
+
+    Resumen anual de CU035 (paso 5): el año seleccionado de esta respuesta más el
+    `resumen` de `/dashboard/libros` (total y promedio de libros por alumno).
+
+    Supervisor y Directivo. Errores: los de los filtros comunes."""
+    return evolucion_anual(db, filtros)
+
+
+@router.get("/comparacion-colegios", response_model=ComparacionColegios)
+def comparacion_entre_colegios(
+    db: Db, usuario: SupervisorODirectivo, parametros: ParametrosDashboard, indicador: IndicadorColegios
+):
+    """CU035 (paso 9): compara los colegios en un indicador, con su valor (el mismo de su
+    bloque), su población y sus advertencias, de mayor a menor por el valor exacto
+    (empates 1, 1, 3 en orden alfabético). Los niveles globales y la asistencia son del PA
+    (`id_periodo_academico` obligatorio); el promedio de libros, del año (no admite PA).
+    Con un solo colegio, o con uno solo con información, no hay posiciones y `mensaje` lo
+    explica. Los colegios sin información van en `sin_informacion` con su motivo.
+
+    Supervisor y Directivo. Errores: los de los filtros comunes."""
+    filtros = resolver_filtros(db, usuario, parametros, requiere_periodo(indicador))
+    return comparacion_colegios(db, filtros, indicador)

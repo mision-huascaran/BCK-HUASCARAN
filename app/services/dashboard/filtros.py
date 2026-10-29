@@ -220,8 +220,9 @@ class FiltrosResueltos:
         pas = [c.pa_de(self.periodo.id_periodo_academico) for c in self.calendarios.values()]
         return IntervaloFechas(desde=min(p.fecha_inicio for p in pas), hasta=max(p.fecha_fin for p in pas))
 
-    def contexto(self) -> ContextoDashboard:
-        intervalo = self.intervalo()
+    def contexto(self, intervalo: Optional[IntervaloFechas] = None) -> ContextoDashboard:
+        """El contexto de la respuesta; `intervalo` reemplaza el del bloque (p. ej. varios años)."""
+        intervalo = intervalo or self.intervalo()
         return ContextoDashboard(
             anio_escolar=ItemCatalogo(id=self.anio.id_anio_escolar, nombre=self.anio.nombre),
             periodo=periodo_visible(self.periodo) if self.periodo is not None else None,
@@ -233,40 +234,53 @@ class FiltrosResueltos:
         )
 
 
-def resolver_filtros(
-    db: Session,
-    usuario: Usuario,
+@dataclass(frozen=True)
+class ParametrosFiltros:
+    """Los filtros comunes tal como llegan en el query, todavía sin validar."""
+
+    id_anio_escolar: int
+    id_periodo_academico: Optional[int]
+    todos_los_colegios: bool
+    id_colegios: Optional[list[int]]
+
+
+def _parametros(
     id_anio_escolar: int,
-    id_periodo_academico: Optional[int],
-    todos_los_colegios: bool,
-    id_colegios: Optional[list[int]],
-    requiere_periodo: bool,
+    id_periodo_academico: Annotated[
+        Optional[int], Query(description="PA del año: obligatorio en los bloques del periodo, prohibido en los anuales.")
+    ] = None,
+    todos_los_colegios: Annotated[bool, Query(description="Todo el alcance. Excluye id_colegios.")] = False,
+    id_colegios: Annotated[
+        Optional[list[int]], Query(description="Colegios elegidos (repetido). Excluye todos_los_colegios.")
+    ] = None,
+) -> ParametrosFiltros:
+    return ParametrosFiltros(id_anio_escolar, id_periodo_academico, todos_los_colegios, id_colegios)
+
+
+ParametrosDashboard = Annotated[ParametrosFiltros, Depends(_parametros)]
+
+
+def resolver_filtros(
+    db: Session, usuario: Usuario, parametros: ParametrosFiltros, requiere_periodo: bool
 ) -> FiltrosResueltos:
-    anio = _anio(db, id_anio_escolar)
-    periodo = _periodo(db, anio, id_periodo_academico, requiere_periodo)
-    colegios, alcance = _colegios(db, usuario, todos_los_colegios, id_colegios)
+    """Valida los filtros comunes. `requiere_periodo`: el bloque es del periodo (PA
+    obligatorio) o anual (PA prohibido)."""
+    anio = _anio(db, parametros.id_anio_escolar)
+    periodo = _periodo(db, anio, parametros.id_periodo_academico, requiere_periodo)
+    colegios, alcance = _colegios(db, usuario, parametros.todos_los_colegios, parametros.id_colegios)
     cargados = cargar_calendarios(db, anio.id_anio_escolar, ids_colegio=[c.id_colegio for c in colegios])
     calendarios = _calendarios(cargados, anio, periodo, colegios)
     return FiltrosResueltos(anio, periodo, colegios, alcance, calendarios, cargados)
 
 
-def _dependencia(requiere_periodo: bool, descripcion_periodo: str):
+def _dependencia(requiere_periodo: bool):
     def filtros(
-        db: Annotated[Session, Depends(get_db)],
-        usuario: SupervisorODirectivo,
-        id_anio_escolar: int,
-        id_periodo_academico: Annotated[Optional[int], Query(description=descripcion_periodo)] = None,
-        todos_los_colegios: Annotated[bool, Query(description="Todo el alcance. Excluye id_colegios.")] = False,
-        id_colegios: Annotated[
-            Optional[list[int]], Query(description="Colegios elegidos (repetido). Excluye todos_los_colegios.")
-        ] = None,
+        db: Annotated[Session, Depends(get_db)], usuario: SupervisorODirectivo, parametros: ParametrosDashboard
     ) -> FiltrosResueltos:
-        return resolver_filtros(
-            db, usuario, id_anio_escolar, id_periodo_academico, todos_los_colegios, id_colegios, requiere_periodo
-        )
+        return resolver_filtros(db, usuario, parametros, requiere_periodo)
 
     return filtros
 
 
-FiltrosDelPeriodo = Annotated[FiltrosResueltos, Depends(_dependencia(True, "Obligatorio: PA del año elegido."))]
-FiltrosAnuales = Annotated[FiltrosResueltos, Depends(_dependencia(False, "Prohibido: este bloque es anual."))]
+FiltrosDelPeriodo = Annotated[FiltrosResueltos, Depends(_dependencia(True))]
+FiltrosAnuales = Annotated[FiltrosResueltos, Depends(_dependencia(False))]

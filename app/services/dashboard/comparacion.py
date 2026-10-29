@@ -199,29 +199,63 @@ def _escala(evaluaciones: Evaluaciones, id_programa: int, tipo: str) -> list[Niv
     ]
 
 
-def comparacion_resultados(db: Session, filtros: FiltrosResueltos, consulta: ConsultaComparacion) -> ComparacionResultados:
-    programa = _programa(db, consulta.id_programa)
-    grados = {g.id_grado: g for g in _grados(db, consulta.todos_los_grados, consulta.id_grados)}
+@dataclass(frozen=True)
+class Medicion:
+    """Los grupos de una comparación ya medidos, con lo necesario para la respuesta."""
+
+    corte: CorteDelPeriodo
+    medidos: list[_Medido]
+    evaluaciones: Evaluaciones
+    no_aplica: list[_Grupo]
+
+    @property
+    def con_evaluaciones(self) -> list[_Medido]:
+        return [m for m in self.medidos if m.evaluados > 0]
+
+    @property
+    def sin_evaluaciones(self) -> list[_Medido]:
+        return sorted((m for m in self.medidos if m.evaluados == 0), key=lambda m: m.grupo.orden_alfabetico())
+
+
+def medir(
+    db: Session, filtros: FiltrosResueltos, programa: Programa, grados: dict[int, Grado], vista: str, resultado: str
+) -> Medicion:
     corte = corte_del_periodo(db, filtros)
-    grupos = _grupos(corte, programa.id_programa, grados, consulta.vista)
+    grupos = _grupos(corte, programa.id_programa, grados, vista)
     evaluaciones = cargar_evaluaciones(
         db, [a for g in grupos for a in g.alumnos], filtros.periodo.id_periodo_academico
     )
-    medidos = [_medir(g, evaluaciones, programa.id_programa, consulta.resultado) for g in grupos]
-    con_evaluaciones = [m for m in medidos if m.evaluados > 0]
+    return Medicion(
+        corte=corte,
+        medidos=[_medir(g, evaluaciones, programa.id_programa, resultado) for g in grupos],
+        evaluaciones=evaluaciones,
+        no_aplica=_no_aplica(db, corte, programa.id_programa, grados, vista),
+    )
+
+
+def indices_globales_por_colegio(db: Session, filtros: FiltrosResueltos, programa: Programa) -> Medicion:
+    """El nivel global del subprograma en "Resumen por colegio" con todos los grados: lo
+    que usa la comparación entre colegios de CU035."""
+    grados = {g.id_grado: g for g in _grados(db, True, None)}
+    return medir(db, filtros, programa, grados, RESUMEN_COLEGIO, GLOBAL)
+
+
+def comparacion_resultados(db: Session, filtros: FiltrosResueltos, consulta: ConsultaComparacion) -> ComparacionResultados:
+    programa = _programa(db, consulta.id_programa)
+    grados = {g.id_grado: g for g in _grados(db, consulta.todos_los_grados, consulta.id_grados)}
+    medicion = medir(db, filtros, programa, grados, consulta.vista, consulta.resultado)
     if consulta.resultado == GLOBAL:
-        ranking = _ranking_global(con_evaluaciones)
+        ranking = _ranking_global(medicion.con_evaluaciones)
     else:
-        ranking = [m.comparado() for m in sorted(con_evaluaciones, key=lambda m: m.grupo.orden_alfabetico())]
-    sin_evaluaciones = sorted((m for m in medidos if m.evaluados == 0), key=lambda m: m.grupo.orden_alfabetico())
+        ranking = [m.comparado() for m in sorted(medicion.con_evaluaciones, key=lambda m: m.grupo.orden_alfabetico())]
     return ComparacionResultados(
-        **corte.encabezado(filtros),
+        **medicion.corte.encabezado(filtros),
         subprograma=item_programa(programa),
         grados=[ItemCatalogo(id=g.id_grado, nombre=g.nombre) for g in grados.values()],
         vista=consulta.vista,
         resultado=consulta.resultado,
-        escala=_escala(evaluaciones, programa.id_programa, consulta.resultado),
+        escala=_escala(medicion.evaluaciones, programa.id_programa, consulta.resultado),
         ranking=ranking,
-        sin_evaluaciones=[m.sin_evaluaciones() for m in sin_evaluaciones],
-        no_aplica=[GrupoNoAplica(**g.items()) for g in _no_aplica(db, corte, programa.id_programa, grados, consulta.vista)],
+        sin_evaluaciones=[m.sin_evaluaciones() for m in medicion.sin_evaluaciones],
+        no_aplica=[GrupoNoAplica(**g.items()) for g in medicion.no_aplica],
     )
