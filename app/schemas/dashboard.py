@@ -1,13 +1,9 @@
-"""Contratos del Dashboard (CU033, CU034 y CU035).
-
-La primera parte es la base común de la serie D1–D7 (filtros, contexto y selección
-inicial). La segunda es el contrato provisional de Romina, que se reemplaza bloque a
-bloque en las tandas D2 a D5.
-"""
+"""Contratos del Dashboard (CU033, CU034 y CU035): la base común (filtros, contexto y
+selección inicial) y la respuesta de cada bloque."""
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.schemas.comun import ItemCatalogo
 
@@ -307,23 +303,125 @@ class ComparacionResultados(BaseModel):
     no_aplica: list[GrupoNoAplica]
 
 
-# ── Contrato provisional (se reemplaza en las tandas siguientes) ─────────────────
+# ── Consolidado de libros leídos (D5, CU034) ────────────────────────────────────────
 
-class FiltrosDashboard(BaseModel):
-    id_colegio: Optional[int] = None  # Compatibilidad con clientes anteriores
-    id_colegios: Optional[list[int]] = None  # Selección múltiple (CU033/CU035)
-    id_anio_escolar: Optional[int] = None
-    id_grado: Optional[int] = None
-    id_seccion: Optional[int] = None
-    id_programa: Optional[int] = None
-    id_periodo_academico: Optional[int] = None
+EstadoLibros = Literal["completo", "incompleto", "sin_informacion", "futuro"]
+MotivoSinPromedio = Literal["sin_alumnos", "sin_informacion", "sin_calendario"]
 
 
-class LecturaDashboard(BaseModel):
-    total_libros: int
-    libros_lsn: int
-    libros_lsl: int
-    # Solo alumnos con alguna lectura contabilizable; no equivale a la matrícula del año.
-    alumnos_con_lecturas: int = 0
-    promedio_por_alumno_con_lecturas: Optional[float] = None
-    por_mes: dict[int, int] = Field(default_factory=dict)
+class MesLibros(BaseModel):
+    """Libros de un mes (por la fecha de la clase de referencia). `total` null en
+    `sin_informacion` y `futuro`; 0 solo si está confirmado. `en_curso`: el mes contiene
+    hoy y se cuenta hasta hoy."""
+
+    anio: int
+    mes: int
+    estado: EstadoLibros
+    total: Optional[int]
+    en_curso: bool = False
+
+
+class ResumenLibros(BaseModel):
+    total: Optional[int]
+    estado: EstadoLibros
+    provisional: bool
+    alumnos_incluidos: int
+    # Total / alumnos incluidos, con 2 decimales; null sin alumnos o sin información.
+    promedio: Optional[float]
+    # "Total registrado hasta el momento" cuando el total está incompleto.
+    etiqueta: Optional[str] = None
+
+
+class ColegioLibros(BaseModel):
+    """Un colegio con promedio: posición por promedio exacto (empates 1, 1, 3, en orden
+    alfabético); `provisional` si está incompleto."""
+
+    posicion: int
+    provisional: bool
+    colegio: ItemCatalogo
+    total: Optional[int]
+    estado: EstadoLibros
+    alumnos_incluidos: int
+    promedio: float
+    meses: list[MesLibros]
+
+
+class ColegioLibrosSinPromedio(BaseModel):
+    colegio: ItemCatalogo
+    alumnos_incluidos: int
+    motivo: MotivoSinPromedio
+
+
+class LibrosDelAnio(BaseModel):
+    """CU034 (y CU035): libros leídos del año escolar en los colegios seleccionados."""
+
+    contexto: ContextoDashboard
+    resumen: ResumenLibros
+    meses: list[MesLibros]
+    colegios: list[ColegioLibros]
+    colegios_sin_informacion: list[ColegioLibrosSinPromedio]
+
+
+class AlumnoLibros(BaseModel):
+    alumno: ItemCatalogo
+    total: Optional[int]
+    estado: EstadoLibros
+    meses: list[MesLibros]
+
+
+class GradoLibros(BaseModel):
+    """Un grado del colegio (por la pertenencia en la fecha de cada clase de referencia).
+    Sin promedio va en `grados_sin_informacion`, con `posicion` y `promedio` null."""
+
+    posicion: Optional[int]
+    provisional: bool
+    grado: ItemCatalogo
+    total: Optional[int]
+    estado: EstadoLibros
+    alumnos_incluidos: int
+    promedio: Optional[float]
+    alumnos: list[AlumnoLibros]
+
+
+class LibrosDelColegio(BaseModel):
+    """CU034 (paso 6): detalle de un colegio por grado y alumno."""
+
+    contexto: ContextoDashboard
+    colegio: ItemCatalogo
+    resumen: ResumenLibros
+    meses: list[MesLibros]
+    grados: list[GradoLibros]
+    grados_sin_informacion: list[GradoLibros]
+
+
+class ClaseReferencia(BaseModel):
+    id_clase: int
+    fecha: date
+
+
+class RegistroLibros(BaseModel):
+    """Una fila de Seguimiento de Lectura del alumno. `lsn`: 1 si tiene el libro para subir
+    de nivel, si no 0; `lsl`: la cantidad de selección libre (null si no se registró);
+    `total` null si la fila no tiene ninguna cantidad."""
+
+    id_lectura_semanal: int
+    clase_referencia: ClaseReferencia
+    subprograma: ItemCatalogo
+    colegio: ItemCatalogo
+    grado: ItemCatalogo
+    seccion: ItemCatalogo
+    estado_tabla: str
+    lsn: int
+    lsl: Optional[int]
+    total: Optional[int]
+
+
+class DesgloseLibros(BaseModel):
+    """CU034 (paso 8): los registros que componen la cantidad de un alumno en un mes."""
+
+    contexto: ContextoDashboard
+    alumno: ItemCatalogo
+    anio: int
+    mes: int
+    total: Optional[int]
+    registros: list[RegistroLibros]

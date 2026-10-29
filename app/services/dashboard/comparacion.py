@@ -49,7 +49,7 @@ from app.services.dashboard.corte import (
     programas_por_colegio,
 )
 from app.services.dashboard.filtros import FiltrosResueltos, SeleccionMultiple, item_colegio
-from app.services.dashboard.numeros import dos_decimales, porcentaje
+from app.services.dashboard.numeros import dos_decimales, porcentaje, ranking
 
 RESUMEN_COLEGIO, DETALLE_GRADO = "resumen_colegio", "detalle_grado"
 VALOR_INDICE = {nivel: valor for valor, nivel in enumerate(NIVELES_DESCRIPTIVOS, start=1)}
@@ -186,13 +186,10 @@ def _medir(grupo: _Grupo, evaluaciones: Evaluaciones, id_programa: int, tipo: st
 
 def _ranking_global(medidos: list[_Medido]) -> list[GrupoComparado]:
     """De mayor a menor índice exacto; empates exactos: misma posición (1, 1, 3)."""
-    con_indice = sorted(((m.indice(), m) for m in medidos), key=lambda par: (-par[0], par[1].grupo.orden_alfabetico()))
-    ranking, posicion, anterior = [], 0, None
-    for lugar, (indice, medido) in enumerate(con_indice, start=1):
-        if indice != anterior:
-            posicion, anterior = lugar, indice
-        ranking.append(medido.comparado(posicion, indice))
-    return ranking
+    return [
+        medido.comparado(posicion, medido.indice())
+        for posicion, medido in ranking(medidos, _Medido.indice, lambda m: m.grupo.orden_alfabetico())
+    ]
 
 
 def _escala(evaluaciones: Evaluaciones, id_programa: int, tipo: str) -> list[NivelEscala]:

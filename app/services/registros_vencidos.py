@@ -210,13 +210,36 @@ def asistencias(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
 
 # ── Seguimiento de Lectura ──────────────────────────────────────────────────────────
 
-def _semanas_vencidas(db: Session, contexto: ContextoVencidos, id_colegio: int) -> dict[tuple, date]:
+@dataclass(frozen=True)
+class ObligacionLectura:
+    """Una tabla de Lectura esperada: grupo, subprograma y semana (su lunes), con la fecha
+    de la clase que la genera, su tabla si existe y si está pendiente (sin tabla, o tabla
+    `normal` con alguna fila "Pendiente")."""
+
+    id_grado: int
+    id_seccion: int
+    id_programa: int
+    lunes: date
+    fecha_clase: date
+    tabla: Optional[LecturaSemanal]
+    pendiente: bool
+
+
+def _semanas_vencidas(
+    db: Session, id_colegio: int, desde: date, hasta: date, calendarios: Calendarios, hoy: date,
+    id_periodo: Optional[int],
+) -> dict[tuple, date]:
     """{(grado, sección, lunes): fecha de la clase} de las semanas con clase habitual o
-    reprogramada del PA actual cuyo sábado ya llegó."""
+    reprogramada con fecha en [desde, min(hasta, hoy)] cuyo sábado ya llegó."""
+    fin = min(hasta, hoy)
+    if fin < desde:
+        return {}
     semanas = {}
-    for clase in _clases_del_pa(db, contexto, id_colegio, contexto.hoy):
+    for clase in clases_programadas(db, FiltroGrupos(id_colegio), desde, fin, calendarios):
         lunes = clase.fecha - timedelta(days=clase.fecha.weekday())
-        if clase.tipo == TIPO_HABITUAL and lunes + timedelta(days=DIAS_HASTA_EL_SABADO) <= contexto.hoy:
+        vencida = lunes + timedelta(days=DIAS_HASTA_EL_SABADO) <= hoy
+        del_periodo = id_periodo is None or clase.id_periodo_academico == id_periodo
+        if clase.tipo == TIPO_HABITUAL and vencida and del_periodo:
             semanas.setdefault((clase.id_grado, clase.id_seccion, lunes), clase.fecha)
     return semanas
 
@@ -233,24 +256,52 @@ def _tablas_del_colegio(db: Session, id_colegio: int, lunes: set[date]) -> dict[
     return {(t.id_grado, t.id_seccion, t.id_programa, inicio): t for t, inicio in filas}
 
 
-def _lectura_del_colegio(db: Session, contexto: ContextoVencidos, id_colegio: int, estado: EstadoRegistros) -> None:
-    semanas = _semanas_vencidas(db, contexto, id_colegio)
+def obligaciones_lectura(
+    db: Session,
+    id_colegio: int,
+    desde: date,
+    hasta: date,
+    calendarios: Calendarios,
+    hoy: date,
+    id_periodo: Optional[int] = None,
+) -> list[ObligacionLectura]:
+    """Tablas de Lectura que ya debían existir en el colegio (CU011): por grupo, subprograma
+    y semana con clase habitual o reprogramada con fecha en [desde, min(hasta, hoy)] (de ese
+    PA si se pasa `id_periodo`), cuyo sábado ya llegó, para cada subprograma con alumnos del
+    grupo en la fecha de la clase. "No realizada" cumple; una semana sin clase no obliga.
+    En orden de grado, sección, semana y subprograma. Consultas fijas por colegio."""
+    semanas = _semanas_vencidas(db, id_colegio, desde, hasta, calendarios, hoy, id_periodo)
     if not semanas:
-        return
-    pa = contexto.pa_actual[id_colegio]
-    intervalos = _intervalos_del_colegio(db, id_colegio, pa.fecha_inicio, pa.fecha_fin)
+        return []
+    intervalos = _intervalos_del_colegio(db, id_colegio, desde, hasta)
     tablas = _tablas_del_colegio(db, id_colegio, {lunes for _, _, lunes in semanas})
     pendientes = tablas_con_pendientes(db, [t.id for t in tablas.values() if t.estado == "normal"])
+    obligaciones = []
     for (grado, seccion, lunes), fecha in sorted(semanas.items()):
         programas = {
             i.id_programa for i in intervalos if (i.id_grado, i.id_seccion) == (grado, seccion) and _contiene(i, fecha)
         }
         for id_programa in sorted(programas):
             tabla = tablas.get((grado, seccion, id_programa, lunes))
-            if tabla is not None and tabla.id not in pendientes:
-                continue
-            obligacion = (LECTURA, id_colegio, grado, seccion, f"{lunes.isoformat()}:{id_programa}")
-            estado.agregar(tabla is None, obligacion, contexto.docentes[(id_colegio, grado)])
+            pendiente = tabla is None or tabla.id in pendientes
+            obligaciones.append(ObligacionLectura(grado, seccion, id_programa, lunes, fecha, tabla, pendiente))
+    return obligaciones
+
+
+def _lectura_del_colegio(db: Session, contexto: ContextoVencidos, id_colegio: int, estado: EstadoRegistros) -> None:
+    pa = contexto.pa_actual[id_colegio]
+    for obligacion in obligaciones_lectura(
+        db, id_colegio, pa.fecha_inicio, pa.fecha_fin, contexto.calendarios, contexto.hoy, pa.id_periodo_academico
+    ):
+        docentes = contexto.docentes.get((id_colegio, obligacion.id_grado))
+        if not obligacion.pendiente or docentes is None:
+            continue
+        referencia = f"{obligacion.lunes.isoformat()}:{obligacion.id_programa}"
+        estado.agregar(
+            obligacion.tabla is None,
+            (LECTURA, id_colegio, obligacion.id_grado, obligacion.id_seccion, referencia),
+            docentes,
+        )
 
 
 def lectura(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:

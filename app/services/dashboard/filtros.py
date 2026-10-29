@@ -75,6 +75,12 @@ def colegios_del_alcance(db: Session, usuario: Usuario) -> list[Colegio]:
     )
 
 
+def fuera_de_alcance() -> ErrorNegocio:
+    return ErrorNegocio(
+        status.HTTP_403_FORBIDDEN, "Solo puedes consultar los colegios de tu alcance.", motivo=MOTIVO_FUERA_DE_ALCANCE
+    )
+
+
 # ── Validación ──────────────────────────────────────────────────────────────────────
 
 def _anio(db: Session, id_anio_escolar: int) -> AnioEscolar:
@@ -144,11 +150,7 @@ def _colegios(
         raise error_de_campo(CAMPO_COLEGIOS, "Uno de los colegios seleccionados no existe.")
     elegidos = [c for c in alcance if c.id_colegio in existentes]
     if len(elegidos) != len(pedidos):
-        raise ErrorNegocio(
-            status.HTTP_403_FORBIDDEN,
-            "Solo puedes consultar los colegios de tu alcance.",
-            motivo=MOTIVO_FUERA_DE_ALCANCE,
-        )
+        raise fuera_de_alcance()
     return elegidos, "uno" if len(elegidos) == 1 else "varios"
 
 
@@ -171,6 +173,21 @@ def _calendarios(
                 extra={"colegios_sin_calendario": [item_colegio(c).model_dump() for c in faltan]},
             )
     return {id_colegio: c for id_colegio, c in aplicables.items() if c is not None}
+
+
+def validar_colegio_seleccionado(
+    db: Session, usuario: Usuario, ids_seleccionados: list[int], id_colegio: int, campo: str = "id_colegio"
+) -> None:
+    """El colegio de un detalle debe estar entre los seleccionados: 422 si no existe o no
+    está en la selección; 403 `colegio_fuera_de_alcance` si existe pero está fuera del
+    alcance (como en los filtros)."""
+    if id_colegio in ids_seleccionados:
+        return
+    if db.get(Colegio, id_colegio) is None:
+        raise error_de_campo(campo, "El colegio seleccionado no existe.")
+    if id_colegio not in {c.id_colegio for c in colegios_del_alcance(db, usuario)}:
+        raise fuera_de_alcance()
+    raise error_de_campo(campo, "Elige un colegio de los seleccionados.")
 
 
 # ── Filtros resueltos ───────────────────────────────────────────────────────────────

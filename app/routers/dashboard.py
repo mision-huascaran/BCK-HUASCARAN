@@ -1,7 +1,4 @@
-"""Dashboard del Supervisor y del Directivo (CU033, CU034 y CU035).
-
-`/lectura` es el endpoint provisional de Romina; se reemplaza en las tandas siguientes.
-"""
+"""Dashboard del Supervisor y del Directivo (CU033, CU034 y CU035)."""
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -9,20 +6,19 @@ from sqlmodel import Session
 
 from app.core.database import get_db
 from app.schemas.dashboard import (
-    AsistenciaDelPeriodo, AsistenciaPorClase, ComparacionResultados, DistribucionSubprograma, FiltrosDashboard,
-    FiltrosDisponibles, LecturaDashboard, ResultadosAprendizaje, TipoResultado, VistaComparacion,
+    AsistenciaDelPeriodo, AsistenciaPorClase, ComparacionResultados, DesgloseLibros, DistribucionSubprograma,
+    FiltrosDisponibles, LibrosDelAnio, LibrosDelColegio, ResultadosAprendizaje, TipoResultado, VistaComparacion,
 )
-from app.services import dashboard_service
 from app.services.dashboard.aprendizaje import distribucion_subprograma, resultados_aprendizaje
 from app.services.dashboard.asistencia import asistencia_del_periodo, asistencia_por_clase
 from app.services.dashboard.carga_inicial import filtros_disponibles
 from app.services.dashboard.comparacion import ConsultaComparacion, comparacion_resultados
-from app.services.dashboard.filtros import FiltrosDelPeriodo
+from app.services.dashboard.filtros import FiltrosAnuales, FiltrosDelPeriodo
+from app.services.dashboard.libros import desglose_libros, libros_del_anio, libros_del_colegio
 from app.services.dashboard.roles import SoloSupervisor, SupervisorODirectivo
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 Db = Annotated[Session, Depends(get_db)]
-Acceso = SupervisorODirectivo
 
 
 @router.get("/filtros", response_model=FiltrosDisponibles)
@@ -119,20 +115,43 @@ def asistencia_clases(
     return asistencia_por_clase(db, usuario, filtros, id_colegio, id_grado, id_seccion)
 
 
-def _filtros(id_colegio, id_grado, id_seccion, id_programa, id_periodo_academico,
-             id_anio_escolar, id_colegios):
-    return FiltrosDashboard(
-        id_colegio=id_colegio, id_colegios=id_colegios, id_anio_escolar=id_anio_escolar,
-        id_grado=id_grado, id_seccion=id_seccion, id_programa=id_programa,
-        id_periodo_academico=id_periodo_academico,
-    )
+@router.get("/libros", response_model=LibrosDelAnio)
+def libros(db: Db, _usuario: SupervisorODirectivo, filtros: FiltrosAnuales):
+    """CU034 y CU035: libros leídos del año escolar (LSN + LSL), atribuidos al mes de la
+    clase de referencia, en el año de cada colegio hasta hoy. Total y meses con su estado
+    (`completo`, `incompleto`, `sin_informacion`, `futuro`; total null sin información) y
+    colegios por promedio de libros por alumno (alumnos de las listas históricas), con
+    empates 1, 1, 3; los que no tienen promedio van aparte, sin posición. La completitud
+    sale de los registros esperados de Seguimiento de Lectura (la regla de CU011).
+
+    Supervisor y Directivo (sin nombres de alumnos). Errores: los de los filtros comunes."""
+    return libros_del_anio(db, filtros)
 
 
-@router.get("/lectura", response_model=LecturaDashboard)
-def lectura(db: Db, _usuario: Acceso, id_colegio: Optional[int] = None,
-            id_grado: Optional[int] = None, id_seccion: Optional[int] = None,
-            id_programa: Optional[int] = None, id_periodo_academico: Optional[int] = None,
-            id_anio_escolar: Optional[int] = None,
-            id_colegios: Optional[list[int]] = Query(default=None)):
-    return dashboard_service.libros(db, _filtros(id_colegio, id_grado, id_seccion, id_programa,
-                                                 id_periodo_academico, id_anio_escolar, id_colegios))
+@router.get("/libros/colegios/{id_colegio}", response_model=LibrosDelColegio)
+def libros_colegio(db: Db, usuario: SoloSupervisor, filtros: FiltrosAnuales, id_colegio: int):
+    """CU034 (paso 6): el colegio por grado (de la pertenencia en la fecha de cada clase de
+    referencia), ordenados por promedio, y en cada grado sus alumnos con sus meses.
+
+    Solo Supervisor. Errores: los de los filtros comunes; 422 en `id_colegio` si no existe
+    o no está en la selección, 403 `colegio_fuera_de_alcance` si está fuera del alcance."""
+    return libros_del_colegio(db, usuario, filtros, id_colegio)
+
+
+@router.get("/libros/desglose", response_model=DesgloseLibros)
+def libros_desglose(
+    db: Db,
+    usuario: SoloSupervisor,
+    filtros: FiltrosAnuales,
+    id_alumno: int,
+    anio: int,
+    mes: Annotated[int, Query(ge=1, le=12)],
+):
+    """CU034 (paso 8): los registros de Seguimiento de Lectura que componen la cantidad de
+    un alumno en un mes (por la fecha de la clase de referencia), en los colegios
+    seleccionados, con su clase, subprograma, grupo y cantidades.
+
+    Solo Supervisor. Errores: los de los filtros comunes; 422 en `id_alumno` si no existe o
+    no perteneció en el año a ningún colegio seleccionado, 403 `colegio_fuera_de_alcance` si
+    solo perteneció a colegios fuera del alcance."""
+    return desglose_libros(db, usuario, filtros, id_alumno, anio, mes)

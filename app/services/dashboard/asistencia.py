@@ -21,14 +21,13 @@ from dataclasses import dataclass, field, fields
 from datetime import date
 from typing import Optional
 
-from fastapi import status
 from sqlmodel import Session, col, select
 
-from app.core.errores import ErrorNegocio, error_de_campo
+from app.core.errores import error_de_campo
 from app.core.texto import comparable
 from app.core.tiempo import hoy_lima
 from app.models.evaluacion import ESTADOS_ASISTENCIA, TIPO_HABITUAL, Asistencia, ClaseAlumno
-from app.models.organizacion import Colegio, ColegioGrado, Grado, Seccion, Usuario
+from app.models.organizacion import ColegioGrado, Grado, Seccion, Usuario
 from app.schemas.comun import ItemCatalogo
 from app.schemas.dashboard import (
     AsistenciaColegio,
@@ -42,8 +41,8 @@ from app.schemas.dashboard import (
     ResumenAsistencia,
 )
 from app.services.dashboard.corte import colegios_sin_informacion, fechas_de_corte
-from app.services.dashboard.filtros import MOTIVO_FUERA_DE_ALCANCE, FiltrosResueltos, colegios_del_alcance, item_colegio
-from app.services.dashboard.numeros import porcentaje
+from app.services.dashboard.filtros import FiltrosResueltos, item_colegio, validar_colegio_seleccionado
+from app.services.dashboard.numeros import meses_entre, porcentaje
 from app.services.programacion import ClaseProgramada, FiltroGrupos, clases_programadas
 
 MENSAJE_SIN_INFORMACION = "Sin información"
@@ -187,14 +186,6 @@ def clases_del_periodo(
 
 # ── Serie mensual ───────────────────────────────────────────────────────────────────
 
-def _meses(desde: date, hasta: date) -> list[tuple[int, int]]:
-    meses, anio, mes = [], desde.year, desde.month
-    while (anio, mes) <= (hasta.year, hasta.month):
-        meses.append((anio, mes))
-        anio, mes = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
-    return meses
-
-
 def _mes(anio: int, mes: int, conteo: Conteo, hoy: date) -> MesAsistencia:
     if date(anio, mes, 1) > hoy:
         return MesAsistencia(anio=anio, mes=mes, estado="futuro", porcentaje=None)
@@ -215,7 +206,7 @@ def _mensual(filtros: FiltrosResueltos, clases: dict[int, ClasesDelConjunto]) ->
         for clase, estados in conjunto.dictadas:
             por_mes[(clase.fecha.year, clase.fecha.month)].dictada(estados)
     intervalo, hoy = filtros.intervalo(), hoy_lima()
-    return [_mes(anio, mes, por_mes.get((anio, mes), Conteo()), hoy) for anio, mes in _meses(intervalo.desde, intervalo.hasta)]
+    return [_mes(anio, mes, por_mes.get((anio, mes), Conteo()), hoy) for anio, mes in meses_entre(intervalo.desde, intervalo.hasta)]
 
 
 # ── Bloque del periodo ──────────────────────────────────────────────────────────────
@@ -244,20 +235,6 @@ def asistencia_del_periodo(db: Session, filtros: FiltrosResueltos) -> Asistencia
 
 
 # ── Detalle por clase (solo Supervisor) ─────────────────────────────────────────────
-
-def _validar_colegio(db: Session, usuario: Usuario, filtros: FiltrosResueltos, id_colegio: int) -> None:
-    """El colegio del detalle debe estar entre los seleccionados: 422 si no existe o no
-    está en la selección, 403 si existe pero está fuera del alcance (como en los filtros)."""
-    if id_colegio in filtros.ids_colegio:
-        return
-    if db.get(Colegio, id_colegio) is None:
-        raise error_de_campo("id_colegio", "El colegio seleccionado no existe.")
-    if id_colegio not in {c.id_colegio for c in colegios_del_alcance(db, usuario)}:
-        raise ErrorNegocio(
-            status.HTTP_403_FORBIDDEN, "Solo puedes consultar los colegios de tu alcance.", motivo=MOTIVO_FUERA_DE_ALCANCE
-        )
-    raise error_de_campo("id_colegio", "Elige un colegio de los seleccionados.")
-
 
 def _validar_grupo(db: Session, id_colegio: int, id_grado: Optional[int], id_seccion: Optional[int]) -> None:
     if id_grado is not None and db.get(ColegioGrado, (id_colegio, id_grado)) is None:
@@ -303,7 +280,7 @@ def asistencia_por_clase(
     id_seccion: Optional[int],
 ) -> AsistenciaPorClase:
     """Una fila por clase dictada y, aparte, las clases sin registro, por grado y sección."""
-    _validar_colegio(db, usuario, filtros, id_colegio)
+    validar_colegio_seleccionado(db, usuario, filtros.ids_colegio, id_colegio)
     _validar_grupo(db, id_colegio, id_grado, id_seccion)
     conjunto = clases_del_periodo(db, filtros, [FiltroGrupos(id_colegio, id_grado, id_seccion)])[id_colegio]
     grupos = _por_grupo(conjunto)
