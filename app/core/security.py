@@ -1,6 +1,6 @@
 from typing import Any
 
-from jose import jwt
+import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -31,15 +31,17 @@ def create_access_token(claims: dict[str, Any]) -> str:
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    """Verifica la firma y devuelve los claims. Lanza JWTError si la firma no es válida.
+    """Verifica la firma y devuelve los claims. Lanza jwt.InvalidTokenError si el token no
+    es válido (firma, formato o algoritmo).
 
     No rechaza el token por `exp`: la fuente de verdad del vencimiento es `sesion.expira`
     en la BD. Si la librería lo rechazara antes, la sesión vencida nunca se cerraría
-    (ver app/dependencies.py).
+    (ver app/dependencies.py). Tampoco compara `iat` con el reloj del sistema: el inicio
+    de la sesión es `sesion.inicio`, medido con el reloj de la aplicación.
     """
     return jwt.decode(
         token,
         settings.JWT_SECRET_KEY,
         algorithms=[settings.JWT_ALGORITHM],
-        options={"verify_exp": False},
+        options={"verify_exp": False, "verify_iat": False},
     )
