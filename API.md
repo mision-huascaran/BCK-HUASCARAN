@@ -4,8 +4,11 @@
 **Formato:** JSON · **Autenticación:** JWT Bearer con sesión en la BD
 
 > **Verificado el 2026-10-29** contra el OpenAPI generado por la app (`app.openapi()`) y el código de los
-> servicios, al cierre de la **serie del Dashboard** (D1–D7, sobre la Tanda L `e7ccd8b`). Cubre los 101 endpoints
-> que existen hoy (los 11 del Dashboard son nuevos).
+> servicios, al cierre de la **Tanda M** (ronda 6 de QA, segunda parte, sobre el Dashboard D7 `f098640`). Cubre
+> los 101 endpoints que existen hoy. La Tanda M no cambia la forma de ninguna respuesta: agrega `422 sin_alumnos`
+> a `GET /lectura/tablas` (D101) y dos decisiones provisionales, DP-1 (escritura de la rúbrica en un mes partido
+> entre dos PA) y DP-2 (vencidos del Inicio del Supervisor durante un receso), descritas en
+> `docs/decisiones-provisionales.md`.
 >
 > **Errores:** todo error de negocio responde `{"detail": "...", "motivo": "codigo", ...extra}`. Los `422`
 > de validación responden `{"detail": "Los datos enviados no son válidos.", "motivo": "validacion",
@@ -998,8 +1001,10 @@ Filas por apellidos y nombres sin distinguir mayúsculas ni tildes. Se devuelve 
 suyo (la respuesta trae su `mes`). `declaraciones`: el historial de "No realizada".
 
 **Errores:** `404 tabla_no_existe` ("No existe una tabla de lectura semanal para los filtros seleccionados.",
-con `clase_referencia_sugerida` y `escritura` para crearla), `422 semana_sin_clase`,
-`403 aula_fuera_de_alcance`, `404 colegio_no_encontrado`, `404 semana_no_encontrada`,
+con `clase_referencia_sugerida` y `escritura` para crearla), `422 semana_sin_clase` (la semana no tiene clase
+del grupo), `422 sin_alumnos` ("No hay estudiantes que pertenecieran a este grupo en la fecha de la clase
+seleccionada.": la semana sí tiene clase o la tendría por el día de clase del grado, pero el grupo no tenía
+alumnos de ese subprograma en su fecha; D101), `403 aula_fuera_de_alcance`, `404 colegio_no_encontrado`, `404 semana_no_encontrada`,
 `422 seccion_inexistente`, `422 programa_inexistente`.
 
 ### `POST /lectura/tablas` — Docente
@@ -1012,6 +1017,7 @@ de la semana). Crea una fila vacía por alumno de esa clase con el subprograma. 
 Seleccione la semana actual o una anterior.", texto de CU023), `422 clase_no_realizada`,
 `422 semana_sin_clase`, `422 clase_fuera_de_la_semana`, `422 clase_referencia_requerida`, `422 sin_alumnos`,
 `422 sin_habilitacion`, `422 actividad_requerida`, `422 fuera_de_actividad`; además los de la consulta.
+`sin_alumnos` y `semana_sin_clase` se distinguen como en la consulta (D101).
 
 ### `PUT /lectura/tablas/{id_tabla}/filas` — Docente
 
@@ -1071,7 +1077,12 @@ corrección"). Revierte la declaración vigente; la tabla vuelve a "normal" y el
 
 Los alumnos que corresponde evaluar en el grupo ese mes (R2), incluidos los hoy inactivos, por apellidos y
 nombres sin distinguir mayúsculas ni tildes. `fluidez` y `comprension` en códigos 0-4. `id_periodo_academico`:
-el PA del mes (R1). Sin alumnos: `items` vacío y el texto en `detail`.
+el PA del mes (R1), al que se asocia la evaluación. Sin alumnos: `items` vacío y el texto en `detail`.
+
+`escritura.permitida` (**DP-1, provisional**): `true` si el Docente tiene habilitación de escritura para el
+grupo en **cualquiera** de los PA con días lectivos en el mes (asignación del PA, retroactiva durante su PR o
+permiso de ese PA), no solo en el de R1. Así, octubre de 2026 (R1: PA3) lo puede evaluar un Docente asignado
+solo al PA4. Si escribe con un permiso, `id_permiso` y `aviso_permiso` son los de ese permiso.
 
 **Errores:** `422 mes_futuro`, `422 mes_sin_actividad`, `422 seccion_inexistente`, `422 programa_inexistente`;
 `403 aula_fuera_de_alcance`; `404 colegio_no_encontrado`, `404 anio_no_encontrado`.
@@ -1083,7 +1094,8 @@ Arreglo: `[{ "id_operacion", "version", "realizado_en", "id_actividad", "id_alum
 resultados. Se puede guardar incompleta; un ítem sin cambios no escribe.
 
 **Rechazos:** `valor_no_permitido` ("Selecciona una valoración permitida para esta dimensión."),
-`sin_habilitacion`, `alumno_fuera_del_grupo` ("El estudiante no pertenecía a este grupo en el mes
+`sin_habilitacion` (con la regla de DP-1 de `GET /rubricas`: basta la habilitación en cualquiera de los PA con
+días lectivos en el mes; la evaluación se guarda igual con el PA de R1), `alumno_fuera_del_grupo` ("El estudiante no pertenecía a este grupo en el mes
 seleccionado."), `evaluacion_en_otro_grupo` ("Este alumno ya tiene una evaluación registrada para este mes.
 Para corregirla, contacta al Docente que la registró o a tu Supervisor."), `modificacion_concurrente` (con la
 vigente), `mes_futuro`, `mes_sin_actividad`,
@@ -1258,6 +1270,14 @@ como error. **Errores:** `404 operacion_no_encontrada`, `409 operacion_no_rechaz
   de corrección vigente o una asignación del PA inmediatamente siguiente. Cada Docente cuenta una vez.
 - **Alertas:** `sincronizacion_olvidada`, `inactividad_operativa` e `incumplimiento_sede`, en ese orden; dentro
   de cada tipo, por nombre del docente o del colegio (sin distinguir mayúsculas ni tildes).
+- **Vencidos durante un receso (DP-2, provisional):** durante el PR n, `registros_vencidos`,
+  `registros_incompletos`, sus desgloses por módulo y la alerta `sincronizacion_olvidada` se calculan sobre el
+  PA n, el que se regulariza, con las mismas reglas que cuando estaba en curso (y DP-1 para la rúbrica). Al
+  empezar el PA siguiente se pasa a ese PA. `incumplimiento_sede` sigue mirando el PA en curso (un colegio en
+  un PR no la genera), y `docentes_activos` y `colegios_registrados` no cambian. Misma forma de respuesta.
+- **Rúbrica (DP-1):** la obligación de un mes se exige en todo PA con días lectivos en el mes y vence el día 1
+  del mes siguiente: octubre figura vencido el 01/11 con el PA4 en curso. Un mes íntegro del PA anterior no se
+  exige durante el PA siguiente.
 
 ### `GET /inicio/directivo` — Directivo (CU012)
 

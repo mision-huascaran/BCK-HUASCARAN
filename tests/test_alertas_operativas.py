@@ -388,7 +388,8 @@ def test_dp2_al_empezar_el_pa_siguiente_los_del_anterior_ya_no_cuentan(db, entor
     en_el_pa3 = _vencidas(db)
 
     fin_pa2 = entorno.rangos["PA2"][1].isoformat()
-    assert en_el_pr2 and all(r <= fin_pa2 for r in en_el_pr2)
+    assert en_el_pr2
+    assert all(r <= fin_pa2 for r in en_el_pr2)
     assert en_el_pa3 == []
 
 
