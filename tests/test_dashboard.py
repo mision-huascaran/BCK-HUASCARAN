@@ -6,7 +6,7 @@ import pytest
 
 from app.core import tiempo
 from app.models.evaluacion import (
-    ClaseAlumno, LecturaSemanal, LecturaSemanalAlumno, SemanaReporte,
+    LecturaSemanal, LecturaSemanalAlumno, SemanaReporte,
 )
 from app.services import dashboard_service as servicio
 from app.schemas.dashboard import FiltrosDashboard
@@ -29,60 +29,9 @@ def _get(client, cabeceras, ruta, rol="Supervisor", **params):
     return client.get("/dashboard/" + ruta, params=params, headers=cabeceras[rol])
 
 
-def test_asistencia_sql_cuenta_presentes_tardanzas_y_ausencias(db, entorno):
-    alumna = entorno.alumnos["ana"]
-    registrar_asistencia(db, alumna, HOY - timedelta(days=7), "presente")
-    registrar_asistencia(db, alumna, HOY - timedelta(days=6), "tardanza")
-    registrar_asistencia(db, alumna, HOY - timedelta(days=5), "ausente")
-    resultado = servicio.asistencia(db, _f(entorno, id_colegio=alumna.id_colegio,
-                                            id_grado=alumna.id_grado), por_alumno=True)
-    fila = next(r for r in resultado if r.id_alumno == alumna.id_alumno)
-    assert (fila.presentes, fila.tardanzas, fila.ausentes) == (1, 1, 1)
-    assert (fila.asistidas, fila.contabilizadas, fila.porcentaje) == (2, 3, 66.7)
-
-
-def test_asistencia_sql_no_cuenta_sin_marcar_en_denominador(db, entorno):
-    alumna = entorno.alumnos["ana"]
-    clase_guardada(db, alumna, HOY - timedelta(days=8))
-    registrar_asistencia(db, alumna, HOY - timedelta(days=7), "presente")
-    filas = servicio.asistencia(db, _f(entorno, id_colegio=alumna.id_colegio,
-                                       id_grado=alumna.id_grado), por_alumno=True)
-    fila = next(r for r in filas if r.id_alumno == alumna.id_alumno)
-    assert fila.porcentaje == 100.0
-    assert fila.contabilizadas == 1
-    assert fila.sin_marcar == 1
-    assert fila.provisional is True
-
-
-def test_asistencia_sql_filtra_subprograma_historico(db, entorno):
-    ana = entorno.alumnos["ana"]
-    registrar_asistencia(db, ana, HOY - timedelta(days=7), "presente")
-    otro_programa = entorno.programas["Alfabetización"]
-    resultado = servicio.asistencia(db, _f(entorno, id_programa=otro_programa), por_alumno=True)
-    assert all(r.id_alumno != ana.id_alumno for r in resultado)
-
-
-def test_asistencia_http_sin_autenticacion(client):
-    respuesta = client.get("/dashboard/asistencia")
-    assert respuesta.status_code in (401, 403)
-
-
-@pytest.mark.parametrize("ruta", ["asistencia", "lectura"])
-def test_dashboard_http_docente_no_autorizado(client, cabeceras, ruta):
-    respuesta = _get(client, cabeceras, ruta, rol="Docente")
+def test_dashboard_http_docente_no_autorizado(client, cabeceras):
+    respuesta = _get(client, cabeceras, "lectura", rol="Docente")
     assert respuesta.status_code == 403, respuesta.text
-
-
-def test_dashboard_http_directivo_no_puede_consultar_por_alumno(client, cabeceras):
-    respuesta = _get(client, cabeceras, "asistencia", rol="Directivo", por_alumno="true")
-    assert respuesta.status_code in (400, 403, 422), respuesta.text
-
-
-def test_dashboard_http_supervisor_solo_devuelve_campos_autorizados(client, cabeceras, entorno):
-    respuesta = _get(client, cabeceras, "asistencia", rol="Supervisor",
-                     id_anio_escolar=entorno.anio.id_anio_escolar, por_alumno="true")
-    assert respuesta.status_code == 200, respuesta.text
-    assert all("nombres" not in fila and "apellidos" not in fila for fila in respuesta.json())
 
 
 def test_dashboard_http_rechaza_colegios_repetidos(client, cabeceras, entorno):

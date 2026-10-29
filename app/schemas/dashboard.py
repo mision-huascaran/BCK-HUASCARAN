@@ -138,6 +138,104 @@ class ResultadosAprendizaje(BaseModel):
     mensaje: Optional[str] = None
 
 
+# ── Asistencia de alumnos (D3) ──────────────────────────────────────────────────────
+
+EstadoMes = Literal["con_datos", "sin_informacion", "en_curso", "futuro"]
+EstadoClase = Literal["completa", "registro_incompleto"]
+
+
+class ConteoAsistencia(BaseModel):
+    """Estados confirmados de las clases dictadas y cómo quedó el registro. `porcentaje`
+    = (P + T) / (P + T + A) × 100 sobre el conjunto, con 1 decimal; null sin estados.
+    `provisional`: hay clases dictadas con alumnos sin marcar."""
+
+    porcentaje: Optional[float]
+    presentes: int
+    tardanzas: int
+    ausentes: int
+    sin_marcar: int
+    clases_dictadas: int
+    clases_incompletas: int
+    clases_sin_registro: int
+    provisional: bool
+
+
+class ResumenAsistencia(ConteoAsistencia):
+    # Suma de las listas históricas de las clases dictadas (CU035).
+    asistencias_esperadas: int
+    # Presentes + tardanzas + ausentes.
+    asistencias_completadas: int
+    # "Sin información" cuando no hay estados registrados.
+    mensaje: Optional[str] = None
+
+
+class AsistenciaColegio(ConteoAsistencia):
+    colegio: ItemCatalogo
+
+
+class MesAsistencia(BaseModel):
+    """Un mes del periodo. En `futuro` solo van el mes, el estado y `porcentaje` null."""
+
+    anio: int
+    mes: int
+    estado: EstadoMes
+    porcentaje: Optional[float]
+    presentes: Optional[int] = None
+    tardanzas: Optional[int] = None
+    ausentes: Optional[int] = None
+    sin_marcar: Optional[int] = None
+    provisional: Optional[bool] = None
+
+
+class AsistenciaDelPeriodo(BaseModel):
+    """CU033 (paso 8) y CU035 (paso 7)."""
+
+    contexto: ContextoDashboard
+    resumen: ResumenAsistencia
+    mensual: list[MesAsistencia]
+    por_colegio: list[AsistenciaColegio]
+
+
+class ClaseDictada(BaseModel):
+    id_clase: int
+    fecha: date
+    tipo: str
+    reprogramada: bool
+    lista_historica: int
+    presentes: int
+    tardanzas: int
+    ausentes: int
+    sin_marcar: int
+    porcentaje: Optional[float]
+    estado: EstadoClase
+
+
+class ClaseSinRegistro(BaseModel):
+    """Clase programada ya transcurrida sin ninguna asistencia: no es dictada ni da
+    ausencias. `id_clase` es null si nunca tuvo fila (habitual calculada)."""
+
+    id_clase: Optional[int]
+    fecha: date
+    tipo: str
+    reprogramada: bool
+    fecha_original: date
+
+
+class GrupoAsistencia(BaseModel):
+    grado: ItemCatalogo
+    seccion: ItemCatalogo
+    resumen: ConteoAsistencia
+    clases: list[ClaseDictada]
+    clases_sin_registro: list[ClaseSinRegistro]
+
+
+class AsistenciaPorClase(BaseModel):
+    """CU033: detalle por grado y sección de un colegio, una fila por clase."""
+
+    contexto: ContextoDashboard
+    grupos: list[GrupoAsistencia]
+
+
 # ── Contrato provisional (se reemplaza en las tandas siguientes) ─────────────────
 
 class FiltrosDashboard(BaseModel):
@@ -148,21 +246,6 @@ class FiltrosDashboard(BaseModel):
     id_seccion: Optional[int] = None
     id_programa: Optional[int] = None
     id_periodo_academico: Optional[int] = None
-
-
-class AsistenciaDashboard(BaseModel):
-    id_alumno: Optional[int] = None
-    id_grado: Optional[int] = None
-    asistidas: int
-    contabilizadas: int
-    porcentaje: Optional[float] = None
-    presentes: int = 0
-    tardanzas: int = 0
-    ausentes: int = 0
-    sin_marcar: int = 0
-    clases_incompletas: int = 0
-    clases_sin_registro: int = 0
-    provisional: bool = False
 
 
 class LecturaDashboard(BaseModel):

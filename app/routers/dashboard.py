@@ -1,7 +1,6 @@
 """Dashboard del Supervisor y del Directivo (CU033, CU034 y CU035).
 
-`/asistencia` y `/lectura` son los endpoints provisionales de Romina; se reemplazan en
-las tandas siguientes.
+`/lectura` es el endpoint provisional de Romina; se reemplaza en las tandas siguientes.
 """
 from typing import Annotated, Optional
 
@@ -9,18 +8,16 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session
 
 from app.core.database import get_db
-from app.core.errores import error_de_campo
-from app.models.organizacion import Rol
 from app.schemas.dashboard import (
-    AsistenciaDashboard, DistribucionSubprograma, FiltrosDashboard, FiltrosDisponibles, LecturaDashboard,
-    ResultadosAprendizaje,
+    AsistenciaDelPeriodo, AsistenciaPorClase, DistribucionSubprograma, FiltrosDashboard, FiltrosDisponibles,
+    LecturaDashboard, ResultadosAprendizaje,
 )
 from app.services import dashboard_service
 from app.services.dashboard.aprendizaje import distribucion_subprograma, resultados_aprendizaje
+from app.services.dashboard.asistencia import asistencia_del_periodo, asistencia_por_clase
 from app.services.dashboard.carga_inicial import filtros_disponibles
 from app.services.dashboard.filtros import FiltrosDelPeriodo
 from app.services.dashboard.roles import SoloSupervisor, SupervisorODirectivo
-from app.services.usuario_service import DIRECTIVO
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 Db = Annotated[Session, Depends(get_db)]
@@ -60,6 +57,39 @@ def resultados(db: Db, _usuario: SupervisorODirectivo, filtros: FiltrosDelPeriod
     return resultados_aprendizaje(db, filtros)
 
 
+@router.get("/asistencia", response_model=AsistenciaDelPeriodo)
+def asistencia(db: Db, _usuario: SupervisorODirectivo, filtros: FiltrosDelPeriodo):
+    """CU033 (paso 8) y CU035 (paso 7): asistencia de las clases del PA hasta hoy, con las
+    fechas del PA en el calendario de cada colegio. Solo cuentan los estados confirmados:
+    porcentaje = (P + T) / (P + T + A) × 100 sobre el conjunto; sin estados, null y
+    "Sin información". `provisional` si hay clases dictadas con alumnos sin marcar; las
+    clases programadas ya transcurridas sin ninguna asistencia van en
+    `clases_sin_registro` (no son dictadas ni ausencias). Incluye la serie mensual
+    (`futuro`, `en_curso`, `sin_informacion`, `con_datos`) y el resumen por colegio.
+
+    Supervisor y Directivo. Errores: los de los filtros comunes."""
+    return asistencia_del_periodo(db, filtros)
+
+
+@router.get("/asistencia/clases", response_model=AsistenciaPorClase)
+def asistencia_clases(
+    db: Db,
+    usuario: SoloSupervisor,
+    filtros: FiltrosDelPeriodo,
+    id_colegio: int,
+    id_grado: Optional[int] = None,
+    id_seccion: Optional[int] = None,
+):
+    """CU033: detalle por grado y sección de un colegio de la selección. Una fila por clase
+    dictada (fecha efectiva, lista histórica, estados, porcentaje y `completa` o
+    `registro_incompleto`) y, aparte, las clases sin registro, sin conteos.
+
+    Solo Supervisor. Errores: los de los filtros comunes; 422 en `id_colegio` si no existe
+    o no está en la selección (403 `colegio_fuera_de_alcance` si está fuera del alcance),
+    422 en `id_grado` o `id_seccion` si no son de ese colegio."""
+    return asistencia_por_clase(db, usuario, filtros, id_colegio, id_grado, id_seccion)
+
+
 def _filtros(id_colegio, id_grado, id_seccion, id_programa, id_periodo_academico,
              id_anio_escolar, id_colegios):
     return FiltrosDashboard(
@@ -67,20 +97,6 @@ def _filtros(id_colegio, id_grado, id_seccion, id_programa, id_periodo_academico
         id_grado=id_grado, id_seccion=id_seccion, id_programa=id_programa,
         id_periodo_academico=id_periodo_academico,
     )
-
-
-@router.get("/asistencia", response_model=list[AsistenciaDashboard])
-def asistencia(db: Db, usuario: Acceso, id_colegio: Optional[int] = None,
-               id_grado: Optional[int] = None, id_seccion: Optional[int] = None,
-               id_programa: Optional[int] = None, id_periodo_academico: Optional[int] = None,
-               id_anio_escolar: Optional[int] = None,
-               id_colegios: Optional[list[int]] = Query(default=None),
-               por_alumno: bool = False):
-    # Identificadores por alumno solo disponibles para Supervisor; Directivo recibe agregados.
-    if por_alumno and db.get(Rol, usuario.id_rol).nombre == DIRECTIVO:
-        raise error_de_campo("por_alumno", "El Directivo solo puede consultar información agregada.")
-    return dashboard_service.asistencia(db, _filtros(id_colegio, id_grado, id_seccion, id_programa,
-                                                      id_periodo_academico, id_anio_escolar, id_colegios), por_alumno)
 
 
 @router.get("/lectura", response_model=LecturaDashboard)

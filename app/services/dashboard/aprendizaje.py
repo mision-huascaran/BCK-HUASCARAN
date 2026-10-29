@@ -43,16 +43,13 @@ from app.schemas.dashboard import (
     SubprogramaAlumnos,
 )
 from app.services.dashboard.filtros import FiltrosResueltos, item_colegio
+from app.services.dashboard.numeros import porcentaje
 from app.services.registro_vuelo import niveles_programa_del_periodo
 from app.services.rubrica_service import DIMENSIONES, ultimas_rubricas_completas
 
 MENSAJE_SIN_INFORMACION = "No hay información disponible para esta selección."
 MENSAJE_SIN_EVALUACIONES = "No hay evaluaciones completas para esta selección."
 PERIODO_NO_INICIADO = "periodo_no_iniciado"
-
-
-def porcentaje(parte: int, base: int) -> float:
-    return round(100 * parte / base, 1)
 
 
 # ── Corte por colegio y universo ────────────────────────────────────────────────────

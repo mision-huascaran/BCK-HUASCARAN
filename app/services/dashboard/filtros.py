@@ -22,7 +22,7 @@ from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import AnioEscolar, Colegio, PeriodoAcademico, Usuario
 from app.schemas.comun import ItemCatalogo
 from app.schemas.dashboard import AlcanceColegios, ContextoDashboard, IntervaloFechas, PeriodoVisible
-from app.services.calendario import CalendarioResuelto, cargar_calendarios
+from app.services.calendario import CalendarioResuelto, Calendarios, cargar_calendarios
 from app.services.dashboard.roles import SupervisorODirectivo
 
 CAMPO_ANIO = "id_anio_escolar"
@@ -135,11 +135,10 @@ def _colegios(
 
 
 def _calendarios(
-    db: Session, anio: AnioEscolar, periodo: Optional[PeriodoAcademico], colegios: list[Colegio]
+    cargados: Calendarios, anio: AnioEscolar, periodo: Optional[PeriodoAcademico], colegios: list[Colegio]
 ) -> dict[int, CalendarioResuelto]:
     """{colegio: calendario aplicable del año}. En un bloque del periodo, todos deben
     tenerlo y con ese PA configurado; si no, 422 con la lista de los que no."""
-    cargados = cargar_calendarios(db, anio.id_anio_escolar, ids_colegio=[c.id_colegio for c in colegios])
     aplicables = {c.id_colegio: cargados.aplicable(c.id_colegio, anio.id_anio_escolar) for c in colegios}
     if periodo is not None:
         faltan = [
@@ -170,6 +169,9 @@ class FiltrosResueltos:
     alcance: AlcanceColegios
     # id_colegio -> calendario aplicable del año. En un bloque del periodo están todos.
     calendarios: dict[int, CalendarioResuelto]
+    # Los mismos calendarios ya cargados, para los servicios que resuelven por fecha
+    # (p. ej. la programación de clases).
+    cargados: Calendarios
 
     @property
     def ids_colegio(self) -> list[int]:
@@ -208,8 +210,9 @@ def resolver_filtros(
     anio = _anio(db, id_anio_escolar)
     periodo = _periodo(db, anio, id_periodo_academico, requiere_periodo)
     colegios, alcance = _colegios(db, usuario, todos_los_colegios, id_colegios)
-    calendarios = _calendarios(db, anio, periodo, colegios)
-    return FiltrosResueltos(anio, periodo, colegios, alcance, calendarios)
+    cargados = cargar_calendarios(db, anio.id_anio_escolar, ids_colegio=[c.id_colegio for c in colegios])
+    calendarios = _calendarios(cargados, anio, periodo, colegios)
+    return FiltrosResueltos(anio, periodo, colegios, alcance, calendarios, cargados)
 
 
 def _dependencia(requiere_periodo: bool, descripcion_periodo: str):
