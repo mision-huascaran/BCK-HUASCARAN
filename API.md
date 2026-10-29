@@ -3,8 +3,9 @@
 **Rama:** `development` · **Base URL (desarrollo):** `http://127.0.0.1:8000` · **Swagger:** `/docs`
 **Formato:** JSON · **Autenticación:** JWT Bearer con sesión en la BD
 
-> **Verificado el 2026-10-28** contra el OpenAPI generado por la app (`app.openapi()`) y el código de los
-> servicios, en el commit de la **Tanda L** (sobre `b20a89a`). Cubre los 90 endpoints que existen hoy.
+> **Verificado el 2026-10-29** contra el OpenAPI generado por la app (`app.openapi()`) y el código de los
+> servicios, al cierre de la **serie del Dashboard** (D1–D7, sobre la Tanda L `e7ccd8b`). Cubre los 101 endpoints
+> que existen hoy (los 11 del Dashboard son nuevos).
 >
 > **Errores:** todo error de negocio responde `{"detail": "...", "motivo": "codigo", ...extra}`. Los `422`
 > de validación responden `{"detail": "Los datos enviados no son válidos.", "motivo": "validacion",
@@ -36,6 +37,7 @@
 - [Sincronización](#sincronización)
 - [Inicio por rol](#inicio-por-rol)
 - [Seguimiento de docentes](#seguimiento-de-docentes)
+- [Dashboard (CU033, CU034 y CU035)](#dashboard-cu033-cu034-y-cu035)
 - [Errores comunes](#errores-comunes)
 - [CORS](#cors)
 - [Usuarios de prueba](#usuarios-de-prueba)
@@ -90,7 +92,8 @@
 - El **Supervisor** gestiona cuentas, colegios, calendarios, asignaciones y permisos, y consulta todo.
 - El **Docente** registra en los módulos académicos, solo en lo que tiene habilitado (sus asignaciones o un
   permiso de corrección) y con una actividad en curso. Consulta lo de su alcance.
-- El **Directivo** solo ve su Inicio (indicadores institucionales, sin datos personales de alumnos).
+- El **Directivo** ve su Inicio y los bloques agregados del Dashboard (indicadores institucionales, sin datos
+  personales de alumnos).
 
 Un rol fuera de la lista responde `403 sin_permiso` ("No tienes permisos para realizar esta acción").
 
@@ -111,6 +114,8 @@ Un rol fuera de la lista responde `403 sin_permiso` ("No tienes permisos para re
 | `/actividades…`, `/sincronizacion…`, `GET /me/asignaciones`, `/me/habilitaciones`, `/me/permisos` | ✅ | ❌ | ❌ |
 | `GET /inicio/docente` · `/inicio/supervisor` · `/inicio/directivo` | solo el suyo | solo el suyo | solo el suyo |
 | `/seguimiento/docentes…` | ❌ | ✅ | ❌ |
+| `GET /dashboard/filtros`, `/resultados-aprendizaje`, `/asistencia`, `/libros`, `/evolucion-anual`, `/comparacion-colegios` | ❌ | ✅ | ✅ |
+| `GET /dashboard/distribucion-subprograma`, `/comparacion-resultados`, `/asistencia/clases`, `/libros/colegios/{id}`, `/libros/desglose` | ❌ | ✅ | ❌ |
 
 \* Solo su alcance: los colegios y grados de sus asignaciones (y de sus permisos vigentes, para consultar).
 Fuera de él: `403 aula_fuera_de_alcance`, `alumno_fuera_de_alcance` o `colegio_fuera_de_alcance`.
@@ -1305,6 +1310,325 @@ Los registros de ese módulo tocados en la actividad, con el contexto para abrir
 Según el módulo vienen además `programa`, `alumno`, `id_semana`, `semana_inicio`, `mes`, `id_anio_escolar` o
 `id_periodo_academico`. **Errores:** `404 docente_no_encontrado`, `404 actividad_no_encontrada`,
 `422 validacion`.
+
+---
+
+## Dashboard (CU033, CU034 y CU035)
+
+Supervisor y Directivo (CU033 Dashboard del Supervisor, CU034 Consolidado de libros leídos, CU035 Dashboard
+del Directivo). El Docente no tiene Dashboard (`403 sin_permiso`). El Directivo solo ve agregados: los
+endpoints con nombres de alumnos, listados nominales o detalle de un colegio son **solo del Supervisor**.
+
+| Endpoint | Rol | Bloque | Filtros |
+| --- | --- | --- | --- |
+| `GET /dashboard/filtros` | Supervisor, Directivo | Carga inicial (CU033 y CU035, paso 3) | — |
+| `GET /dashboard/distribucion-subprograma` | Supervisor | Distribución por subprograma (CU033) | del periodo |
+| `GET /dashboard/resultados-aprendizaje` | Supervisor, Directivo | Resultados de aprendizaje (CU033 paso 6, CU035 paso 6) | del periodo |
+| `GET /dashboard/comparacion-resultados` | Supervisor | Comparación de resultados (CU033 paso 7) | del periodo |
+| `GET /dashboard/asistencia` | Supervisor, Directivo | Asistencia de alumnos (CU033 paso 8, CU035 paso 7) | del periodo |
+| `GET /dashboard/asistencia/clases` | Supervisor | Detalle por grado, sección y clase (CU033) | del periodo |
+| `GET /dashboard/libros` | Supervisor, Directivo | Consolidado de libros (CU034; CU035 paso 5) | anuales |
+| `GET /dashboard/libros/colegios/{id_colegio}` | Supervisor | Detalle de un colegio por grado y alumno (CU034 paso 6) | anuales |
+| `GET /dashboard/libros/desglose` | Supervisor | Desglose de la cantidad de un alumno en un mes (CU034 paso 8) | anuales |
+| `GET /dashboard/evolucion-anual` | Supervisor, Directivo | Cobertura y evolución anual (CU033 paso 9, CU035 paso 8) | anuales |
+| `GET /dashboard/comparacion-colegios` | Supervisor, Directivo | Comparación entre colegios (CU035 paso 9) | según el indicador |
+
+> **Resumen anual de CU035 (paso 5)** = `GET /dashboard/evolucion-anual` (el año seleccionado: alumnos y
+> colegios atendidos) + `GET /dashboard/libros` → `resumen` (total y promedio de libros por alumno). No hay un
+> endpoint aparte.
+
+### Filtros comunes
+
+Todos los bloques (salvo `/dashboard/filtros`) reciben en el query:
+
+| Parámetro | Bloques del periodo | Bloques anuales | Regla |
+| --- | --- | --- | --- |
+| `id_anio_escolar` | obligatorio | obligatorio | 422 si no existe. |
+| `id_periodo_academico` | **obligatorio** | **prohibido** | Debe ser un PA del año. Del periodo sin él: 422 "Selecciona un periodo académico."; anual con él: 422 "Este indicador es anual: no elijas un periodo académico.". |
+| `todos_los_colegios` | `true` o … | `true` o … | Todo el alcance (los colegios activos). |
+| `id_colegios` | … la lista (repetido: `?id_colegios=1&id_colegios=4`) | ídem | **Exactamente uno de los dos.** |
+
+Errores de los filtros (`campo` en `errores`):
+
+- `422 id_colegios`: ni `todos_los_colegios` ni lista (o lista vacía): "Selecciona un año escolar y al menos un
+  colegio." · los dos a la vez: "Elige todos los colegios o una lista de colegios, no ambas cosas." · repetidos:
+  "No repitas colegios en la selección." · uno que no existe: "Uno de los colegios seleccionados no existe.".
+- `403 colegio_fuera_de_alcance`: un colegio que existe pero no está en el alcance (p. ej. inactivo).
+- `422 calendario_no_configurado` (solo bloques del periodo): a algún colegio le falta el calendario aplicable con
+  ese PA. `detail` = "No hay un calendario configurado para todos los colegios seleccionados. Revisa el año
+  escolar o la selección de colegios." y `colegios_sin_calendario: [{id, nombre}]`. Ningún colegio se excluye en
+  silencio.
+
+### `contexto` (en todas las respuestas)
+
+```json
+{ "contexto": {
+    "anio_escolar": { "id": 2, "nombre": "2026" },
+    "periodo": { "id": 9, "numero": 2, "nombre": "Segundo periodo" },
+    "colegios": [{ "id": 1, "nombre": "Amashca" }, { "id": 4, "nombre": "Huaripampa" }],
+    "alcance": "varios",
+    "fecha_consulta": "2026-10-29T15:00:00Z",
+    "intervalo": { "desde": "2026-05-18", "hasta": "2026-07-17" },
+    "parcial": true } }
+```
+
+`periodo` es `null` en los bloques anuales. `alcance`: `todos` (con `todos_los_colegios`), `uno` o `varios`.
+`colegios` va ordenado por nombre sin mayúsculas ni tildes. `intervalo`: del primer inicio al último fin de ese PA
+entre los colegios (en un bloque anual, las fechas del año; en la evolución anual, de todos los años incluidos).
+`parcial`: hoy está dentro del intervalo (acumulado hasta la fecha de consulta).
+
+### Estados que el front tiene que distinguir
+
+| Valor | Significa | Cómo mostrarlo |
+| --- | --- | --- |
+| `null` / `sin_informacion` | No hay datos: ningún estado, cantidad ni evaluación. | "Sin información" o el `mensaje` del bloque. **Nunca 0.** |
+| `0` (con estado `completo` / `con_datos`) | Un cero confirmado (p. ej. solo ausentes o "No realizada"). | Como 0. Puede tener posición. |
+| `futuro` | El mes o el año todavía no empieza. | Sin punto ni valor; no es información faltante. |
+| `en_curso` | El mes contiene hoy: acumulado hasta la fecha de consulta. | Rotular "En curso". |
+| `incompleto` / `provisional` / `evaluacion_incompleta` / `registro_incompleto` | Hay datos, pero faltan registros esperados. | Mostrar el valor con el aviso; la posición es provisional. En libros, la `etiqueta` "Total registrado hasta el momento". |
+| `no_aplica` | El subprograma no está configurado en ese colegio. | "No aplica": sin cero ni posición. |
+| `periodo_no_iniciado` (en `colegios_sin_informacion`) | El PA de ese colegio todavía no empezó: no se suma. | Aviso junto al bloque. |
+| `posicion: null` | Sin con quién compararlo (un solo colegio, o uno solo con datos) o en vistas sin índice. | Sin posición. |
+
+Los porcentajes se calculan sobre la suma del conjunto (nunca promediando porcentajes) y llevan 1 decimal; los
+índices y promedios, 2 decimales. **El orden usa el valor exacto.** Empates exactos: misma posición y la siguiente
+salta (`1, 1, 3`), en orden alfabético (colegios) o escolar (grados).
+
+### `GET /dashboard/filtros` — Supervisor y Directivo
+
+Carga inicial. Sin parámetros.
+
+```json
+{ "colegios": [{ "id": 1, "nombre": "Amashca" }],
+  "anios": [{ "id": 2, "nombre": "2026", "periodos": [
+      { "id": 9, "numero": 1, "nombre": "Primer periodo" }, { "id": 10, "numero": 2, "nombre": "Segundo periodo" },
+      { "id": 11, "numero": 3, "nombre": "Tercer periodo" }, { "id": 12, "numero": 4, "nombre": "Cuarto periodo" }] }],
+  "seleccion_inicial": { "id_anio_escolar": 2, "id_periodo_academico": 10 } }
+```
+
+`seleccion_inicial`: el PA en que están hoy todos los colegios del alcance; en un receso, el PA anterior y su año
+(aunque el receso esté en el año calendario siguiente). `null` si no coinciden o si hoy no cae en ningún PA ni PR
+configurado: el front muestra "Selecciona un año escolar y un periodo académico para consultar los indicadores.".
+
+### `GET /dashboard/distribucion-subprograma` — Supervisor
+
+Filtros del periodo. Alumnos por subprograma según su pertenencia en la **fecha de corte** de su colegio
+(`min(fin del PA, hoy)`), sin excluirlos por su estado actual.
+
+```json
+{ "contexto": { "…": "…" },
+  "fechas_corte": [{ "colegio": { "id": 1, "nombre": "Amashca" }, "fecha": "2026-06-17" }],
+  "colegios_sin_informacion": [{ "colegio": { "id": 4, "nombre": "Huaripampa" }, "motivo": "periodo_no_iniciado" }],
+  "total": 120,
+  "subprogramas": [
+    { "subprograma": { "id": 1, "nombre": "Alfabetización" }, "alumnos": 70, "porcentaje": 58.3 },
+    { "subprograma": { "id": 2, "nombre": "Comprensión Lectora" }, "alumnos": 50, "porcentaje": 41.7 }],
+  "sin_datos": false, "mensaje": null }
+```
+
+Sin alumnos: `sin_datos: true`, `total: null`, `subprogramas: []` y `mensaje: "No hay información disponible para
+esta selección."`. Un alumno cuenta una vez; solo en grupos con el subprograma configurado.
+
+### `GET /dashboard/resultados-aprendizaje` — Supervisor y Directivo
+
+Filtros del periodo. Por subprograma configurado: el resultado `global` (nivel del programa de la decisión vigente
+del Registro de Vuelo, `fuente: "registro_vuelo"`) y las dimensiones `fluidez` y `comprension` (última rúbrica
+**completa** del PA, `fuente: "rubrica"`).
+
+```json
+{ "contexto": { "…": "…" }, "fechas_corte": ["…"], "colegios_sin_informacion": [],
+  "subprogramas": [{
+    "subprograma": { "id": 1, "nombre": "Alfabetización" }, "total_a_evaluar": 70,
+    "distribuciones": [
+      { "resultado": "global", "fuente": "registro_vuelo",
+        "niveles": [{ "nombre": "Inicio", "alumnos": 10, "porcentaje": 20.0 },
+                    { "nombre": "En proceso", "alumnos": 20, "porcentaje": 40.0 },
+                    { "nombre": "Logrado", "alumnos": 15, "porcentaje": 30.0 },
+                    { "nombre": "Avanzado", "alumnos": 5, "porcentaje": 10.0 }],
+        "evaluados": 50, "pendientes": 20, "base_porcentaje": "evaluados", "mensaje": null },
+      { "resultado": "fluidez", "fuente": "rubrica", "niveles": ["… Pre-inicio, Inicio, En proceso, Logrado, Avanzado"],
+        "evaluados": 0, "pendientes": 70, "base_porcentaje": "evaluados",
+        "mensaje": "No hay evaluaciones completas para esta selección." },
+      { "resultado": "comprension", "fuente": "rubrica", "…": "…" }] }],
+  "sin_datos": false, "mensaje": null }
+```
+
+Todos los niveles de cada escala, también los de 0. Porcentajes sobre `evaluados`; con `evaluados == 0`, los
+`porcentaje` van en `null` y aparece el `mensaje`. `pendientes = total_a_evaluar - evaluados`. Sin alumnos a
+evaluar: `sin_datos: true` con "No hay información disponible para esta selección.".
+
+### `GET /dashboard/comparacion-resultados` — Supervisor
+
+Filtros del periodo, más:
+
+| Parámetro | Valores |
+| --- | --- |
+| `id_programa` | obligatorio (422 si no existe) |
+| `todos_los_grados` o `id_grados` (repetido) | exactamente uno (422 en `id_grados`: "Selecciona al menos un grado.", ambos, repetidos o inexistentes) |
+| `vista` | `resumen_colegio` (por defecto) · `detalle_grado` |
+| `resultado` | `global` (por defecto) · `fluidez` · `comprension` · `nivel_alfabetico` |
+
+```json
+{ "contexto": { "…": "…" }, "fechas_corte": ["…"], "colegios_sin_informacion": [],
+  "subprograma": { "id": 1, "nombre": "Alfabetización" }, "grados": [{ "id": 1, "nombre": "1.º" }],
+  "vista": "resumen_colegio", "resultado": "global",
+  "escala": [{ "codigo": "Inicio", "nombre": "Inicio", "valor_indice": 1 }, "… En proceso 2, Logrado 3, Avanzado 4"],
+  "ranking": [{ "posicion": 1, "provisional": false, "evaluacion_incompleta": false,
+                "colegio": { "id": 1, "nombre": "Amashca" }, "grado": null, "indice": 3.25,
+                "total_a_evaluar": 20, "evaluados": 20, "pendientes": 0,
+                "distribucion": [{ "codigo": "Inicio", "alumnos": 1, "porcentaje": 5.0 }, "…"] }],
+  "sin_evaluaciones": [{ "colegio": { "…": "…" }, "grado": null, "total_a_evaluar": 8, "evaluados": 0, "pendientes": 8 }],
+  "no_aplica": [{ "colegio": { "…": "…" }, "grado": null }] }
+```
+
+Índice (solo `global`) = suma de 1 a 4 de los evaluados / evaluados, sobre el conjunto del colegio (no promedia
+grados). Con pendientes: `evaluacion_incompleta` y `provisional`. En `fluidez`, `comprension` y
+`nivel_alfabetico`, `indice`, `posicion` y `provisional` van en `null`, la lista va en orden alfabético y
+`valor_indice` es `null`. Nivel alfabético: las letras de `nivel_razkids` de `aa` a `Z`. Un grupo configurado sin
+alumnos no aparece en ninguna lista.
+
+### `GET /dashboard/asistencia` — Supervisor y Directivo
+
+Filtros del periodo. Clases de la programación (habituales, reprogramadas en su fecha vigente y adicionales con
+asistencia) del PA de cada colegio hasta hoy.
+
+```json
+{ "contexto": { "…": "…" },
+  "resumen": { "porcentaje": 92.3, "presentes": 400, "tardanzas": 20, "ausentes": 35, "sin_marcar": 12,
+               "clases_dictadas": 30, "clases_incompletas": 2, "clases_sin_registro": 3, "provisional": true,
+               "asistencias_esperadas": 467, "asistencias_completadas": 455, "mensaje": null },
+  "mensual": [
+    { "anio": 2026, "mes": 5, "estado": "con_datos", "porcentaje": 90.1, "presentes": 120, "tardanzas": 5,
+      "ausentes": 14, "sin_marcar": 0, "provisional": false },
+    { "anio": 2026, "mes": 6, "estado": "en_curso", "porcentaje": 93.0, "…": "…" },
+    { "anio": 2026, "mes": 7, "estado": "futuro", "porcentaje": null, "presentes": null, "tardanzas": null,
+      "ausentes": null, "sin_marcar": null, "provisional": null }],
+  "por_colegio": [{ "colegio": { "id": 1, "nombre": "Amashca" }, "porcentaje": 91.0, "…": "mismos campos" }],
+  "colegios_sin_informacion": [] }
+```
+
+Porcentaje = (P + T) / (P + T + A) × 100; sin marcar no es ausencia. Sin estados: `porcentaje: null` y
+`mensaje: "Sin información"`. `provisional`: hay clases dictadas con alumnos sin marcar. `clases_sin_registro`:
+programadas ya transcurridas sin ninguna asistencia (no son dictadas ni ausencias). `mensual.estado`:
+`con_datos`, `sin_informacion` (mes pasado sin estados), `en_curso` o `futuro`.
+
+### `GET /dashboard/asistencia/clases` — Supervisor
+
+Filtros del periodo, más `id_colegio` (obligatorio, de la selección) e `id_grado` / `id_seccion` opcionales.
+
+```json
+{ "contexto": { "…": "…" },
+  "grupos": [{
+    "grado": { "id": 3, "nombre": "3.º" }, "seccion": { "id": 7, "nombre": "A" },
+    "resumen": { "porcentaje": 89.5, "…": "mismos campos que por_colegio" },
+    "clases": [{ "id_clase": 55, "fecha": "2026-06-08", "tipo": "habitual", "reprogramada": false,
+                 "lista_historica": 20, "presentes": 15, "tardanzas": 2, "ausentes": 2, "sin_marcar": 1,
+                 "porcentaje": 89.5, "estado": "registro_incompleto" }],
+    "clases_sin_registro": [{ "id_clase": null, "fecha": "2026-06-15", "tipo": "habitual", "reprogramada": false,
+                              "fecha_original": "2026-06-15" }] }] }
+```
+
+`estado`: `completa` o `registro_incompleto`. `id_clase` abre CU022 en consulta (`null` en una habitual que nunca
+tuvo fila). **Errores:** `422 id_colegio` si no existe o no está en la selección; `403 colegio_fuera_de_alcance`;
+`422 id_grado` / `id_seccion` si no son de ese colegio.
+
+### `GET /dashboard/libros` — Supervisor y Directivo
+
+Filtros anuales. Libros (LSN + LSL, con relecturas) atribuidos al mes de la clase de referencia, en el año de cada
+colegio hasta hoy.
+
+```json
+{ "contexto": { "…": "…", "periodo": null },
+  "resumen": { "total": 340, "estado": "incompleto", "provisional": true, "alumnos_incluidos": 120,
+               "promedio": 2.83, "etiqueta": "Total registrado hasta el momento" },
+  "meses": [{ "anio": 2026, "mes": 3, "estado": "completo", "total": 40, "en_curso": false },
+            { "anio": 2026, "mes": 6, "estado": "incompleto", "total": 25, "en_curso": true },
+            { "anio": 2026, "mes": 11, "estado": "futuro", "total": null, "en_curso": false }],
+  "colegios": [{ "posicion": 1, "provisional": false, "colegio": { "id": 1, "nombre": "Amashca" },
+                 "total": 120, "estado": "completo", "alumnos_incluidos": 40, "promedio": 3.0, "meses": ["…"] }],
+  "colegios_sin_informacion": [{ "colegio": { "…": "…" }, "alumnos_incluidos": 0, "motivo": "sin_alumnos" }] }
+```
+
+`estado`: `completo`, `incompleto` (hay cantidades y faltan registros esperados de Seguimiento de Lectura),
+`sin_informacion` (`total: null`) o `futuro`. Promedio = total / alumnos incluidos (las listas históricas; un
+alumno una vez por colegio). Sin promedio (`motivo`: `sin_alumnos`, `sin_informacion` o `sin_calendario`): en
+`colegios_sin_informacion`, sin posición.
+
+### `GET /dashboard/libros/colegios/{id_colegio}` — Supervisor
+
+Filtros anuales; el colegio debe estar en la selección.
+
+```json
+{ "contexto": { "…": "…" }, "colegio": { "id": 1, "nombre": "Amashca" },
+  "resumen": { "…": "como en /libros, del colegio" }, "meses": ["…"],
+  "grados": [{ "posicion": 1, "provisional": false, "grado": { "id": 3, "nombre": "3.º" }, "total": 50,
+               "estado": "completo", "alumnos_incluidos": 15, "promedio": 3.33,
+               "alumnos": [{ "alumno": { "id": 9, "nombre": "Ana Torres" }, "total": 4, "estado": "completo",
+                             "meses": [{ "anio": 2026, "mes": 3, "estado": "completo", "total": 2, "en_curso": false }] }] }],
+  "grados_sin_informacion": [] }
+```
+
+El grado de cada cantidad es el de la pertenencia en la fecha de la clase de referencia: un alumno que cambió de
+grado aparece en los dos y cuenta una vez en el colegio. Alumnos por apellidos y nombres sin mayúsculas ni tildes.
+**Errores:** como `/asistencia/clases` (`id_colegio`).
+
+### `GET /dashboard/libros/desglose` — Supervisor
+
+Filtros anuales, más `id_alumno`, `anio` y `mes` (1 a 12).
+
+```json
+{ "contexto": { "…": "…" }, "alumno": { "id": 9, "nombre": "Ana Torres" }, "anio": 2026, "mes": 3, "total": 2,
+  "registros": [{ "id_lectura_semanal": 31, "clase_referencia": { "id_clase": 55, "fecha": "2026-03-09" },
+                  "subprograma": { "id": 1, "nombre": "Alfabetización" }, "colegio": { "…": "…" },
+                  "grado": { "…": "…" }, "seccion": { "…": "…" }, "estado_tabla": "normal",
+                  "lsn": 1, "lsl": 1, "total": 2 }] }
+```
+
+`id_lectura_semanal` abre el Seguimiento de Lectura en consulta. `lsl` y `total` en `null` si la fila no tiene
+cantidades. **Errores:** `422 id_alumno` si no existe o no perteneció en el año a ningún colegio seleccionado;
+`403 colegio_fuera_de_alcance` si solo perteneció a colegios fuera del alcance.
+
+### `GET /dashboard/evolucion-anual` — Supervisor y Directivo
+
+Filtros anuales. Los años con información hasta el seleccionado (incluido), en orden.
+
+```json
+{ "contexto": { "…": "…", "intervalo": { "desde": "2025-03-03", "hasta": "2026-11-14" } },
+  "anios": [
+    { "anio_escolar": { "id": 1, "nombre": "2025" }, "parcial": false, "alumnos_atendidos": 300,
+      "colegios_atendidos": 9, "libros": { "total": 2100, "estado": "completo" },
+      "colegios": [{ "colegio": { "id": 1, "nombre": "Amashca" }, "alumnos_atendidos": 35 }] },
+    { "anio_escolar": { "id": 2, "nombre": "2026" }, "parcial": true, "alumnos_atendidos": 340,
+      "colegios_atendidos": 9, "libros": { "total": 1800, "estado": "incompleto" }, "colegios": ["…"] }],
+  "mensaje": null }
+```
+
+Alumnos únicos por pertenencia histórica (un alumno que cambió de colegio cuenta una vez en el total y en cada
+colegio donde estuvo); no se suman los PA. Un año sin alumnos atendidos no aparece. Un solo año: `mensaje: "No hay
+información de otros años para mostrar la evolución."`. Sin variaciones interanuales. `libros.total` es `null` si
+no hay datos.
+
+### `GET /dashboard/comparacion-colegios` — Supervisor y Directivo
+
+Filtros comunes, más `indicador`: `nivel_global_alfabetizacion`, `nivel_global_comprension`, `asistencia` (los tres
+con `id_periodo_academico` **obligatorio**) o `promedio_libros` (**sin** periodo: acumulado del año).
+
+```json
+{ "contexto": { "…": "…" }, "indicador": "asistencia", "intervalo": "periodo",
+  "ranking": [{ "posicion": 1, "provisional": false, "colegio": { "id": 1, "nombre": "Amashca" }, "valor": 93.5,
+                "poblacion": { "descripcion": "asistencias registradas", "cantidad": 455 }, "advertencias": [] }],
+  "sin_informacion": [{ "colegio": { "…": "…" }, "motivo": "sin_estados_registrados" }],
+  "mensaje": null }
+```
+
+`valor` es el del bloque correspondiente con los mismos filtros: índice 1-4 de `comparacion-resultados`
+(`resumen_colegio`, todos los grados; población: alumnos evaluados), porcentaje de `asistencia` (asistencias
+registradas) o promedio de `libros` (alumnos incluidos). `advertencias`: `evaluacion_incompleta`,
+`registro_incompleto`, `clases_sin_registro`, `informacion_incompleta`. Un solo colegio: sin posiciones y
+`mensaje: "Selecciona al menos dos colegios para compararlos."`; varios con uno solo con datos: sin posiciones y
+`mensaje: "No hay información suficiente de otros colegios para establecer una comparación."`. Motivos de
+`sin_informacion`: `no_aplica`, `sin_evaluaciones`, `sin_estados_registrados`, `periodo_no_iniciado`,
+`sin_alumnos`, `sin_informacion`, `sin_calendario`. No combina indicadores en una puntuación.
 
 ---
 

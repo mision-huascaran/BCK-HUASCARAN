@@ -7,7 +7,7 @@ from sqlmodel import select
 from app.core import tiempo
 from app.models.organizacion import AnioEscolar, PeriodoAcademico, PermisoCorreccion
 from app.models.trazabilidad import Auditoria
-from tests.conftest import a_las, crear_docente, crear_permiso, iso, motivo
+from tests.conftest import a_las, cabecera_de, crear_docente, crear_permiso, iso, motivo
 
 
 @pytest.fixture
@@ -200,8 +200,9 @@ def test_cu028_solo_el_supervisor(client, entorno, cabeceras, url, rol, codigo):
 
 # ── Estado, listado y detalle ───────────────────────────────────────────────────────
 
-def test_cu028_estado_calculado_en_el_tiempo(client, db, entorno, sup, url, reloj):
+def test_cu028_estado_calculado_en_el_tiempo(client, db, entorno, url, reloj):
     reloj.fijar(a_las(entorno.hoy, 10))
+    sup = cabecera_de(db, entorno.usuarios["Supervisor"])
     inicio = tiempo.ahora_utc() + timedelta(hours=1)
     creado = client.post(
         url, json=pedido(entorno, desde_ahora=False, inicio=iso(inicio), fin=iso(inicio + timedelta(hours=2))),

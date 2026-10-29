@@ -31,7 +31,7 @@ class ContextoDashboard(BaseModel):
     `parcial` indica que el año o el periodo todavía está en curso."""
 
     anio_escolar: ItemCatalogo
-    periodo: Optional[PeriodoVisible]
+    periodo: Optional[PeriodoVisible] = None
     colegios: list[ItemCatalogo]
     alcance: AlcanceColegios
     fecha_consulta: datetime
@@ -56,7 +56,7 @@ class FiltrosDisponibles(BaseModel):
 
     colegios: list[ItemCatalogo]
     anios: list[AnioConPeriodos]
-    seleccion_inicial: Optional[SeleccionInicial]
+    seleccion_inicial: Optional[SeleccionInicial] = None
 
 
 # ── Bloques del periodo con corte por colegio (D2) ──────────────────────────────────
@@ -90,7 +90,7 @@ class DistribucionSubprograma(BaseModel):
     contexto: ContextoDashboard
     fechas_corte: list[FechaCorte]
     colegios_sin_informacion: list[ColegioSinInformacion]
-    total: Optional[int]
+    total: Optional[int] = None
     subprogramas: list[SubprogramaAlumnos]
     sin_datos: bool
     mensaje: Optional[str] = None
@@ -100,7 +100,7 @@ class NivelDesempeno(BaseModel):
     nombre: str
     alumnos: int
     # Sobre los evaluados, con 1 decimal; null si no hay evaluados.
-    porcentaje: Optional[float]
+    porcentaje: Optional[float] = None
 
 
 class DistribucionResultado(BaseModel):
@@ -145,7 +145,7 @@ class ConteoAsistencia(BaseModel):
     = (P + T) / (P + T + A) × 100 sobre el conjunto, con 1 decimal; null sin estados.
     `provisional`: hay clases dictadas con alumnos sin marcar."""
 
-    porcentaje: Optional[float]
+    porcentaje: Optional[float] = None
     presentes: int
     tardanzas: int
     ausentes: int
@@ -175,7 +175,7 @@ class MesAsistencia(BaseModel):
     anio: int
     mes: int
     estado: EstadoMes
-    porcentaje: Optional[float]
+    porcentaje: Optional[float] = None
     presentes: Optional[int] = None
     tardanzas: Optional[int] = None
     ausentes: Optional[int] = None
@@ -204,7 +204,7 @@ class ClaseDictada(BaseModel):
     tardanzas: int
     ausentes: int
     sin_marcar: int
-    porcentaje: Optional[float]
+    porcentaje: Optional[float] = None
     estado: EstadoClase
 
 
@@ -212,7 +212,7 @@ class ClaseSinRegistro(BaseModel):
     """Clase programada ya transcurrida sin ninguna asistencia: no es dictada ni da
     ausencias. `id_clase` es null si nunca tuvo fila (habitual calculada)."""
 
-    id_clase: Optional[int]
+    id_clase: Optional[int] = None
     fecha: date
     tipo: str
     reprogramada: bool
@@ -245,14 +245,14 @@ class NivelEscala(BaseModel):
 
     codigo: str
     nombre: str
-    valor_indice: Optional[int]
+    valor_indice: Optional[int] = None
 
 
 class NivelGrupo(BaseModel):
     codigo: str
     alumnos: int
     # Sobre los evaluados del grupo, con 1 decimal.
-    porcentaje: Optional[float]
+    porcentaje: Optional[float] = None
 
 
 class GrupoComparado(BaseModel):
@@ -260,12 +260,12 @@ class GrupoComparado(BaseModel):
     En el resultado global lleva su índice (2 decimales; el orden usa el valor exacto) y su
     posición; con pendientes, la posición es provisional. En las demás vistas, null."""
 
-    posicion: Optional[int]
-    provisional: Optional[bool]
+    posicion: Optional[int] = None
+    provisional: Optional[bool] = None
     evaluacion_incompleta: bool
     colegio: ItemCatalogo
-    grado: Optional[ItemCatalogo]
-    indice: Optional[float]
+    grado: Optional[ItemCatalogo] = None
+    indice: Optional[float] = None
     total_a_evaluar: int
     evaluados: int
     pendientes: int
@@ -274,7 +274,7 @@ class GrupoComparado(BaseModel):
 
 class GrupoSinEvaluaciones(BaseModel):
     colegio: ItemCatalogo
-    grado: Optional[ItemCatalogo]
+    grado: Optional[ItemCatalogo] = None
     total_a_evaluar: int
     evaluados: int
     pendientes: int
@@ -284,7 +284,7 @@ class GrupoNoAplica(BaseModel):
     """Colegio (o colegio y grado) donde el subprograma no está configurado."""
 
     colegio: ItemCatalogo
-    grado: Optional[ItemCatalogo]
+    grado: Optional[ItemCatalogo] = None
 
 
 class ComparacionResultados(BaseModel):
@@ -317,17 +317,17 @@ class MesLibros(BaseModel):
     anio: int
     mes: int
     estado: EstadoLibros
-    total: Optional[int]
+    total: Optional[int] = None
     en_curso: bool = False
 
 
 class ResumenLibros(BaseModel):
-    total: Optional[int]
+    total: Optional[int] = None
     estado: EstadoLibros
     provisional: bool
     alumnos_incluidos: int
     # Total / alumnos incluidos, con 2 decimales; null sin alumnos o sin información.
-    promedio: Optional[float]
+    promedio: Optional[float] = None
     # "Total registrado hasta el momento" cuando el total está incompleto.
     etiqueta: Optional[str] = None
 
@@ -339,7 +339,7 @@ class ColegioLibros(BaseModel):
     posicion: int
     provisional: bool
     colegio: ItemCatalogo
-    total: Optional[int]
+    total: Optional[int] = None
     estado: EstadoLibros
     alumnos_incluidos: int
     promedio: float
@@ -364,7 +364,7 @@ class LibrosDelAnio(BaseModel):
 
 class AlumnoLibros(BaseModel):
     alumno: ItemCatalogo
-    total: Optional[int]
+    total: Optional[int] = None
     estado: EstadoLibros
     meses: list[MesLibros]
 
@@ -373,13 +373,13 @@ class GradoLibros(BaseModel):
     """Un grado del colegio (por la pertenencia en la fecha de cada clase de referencia).
     Sin promedio va en `grados_sin_informacion`, con `posicion` y `promedio` null."""
 
-    posicion: Optional[int]
+    posicion: Optional[int] = None
     provisional: bool
     grado: ItemCatalogo
-    total: Optional[int]
+    total: Optional[int] = None
     estado: EstadoLibros
     alumnos_incluidos: int
-    promedio: Optional[float]
+    promedio: Optional[float] = None
     alumnos: list[AlumnoLibros]
 
 
@@ -412,8 +412,8 @@ class RegistroLibros(BaseModel):
     seccion: ItemCatalogo
     estado_tabla: str
     lsn: int
-    lsl: Optional[int]
-    total: Optional[int]
+    lsl: Optional[int] = None
+    total: Optional[int] = None
 
 
 class DesgloseLibros(BaseModel):
@@ -423,7 +423,7 @@ class DesgloseLibros(BaseModel):
     alumno: ItemCatalogo
     anio: int
     mes: int
-    total: Optional[int]
+    total: Optional[int] = None
     registros: list[RegistroLibros]
 
 
@@ -432,7 +432,7 @@ class DesgloseLibros(BaseModel):
 class LibrosDeUnAnio(BaseModel):
     """Total de libros del año (CU034): null sin información, nunca 0 inventado."""
 
-    total: Optional[int]
+    total: Optional[int] = None
     estado: EstadoLibros
 
 
@@ -475,7 +475,7 @@ class PoblacionComparada(BaseModel):
 class ColegioComparado(BaseModel):
     """Un colegio con el indicador. Sin posición si no hay con quién compararlo."""
 
-    posicion: Optional[int]
+    posicion: Optional[int] = None
     provisional: bool
     colegio: ItemCatalogo
     # Índice (2 decimales), porcentaje (1 decimal) o promedio (2 decimales), como su bloque.

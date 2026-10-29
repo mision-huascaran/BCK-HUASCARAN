@@ -296,10 +296,10 @@ def asistencia_por_clase(
     conjunto = clases_del_periodo(db, filtros, [FiltroGrupos(id_colegio, id_grado, id_seccion)])[id_colegio]
     grupos = _por_grupo(conjunto)
     grados = dict(db.exec(select(Grado.id_grado, Grado.nombre).where(
-        col(Grado.id_grado).in_({g for g, _ in grupos})
+        col(Grado.id_grado).in_({g for g, _ in grupos.keys()})
     )).all())
     secciones = dict(db.exec(select(Seccion.id_seccion, Seccion.nombre).where(
-        col(Seccion.id_seccion).in_({s for _, s in grupos})
+        col(Seccion.id_seccion).in_({s for _, s in grupos.keys()})
     )).all())
     orden = sorted(grupos, key=lambda par: (par[0], comparable(secciones[par[1]]), par[1]))
     return AsistenciaPorClase(
