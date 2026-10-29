@@ -7,6 +7,7 @@
 services:
   backend:
     build: .
+    image: ${IMAGEN:-huascaran-bck-local}:actual
     container_name: ${ENTORNO:-local}-bck-huascaran
     env_file:
       - .env

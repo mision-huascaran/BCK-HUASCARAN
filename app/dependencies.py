@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import Depends, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
+from jwt import InvalidTokenError
 from sqlalchemy import or_, update
 from sqlmodel import Session, col
 
@@ -53,7 +53,7 @@ def verificar_firma(token: Optional[str]) -> dict:
         raise sesion_invalida()
     try:
         return decode_access_token(token)
-    except JWTError:
+    except InvalidTokenError:
         raise sesion_invalida() from None
 
 

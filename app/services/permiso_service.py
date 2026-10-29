@@ -9,7 +9,7 @@
   grado, PA y módulo). Cada otorgamiento y revocación queda en `auditoria`.
 """
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import status
 from sqlalchemy import and_
@@ -31,7 +31,15 @@ from app.models.organizacion import (
     Usuario,
 )
 from app.schemas.comun import ItemCatalogo
-from app.schemas.permiso import OpcionesPermiso, PermisoCrear, PermisoDetalle, PermisoItem, PermisoVigente
+from app.schemas.permiso import (
+    CombinacionPermiso,
+    OpcionesPermiso,
+    PermisoCrear,
+    PermisoDetalle,
+    PermisoItem,
+    PermisoLoteCrear,
+    PermisoVigente,
+)
 from app.services.auditoria import CREAR, INACTIVAR, registrar_auditoria
 from app.services.calendario import CalendarioResuelto, cargar_calendarios, nombre_periodo
 from app.services.habilitacion import ORIGEN_PERMISO, habilitaciones_vigentes
@@ -243,7 +251,23 @@ def opciones(db: Session, id_colegio: int, id_anio_escolar: int) -> OpcionesPerm
 
 # ── Otorgar ─────────────────────────────────────────────────────────────────────────
 
-def _vigencia(data: PermisoCrear, ahora: datetime) -> tuple[datetime, datetime]:
+# Lo que comparten el pedido individual y el lote: año, colegio, PA, vigencia y motivo.
+PedidoPermiso = Union[PermisoCrear, PermisoLoteCrear]
+
+
+def _docente_para_otorgar(db: Session, id_usuario: int, motivo: str) -> Docente:
+    """La ficha del docente, bloqueada para que dos otorgamientos simultáneos del mismo
+    docente no se superpongan. 409 si su cuenta o su ficha están inactivas; 422 sin motivo."""
+    usuario, docente = docente_de_la_ruta(db, id_usuario)
+    db.get(Docente, docente.id_docente, with_for_update=True)
+    if not (usuario.activo and docente.activo):
+        raise ErrorNegocio(status.HTTP_409_CONFLICT, MENSAJE_DOCENTE_INACTIVO, motivo="docente_inactivo")
+    if not motivo.strip():
+        raise error_de_campo("motivo", MENSAJE_SIN_MOTIVO)
+    return docente
+
+
+def _vigencia(data: PedidoPermiso, ahora: datetime) -> tuple[datetime, datetime]:
     """(inicio, fin) validados. Con `desde_ahora`, el inicio es la hora del servidor."""
     inicio = ahora if data.desde_ahora else data.inicio
     if inicio is None or inicio < ahora:
@@ -253,21 +277,35 @@ def _vigencia(data: PermisoCrear, ahora: datetime) -> tuple[datetime, datetime]:
     return inicio, data.fin
 
 
-def _validar_alcance(db: Session, data: PermisoCrear, ahora: datetime) -> None:
-    """Que el año, el colegio, el grado y el PA existan y correspondan entre sí, y que el
-    PA ya no admita regularización ordinaria. 422 en el campo que falla."""
+def _validar_anio_y_colegio(db: Session, data: PedidoPermiso) -> None:
     if db.get(AnioEscolar, data.id_anio_escolar) is None:
         raise error_de_campo("id_anio_escolar", "No existe el año escolar.")
     if db.get(Colegio, data.id_colegio) is None:
         raise error_de_campo("id_colegio", "No existe el colegio.")
-    if db.get(ColegioGrado, (data.id_colegio, data.id_grado)) is None:
-        raise error_de_campo("id_grado", "El colegio no ofrece ese grado.")
+
+
+def _validar_grado(db: Session, id_colegio: int, id_grado: int, campo: str = "id_grado") -> None:
+    if db.get(ColegioGrado, (id_colegio, id_grado)) is None:
+        raise error_de_campo(campo, "El colegio no ofrece ese grado.")
+
+
+def _validar_periodo(db: Session, data: PedidoPermiso, ahora: datetime) -> None:
+    """Que el PA sea del año y ya no admita regularización ordinaria en el calendario
+    del colegio."""
     periodo = db.get(PeriodoAcademico, data.id_periodo_academico)
     if periodo is None or periodo.id_anio_escolar != data.id_anio_escolar:
         raise error_de_campo(CAMPO_PERIODO, "El periodo no pertenece al año escolar.")
     calendario = _calendario_de(db, data.id_colegio, data.id_anio_escolar)
     if not _plazo_ordinario_terminado(calendario, periodo.numero, fecha_lima(ahora)):
         raise error_de_campo(CAMPO_PERIODO, MENSAJE_PLAZO_ORDINARIO)
+
+
+def _validar_alcance(db: Session, data: PermisoCrear, ahora: datetime) -> None:
+    """Que el año, el colegio, el grado y el PA existan y correspondan entre sí, y que el
+    PA ya no admita regularización ordinaria. 422 en el campo que falla."""
+    _validar_anio_y_colegio(db, data)
+    _validar_grado(db, data.id_colegio, data.id_grado)
+    _validar_periodo(db, data, ahora)
 
 
 def _verificar_sin_superposicion(
@@ -298,23 +336,14 @@ def _verificar_sin_superposicion(
         )
 
 
-def otorgar(db: Session, id_usuario: int, data: PermisoCrear, actor: Usuario) -> PermisoDetalle:
-    """Valida todo antes de escribir y guarda el permiso con su auditoría, en una
-    transacción. La ficha del docente se bloquea para que dos otorgamientos simultáneos
-    del mismo docente no se superpongan."""
-    usuario, docente = docente_de_la_ruta(db, id_usuario)
-    db.get(Docente, docente.id_docente, with_for_update=True)
-    if not (usuario.activo and docente.activo):
-        raise ErrorNegocio(status.HTTP_409_CONFLICT, MENSAJE_DOCENTE_INACTIVO, motivo="docente_inactivo")
-    if not data.motivo.strip():
-        raise error_de_campo("motivo", MENSAJE_SIN_MOTIVO)
-    ahora = ahora_utc()
-    inicio, fin = _vigencia(data, ahora)
-    _validar_alcance(db, data, ahora)
-    _verificar_sin_superposicion(db, docente.id_docente, data, inicio, fin)
-
+def _guardar(
+    db: Session, id_docente: int, data: PermisoCrear, vigencia: tuple[datetime, datetime], ahora: datetime,
+    actor: Usuario,
+) -> PermisoCorreccion:
+    """Agrega el permiso y su auditoría a la transacción, sin confirmarla."""
+    inicio, fin = vigencia
     permiso = PermisoCorreccion(
-        id_docente=docente.id_docente,
+        id_docente=id_docente,
         id_anio_escolar=data.id_anio_escolar,
         id_periodo_academico=data.id_periodo_academico,
         id_colegio=data.id_colegio,
@@ -332,8 +361,81 @@ def otorgar(db: Session, id_usuario: int, data: PermisoCrear, actor: Usuario) ->
         db, tabla=TABLA, id_registro=permiso.id_permiso, accion=CREAR,
         id_usuario=actor.id_usuario, fecha=ahora, id_permiso=permiso.id_permiso,
     )
+    return permiso
+
+
+def otorgar(db: Session, id_usuario: int, data: PermisoCrear, actor: Usuario) -> PermisoDetalle:
+    """Valida todo antes de escribir y guarda el permiso con su auditoría, en una
+    transacción."""
+    docente = _docente_para_otorgar(db, id_usuario, data.motivo)
+    ahora = ahora_utc()
+    inicio, fin = _vigencia(data, ahora)
+    _validar_alcance(db, data, ahora)
+    _verificar_sin_superposicion(db, docente.id_docente, data, inicio, fin)
+    permiso = _guardar(db, docente.id_docente, data, (inicio, fin), ahora, actor)
     db.commit()
     return _detalle(db, docente.id_docente, permiso.id_permiso)
+
+
+# ── Otorgar en lote ─────────────────────────────────────────────────────────────────
+
+def _pedido_de(data: PermisoLoteCrear, combinacion: CombinacionPermiso) -> PermisoCrear:
+    """El pedido individual equivalente a una combinación del lote."""
+    comunes = data.model_dump(exclude={"combinaciones"})
+    return PermisoCrear(**comunes, id_grado=combinacion.id_grado, modulo=combinacion.modulo)
+
+
+def _rechazo(
+    db: Session, id_docente: int, indice: int, pedido: PermisoCrear, vigencia: tuple[datetime, datetime]
+) -> Optional[ErrorNegocio]:
+    """El error de esa combinación (grado que el colegio no ofrece o superposición), o
+    None si se puede otorgar."""
+    try:
+        _validar_grado(db, pedido.id_colegio, pedido.id_grado, f"combinaciones.{indice}.id_grado")
+        _verificar_sin_superposicion(db, id_docente, pedido, *vigencia)
+    except ErrorNegocio as error:
+        return error
+    return None
+
+
+def _error_de_lote(rechazos: list[tuple[int, PermisoCrear, ErrorNegocio]]) -> ErrorNegocio:
+    """El error de la primera combinación rechazada, con todas en `combinaciones_rechazadas`."""
+    rechazadas = []
+    for indice, pedido, error in rechazos:
+        item = {
+            "indice": indice, "id_grado": pedido.id_grado, "modulo": pedido.modulo,
+            "motivo": error.motivo, "detail": error.detail,
+        }
+        if "permiso_existente" in error.extra:
+            item["permiso_existente"] = error.extra["permiso_existente"]
+        rechazadas.append(item)
+    primero = rechazos[0][2]
+    return ErrorNegocio(
+        primero.status_code, primero.detail, motivo=primero.motivo,
+        extra={**primero.extra, "combinaciones_rechazadas": rechazadas},
+    )
+
+
+def otorgar_lote(db: Session, id_usuario: int, data: PermisoLoteCrear, actor: Usuario) -> list[PermisoDetalle]:
+    """Un permiso por combinación de grado y módulo, todo o nada: con las mismas
+    validaciones que `otorgar`, se revisan todas las combinaciones antes de escribir y,
+    si alguna falla, no se guarda ninguna. Todos comparten la vigencia, calculada una vez."""
+    docente = _docente_para_otorgar(db, id_usuario, data.motivo)
+    ahora = ahora_utc()
+    vigencia = _vigencia(data, ahora)
+    _validar_anio_y_colegio(db, data)
+    _validar_periodo(db, data, ahora)
+    pedidos = [_pedido_de(data, c) for c in data.combinaciones]
+    rechazos = [
+        (indice, pedido, error)
+        for indice, pedido in enumerate(pedidos)
+        if (error := _rechazo(db, docente.id_docente, indice, pedido, vigencia)) is not None
+    ]
+    if rechazos:
+        raise _error_de_lote(rechazos)
+    permisos = [_guardar(db, docente.id_docente, pedido, vigencia, ahora, actor) for pedido in pedidos]
+    db.commit()
+    return [_detalle(db, docente.id_docente, permiso.id_permiso) for permiso in permisos]
 
 
 # ── Revocar ─────────────────────────────────────────────────────────────────────────

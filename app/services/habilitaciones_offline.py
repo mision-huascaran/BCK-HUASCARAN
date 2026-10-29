@@ -16,11 +16,13 @@ from app.models.organizacion import (
     AnioEscolar,
     Colegio,
     DocenteColegioGrado,
+    Grado,
     PeriodoAcademico,
     PermisoCorreccion,
     Usuario,
 )
 from app.schemas.calendario import CalendarioDeColegio
+from app.schemas.comun import ItemCatalogo
 from app.schemas.habilitacion import AsignacionUtilizable, MisHabilitaciones, PermisoUtilizable
 from app.services.calendario import CalendarioResuelto, Calendarios, PeriodoCalendario, cargar_calendarios
 from app.services.calendario_gestion import respuesta
@@ -52,6 +54,21 @@ def _colegios_activos(db: Session, ids: set[int]) -> dict[int, Colegio]:
         return {}
     filas = db.exec(select(Colegio).where(col(Colegio.id_colegio).in_(ids), col(Colegio.activo).is_(True))).all()
     return {c.id_colegio: c for c in filas}
+
+
+def _grados(db: Session, ids: set[int]) -> dict[int, str]:
+    """Nombre de cada grado, en una sola consulta."""
+    if not ids:
+        return {}
+    return dict(db.exec(select(Grado.id_grado, Grado.nombre).where(col(Grado.id_grado).in_(ids))).all())
+
+
+def _nombres(colegios: dict[int, Colegio], grados: dict[int, str], id_colegio: int, id_grado: int) -> dict:
+    """`colegio` y `grado` con nombre, para que el front arme el filtro de aulas sin red."""
+    return {
+        "colegio": ItemCatalogo(id=id_colegio, nombre=colegios[id_colegio].nombre),
+        "grado": ItemCatalogo(id=id_grado, nombre=grados[id_grado]),
+    }
 
 
 def _asignaciones(db: Session, id_docente: int) -> list[tuple[DocenteColegioGrado, int]]:
@@ -109,12 +126,13 @@ def mis_habilitaciones(db: Session, usuario: Usuario) -> MisHabilitaciones:
     ]
     permisos = [p for p in permisos if p.id_colegio in colegios]
     pares = [(f.id_colegio, id_anio) for f, id_anio in asignaciones] + [(p.id_colegio, p.id_anio_escolar) for p in permisos]
+    grados = _grados(db, {f.id_grado for f, _ in asignaciones} | {p.id_grado for p in permisos})
     return MisHabilitaciones(
         generado_en=generado_en,
         asignaciones=[
             AsignacionUtilizable(
                 id_colegio=f.id_colegio, id_grado=f.id_grado, id_periodo_academico=f.id_periodo_academico,
-                retroactiva=f.retroactiva,
+                retroactiva=f.retroactiva, **_nombres(colegios, grados, f.id_colegio, f.id_grado),
             )
             for f, _ in asignaciones
         ],
@@ -122,6 +140,7 @@ def mis_habilitaciones(db: Session, usuario: Usuario) -> MisHabilitaciones:
             PermisoUtilizable(
                 id_permiso=p.id_permiso, id_colegio=p.id_colegio, id_grado=p.id_grado,
                 id_periodo_academico=p.id_periodo_academico, modulo=p.modulo, inicio=p.inicio, fin=p.fin,
+                **_nombres(colegios, grados, p.id_colegio, p.id_grado),
             )
             for p in permisos
         ],

@@ -39,7 +39,7 @@ for _variable in ("CORREO", "PASSWORD", "NOMBRES", "APELLIDOS", "DNI"):
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from jose import jwt  # noqa: E402
+import jwt  # noqa: E402
 from passlib.context import CryptContext  # noqa: E402
 from sqlalchemy import event  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
@@ -612,7 +612,7 @@ def cabecera_de(db: Session, usuario: Usuario) -> dict[str, str]:
 
 def id_sesion_de(cabecera: dict[str, str]) -> str:
     """Id de la sesión (claim `jti`) del token de una cabecera."""
-    return jwt.get_unverified_claims(cabecera["Authorization"].split()[1])["jti"]
+    return jwt.decode(cabecera["Authorization"].split()[1], options={"verify_signature": False})["jti"]
 
 
 @pytest.fixture

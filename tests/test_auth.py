@@ -2,15 +2,15 @@
 import uuid
 from datetime import timedelta
 
+import jwt
 import pytest
-from jose import jwt
 from sqlmodel import select
 
-from app.core.security import create_access_token
+from app.core.security import create_access_token, decode_access_token
 from app.core.tiempo import ahora_utc
 from app.models.seguridad import ControlAccesoCorreo, Sesion
 from app.models.trazabilidad import Actividad
-from app.services.sesiones import DURACION_SESION
+from app.services.sesiones import DURACION_SESION, crear_sesion_y_token
 from tests.conftest import (
     CORREOS,
     PASSWORD,
@@ -47,7 +47,7 @@ def test_cu002_login_correcto_abre_una_sesion_de_8_horas(client, db, entorno, ro
     assert cuerpo["usuario"]["es_supervisor_original"] is False
     sesion = db.exec(select(Sesion)).one()
     assert instante(cuerpo["sesion"]["expira"]) - instante(cuerpo["sesion"]["inicio"]) == DURACION_SESION
-    claims = jwt.get_unverified_claims(cuerpo["access_token"])
+    claims = jwt.decode(cuerpo["access_token"], options={"verify_signature": False})
     assert claims["jti"] == cuerpo["sesion"]["id"]
     assert sesion.fin is None
 
@@ -143,6 +143,14 @@ def test_token_sin_jti_no_sirve(client, entorno):
     respuesta = client.get("/me", headers={"Authorization": f"Bearer {token}"})
 
     assert motivo(respuesta) == "sesion_invalida"
+
+
+def test_el_token_de_una_sesion_nueva_se_decodifica_con_sub_de_texto(db, entorno):
+    token, sesion = crear_sesion_y_token(db, entorno.docente)
+
+    claims = decode_access_token(token)
+    assert claims["sub"] == str(entorno.docente.id_usuario)
+    assert claims["jti"] == str(sesion.id_sesion)
 
 
 def test_cu007_sesion_vencida_da_401_sesion_expirada_y_queda_cerrada(client, db, entorno, cabeceras, reloj):

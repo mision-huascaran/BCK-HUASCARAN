@@ -4,7 +4,7 @@
 **Formato:** JSON · **Autenticación:** JWT Bearer con sesión en la BD
 
 > **Verificado el 2026-10-26** contra el OpenAPI generado por la app (`app.openapi()`) y el código de los
-> servicios, en el commit de la **Tanda H** (sobre `59a26c7`). Cubre los 89 endpoints que existen hoy.
+> servicios, en el commit de la **Tanda H** (sobre `59a26c7`). Cubre los 90 endpoints que existen hoy.
 >
 > **Errores:** todo error de negocio responde `{"detail": "...", "motivo": "codigo", ...extra}`. Los `422`
 > de validación responden `{"detail": "Los datos enviados no son válidos.", "motivo": "validacion",
@@ -372,8 +372,8 @@ agrupada por colegio para prellenar el formulario. Es el año de referencia si e
 }
 ```
 
-`vigente`: es el PA en que hoy está ese colegio. `retroactiva`: ese PA está habilitado con "Retroactivo".
-**Error:** `404 usuario_no_encontrado`.
+`id_periodo` es el `id_periodo_academico` de ese PA. `vigente`: es el PA en que hoy está ese colegio.
+`retroactiva`: ese PA está habilitado con "Retroactivo". **Error:** `404 usuario_no_encontrado`.
 
 ### `PATCH /usuarios/{id_usuario}`
 
@@ -436,15 +436,21 @@ Lo que el front guarda para validar **sin conexión**:
 ```json
 {
   "generado_en": "2026-10-26T15:00:00Z",
-  "asignaciones": [{ "id_colegio": 1, "id_grado": 1, "id_periodo_academico": 10, "retroactiva": false }],
-  "permisos": [{ "id_permiso": 5, "id_colegio": 1, "id_grado": 2, "id_periodo_academico": 9,
-                 "modulo": "lectura", "inicio": "…", "fin": "…" }],
+  "asignaciones": [{ "id_colegio": 1, "id_grado": 1,
+                     "colegio": { "id": 1, "nombre": "AMASHCA" }, "grado": { "id": 1, "nombre": "1.º" },
+                     "id_periodo_academico": 10, "retroactiva": false }],
+  "permisos": [{ "id_permiso": 5, "id_colegio": 1, "id_grado": 2,
+                 "colegio": { "id": 1, "nombre": "AMASHCA" }, "grado": { "id": 2, "nombre": "2.º" },
+                 "id_periodo_academico": 9, "modulo": "lectura", "inicio": "…", "fin": "…" }],
   "calendarios": [{ "id_colegio": 1, "…": "como GET /calendarios" }]
 }
 ```
 
 Incluye asignaciones de PA en curso o futuros, retroactivas cuyo PR no terminó, permisos programados o
-vigentes y el calendario de cada colegio y año que aparece en ellos.
+vigentes y el calendario de cada colegio y año que aparece en ellos. Solo de colegios activos.
+
+`colegio` y `grado` (`{id, nombre}`) traen el nombre para armar el filtro de aulas sin conexión; `id_colegio` e
+`id_grado` se mantienen con el mismo valor que sus `id`.
 
 ---
 
@@ -487,6 +493,57 @@ inicio es el momento de la petición.
 | `422` | `validacion` (campo `fin`) | "El fin de vigencia debe ser posterior al inicio." |
 | `422` | `validacion` (campo `motivo`) | "Ingresa el motivo de la autorización." |
 | `422` | `validacion` (campo `id_periodo_academico`) | "Este periodo todavía admite regularización ordinaria y no requiere un permiso excepcional." |
+
+### `POST /usuarios/{id_usuario}/permisos/lote` — Supervisor
+
+Varios permisos del mismo docente, año, colegio y PA, con la misma vigencia y el mismo motivo: uno por cada
+combinación de grado y módulo. **Todo o nada**: si una combinación falla, no se guarda ninguna.
+
+```json
+{
+  "id_anio_escolar": 2, "id_colegio": 4, "id_periodo_academico": 7,
+  "inicio": null, "desde_ahora": true, "fin": "2026-11-05T23:59:00-05:00",
+  "motivo": "Regularizar PA3 por reemplazo",
+  "combinaciones": [
+    { "id_grado": 3, "modulo": "asistencias" },
+    { "id_grado": 3, "modulo": "lectura" },
+    { "id_grado": 4, "modulo": "rubrica" }
+  ]
+}
+```
+
+Los campos comunes siguen las reglas del `POST` individual (`inicio` y `fin` sin zona son hora de Lima). Con
+`desde_ahora: true`, todos los permisos comparten el mismo inicio. `combinaciones`: de 1 a 24, sin repetir
+(grado, módulo).
+
+**Respuesta `201`:** `PermisoDetalle[]`, en el mismo orden que `combinaciones`.
+
+**Errores:** los del `POST` individual. Los de los campos comunes (`motivo`, `inicio`, `fin`,
+`id_anio_escolar`, `id_colegio`, `id_periodo_academico`) son el `422` por campo de siempre. Además:
+
+| Código | `motivo` | Campo / `detail` |
+| --- | --- | --- |
+| `422` | `validacion` | `combinaciones`: "Hay combinaciones de grado y módulo repetidas." |
+| `422` | `validacion` | `combinaciones`: "Debe tener al menos un elemento." / "Debe tener como máximo 24 elementos." |
+
+Si fallan una o más combinaciones (grado que el colegio no ofrece: `422` en `combinaciones.{i}.id_grado`;
+superposición: `409 permiso_superpuesto`), se responde el status, `motivo` y `detail` de la **primera** que
+falló (con sus campos propios: `errores` o `permiso_existente`), más todas las rechazadas en orden de índice
+(base 0):
+
+```json
+{
+  "detail": "Ya existe un permiso para este mismo alcance con una vigencia que coincide total o parcialmente con la propuesta.",
+  "motivo": "permiso_superpuesto",
+  "permiso_existente": { "id": 12, "inicio": "…", "fin": "…" },
+  "combinaciones_rechazadas": [
+    { "indice": 1, "id_grado": 3, "modulo": "lectura", "motivo": "permiso_superpuesto", "detail": "…",
+      "permiso_existente": { "id": 12, "inicio": "…", "fin": "…" } }
+  ]
+}
+```
+
+`permiso_existente` aparece dentro del ítem solo en las superposiciones. El `POST` individual no cambia.
 
 ### `GET /usuarios/{id_usuario}/permisos` — Supervisor
 
@@ -753,7 +810,8 @@ vacíos).
 ### `GET /alumnos/{id_alumno}`
 
 Cabecera de la vista de detalle: los campos del `AlumnoItem` más `fecha_registro` y `pertenece_desde`.
-**Errores:** `404 alumno_no_encontrado`, `403 alumno_fuera_de_alcance`.
+`fecha_registro` es la fecha de creación de la ficha (`YYYY-MM-DD`, hora de Lima): la que CU014 propone para
+"Pertenece al grupo desde" cuando falta. **Errores:** `404 alumno_no_encontrado`, `403 alumno_fuera_de_alcance`.
 
 ### `PATCH /alumnos/{id_alumno}`
 
@@ -779,6 +837,10 @@ Activar: vuelve a su grupo (exige que el colegio esté activo). Responden el `Al
 | `GET /alumnos/{id}/rubrica` | `{ "evaluaciones": [{ "mes", "fluidez", "comprension", "estado", "resultado_decimas" }] }` (las 5 más recientes) |
 | `GET /alumnos/{id}/registro-vuelo` | Una fila por PA: `[{ "numero", "id_periodo_academico", "entrada", "origen_entrada", "nivel_colocado", "id_nivel_colocado", "proyeccion", "nivel_programa" }]` |
 | `GET /alumnos/{id}/historial?page=` | Paginado: `[{ "fecha", "usuario", "rol", "accion", "cambios": [{ "campo", "anterior", "nuevo" }] }]` |
+
+En el historial, `accion` es un código (`crear` | `editar` | `activar` | `inactivar`) que el front traduce al
+verbo de CU014; `rol` es el nombre del rol del autor ("Docente", "Supervisor"); en `crear` el arreglo
+`cambios` llega vacío.
 
 ---
 
