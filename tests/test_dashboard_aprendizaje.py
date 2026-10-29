@@ -10,13 +10,14 @@ import pytest
 from sqlmodel import col, select
 
 from app.core import tiempo
-from app.models.evaluacion import NIVELES_DESCRIPTIVOS, NivelRazkids, NivelRubrica, RubricaMensual
+from app.models.evaluacion import NIVELES_DESCRIPTIVOS, NivelRazkids
 from app.models.organizacion import AlumnoPertenencia, ColegioPrograma
 from app.services.dashboard.aprendizaje import MENSAJE_SIN_EVALUACIONES, MENSAJE_SIN_INFORMACION
-from app.services.motor_sugerencias import COMPRENSION, FLUIDEZ
 from app.services.nivel_descriptivo import nivel_descriptivo
 from app.services.rubrica_service import ultima_rubrica_completa, ultimas_rubricas_completas
-from tests.conftest import crear_colegio, crear_particular, decision_de_vuelo, motivo, rangos_en_receso, seccion_de
+from tests.conftest import (
+    crear_colegio, crear_particular, decision_de_vuelo, motivo, rangos_en_receso, rubrica_mensual, seccion_de,
+)
 
 ALFA, CL = "Alfabetización", "Comprensión Lectora"
 
@@ -75,29 +76,9 @@ def _mover(db, alumno, desde, id_programa):
     db.commit()
 
 
-def _nivel_rubrica(db, id_programa, dimension, valor):
-    if valor is None:
-        return None
-    return db.exec(select(NivelRubrica.id_nivel_rubrica).where(
-        NivelRubrica.id_programa == id_programa, NivelRubrica.dimension == dimension, NivelRubrica.valor == valor,
-    )).one()
-
-
 def _rubrica(db, entorno, alumno, periodo, mes, fluidez=None, comprension=None, id_programa=None):
-    """Evaluación mensual del alumno guardada en ese PA, sin validar."""
-    programa = id_programa or alumno.id_programa_actual
-    ahora = tiempo.ahora_utc()
-    fila = RubricaMensual(
-        id_alumno=alumno.id_alumno, id_anio_escolar=entorno.anio.id_anio_escolar, mes=mes,
-        id_colegio=alumno.id_colegio, id_grado=alumno.id_grado, id_seccion=alumno.id_seccion, id_programa=programa,
-        id_periodo_academico=entorno.periodos[periodo].id_periodo_academico,
-        id_nivel_fluidez=_nivel_rubrica(db, programa, FLUIDEZ, fluidez),
-        id_nivel_comprension=_nivel_rubrica(db, programa, COMPRENSION, comprension),
-        id_docente=entorno.id_docente, fecha_registro=ahora, creado_por=1, creado_en=ahora,
-    )
-    db.add(fila)
-    db.commit()
-    return fila
+    """Evaluación mensual del alumno guardada en ese PA ("vigente", "pasado"), sin validar."""
+    return rubrica_mensual(db, alumno, entorno.periodos[periodo], mes, fluidez, comprension, id_programa)
 
 
 def _letra(db, letra) -> int:

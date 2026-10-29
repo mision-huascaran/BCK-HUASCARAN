@@ -194,6 +194,8 @@ class AsistenciaDelPeriodo(BaseModel):
     resumen: ResumenAsistencia
     mensual: list[MesAsistencia]
     por_colegio: list[AsistenciaColegio]
+    # Colegios con el PA sin iniciar (el mismo aviso que en los demás bloques del periodo).
+    colegios_sin_informacion: list[ColegioSinInformacion]
 
 
 class ClaseDictada(BaseModel):
@@ -234,6 +236,75 @@ class AsistenciaPorClase(BaseModel):
 
     contexto: ContextoDashboard
     grupos: list[GrupoAsistencia]
+
+
+# ── Comparación de resultados de aprendizaje (D4) ───────────────────────────────────
+
+VistaComparacion = Literal["resumen_colegio", "detalle_grado"]
+TipoResultado = Literal["global", "fluidez", "comprension", "nivel_alfabetico"]
+
+
+class NivelEscala(BaseModel):
+    """Un nivel de la escala del resultado. `valor_indice` (1 a 4) solo en el global."""
+
+    codigo: str
+    nombre: str
+    valor_indice: Optional[int]
+
+
+class NivelGrupo(BaseModel):
+    codigo: str
+    alumnos: int
+    # Sobre los evaluados del grupo, con 1 decimal.
+    porcentaje: Optional[float]
+
+
+class GrupoComparado(BaseModel):
+    """Un colegio (resumen) o un colegio y grado (detalle) con evaluaciones completas.
+    En el resultado global lleva su índice (2 decimales; el orden usa el valor exacto) y su
+    posición; con pendientes, la posición es provisional. En las demás vistas, null."""
+
+    posicion: Optional[int]
+    provisional: Optional[bool]
+    evaluacion_incompleta: bool
+    colegio: ItemCatalogo
+    grado: Optional[ItemCatalogo]
+    indice: Optional[float]
+    total_a_evaluar: int
+    evaluados: int
+    pendientes: int
+    distribucion: list[NivelGrupo]
+
+
+class GrupoSinEvaluaciones(BaseModel):
+    colegio: ItemCatalogo
+    grado: Optional[ItemCatalogo]
+    total_a_evaluar: int
+    evaluados: int
+    pendientes: int
+
+
+class GrupoNoAplica(BaseModel):
+    """Colegio (o colegio y grado) donde el subprograma no está configurado."""
+
+    colegio: ItemCatalogo
+    grado: Optional[ItemCatalogo]
+
+
+class ComparacionResultados(BaseModel):
+    """CU033 (paso 7): comparación de un subprograma entre colegios o colegios y grados."""
+
+    contexto: ContextoDashboard
+    fechas_corte: list[FechaCorte]
+    colegios_sin_informacion: list[ColegioSinInformacion]
+    subprograma: ItemCatalogo
+    grados: list[ItemCatalogo]
+    vista: VistaComparacion
+    resultado: TipoResultado
+    escala: list[NivelEscala]
+    ranking: list[GrupoComparado]
+    sin_evaluaciones: list[GrupoSinEvaluaciones]
+    no_aplica: list[GrupoNoAplica]
 
 
 # ── Contrato provisional (se reemplaza en las tandas siguientes) ─────────────────

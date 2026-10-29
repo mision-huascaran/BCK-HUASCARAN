@@ -208,9 +208,11 @@ def nivel_programa(escalas: dict[int, EscalaDescriptiva], id_grado: int, id_nive
     return escalas.get(id_grado, EscalaDescriptiva(())).nivel(id_nivel_colocado)
 
 
-def niveles_programa_del_periodo(db: Session, ids_alumno: list[int], id_periodo: int) -> dict[int, str]:
-    """{alumno: nivel del programa de su decisión vigente en el PA (V1)}, con el grado del
-    registro de esa decisión. Sin decisión con nivel colocado, el alumno no está."""
+def decisiones_del_periodo(db: Session, ids_alumno: list[int], id_periodo: int) -> dict[int, RegistroVuelo]:
+    """{alumno: su decisión vigente en el PA (V1), en cualquier grupo}. Sin decisión con
+    nivel colocado, el alumno no está. Su nivel del programa es
+    `nivel_programa(escalas, decision.id_grado, decision.id_nivel_colocado)`: con el grado
+    del registro."""
     if not ids_alumno:
         return {}
     registros: dict[int, list[RegistroVuelo]] = defaultdict(list)
@@ -218,14 +220,8 @@ def niveles_programa_del_periodo(db: Session, ids_alumno: list[int], id_periodo:
         col(RegistroVuelo.id_alumno).in_(ids_alumno), RegistroVuelo.id_periodo_academico == id_periodo,
     )).all():
         registros[fila.id_alumno].append(fila)
-    escalas = escalas_por_grado(db)
-    niveles = {}
-    for id_alumno, filas in registros.items():
-        decision = decision_del_periodo(filas, id_periodo)
-        nivel = nivel_programa(escalas, decision.id_grado, decision.id_nivel_colocado) if decision else None
-        if nivel is not None:
-            niveles[id_alumno] = nivel
-    return niveles
+    decisiones = {id_alumno: decision_del_periodo(filas, id_periodo) for id_alumno, filas in registros.items()}
+    return {id_alumno: decision for id_alumno, decision in decisiones.items() if decision is not None}
 
 
 def colocado_del_periodo(registros: list[RegistroVuelo], id_periodo: int) -> Optional[int]:

@@ -41,6 +41,7 @@ from app.schemas.dashboard import (
     MesAsistencia,
     ResumenAsistencia,
 )
+from app.services.dashboard.corte import colegios_sin_informacion, fechas_de_corte
 from app.services.dashboard.filtros import MOTIVO_FUERA_DE_ALCANCE, FiltrosResueltos, colegios_del_alcance, item_colegio
 from app.services.dashboard.numeros import porcentaje
 from app.services.programacion import ClaseProgramada, FiltroGrupos, clases_programadas
@@ -232,8 +233,13 @@ def asistencia_del_periodo(db: Session, filtros: FiltrosResueltos) -> Asistencia
         asistencias_completadas=total.completadas,
         mensaje=None if total.completadas else MENSAJE_SIN_INFORMACION,
     )
+    _, sin_iniciar = fechas_de_corte(filtros, hoy_lima())
     return AsistenciaDelPeriodo(
-        contexto=filtros.contexto(), resumen=resumen, mensual=_mensual(filtros, clases), por_colegio=por_colegio
+        contexto=filtros.contexto(),
+        resumen=resumen,
+        mensual=_mensual(filtros, clases),
+        por_colegio=por_colegio,
+        colegios_sin_informacion=colegios_sin_informacion(sin_iniciar),
     )
 
 

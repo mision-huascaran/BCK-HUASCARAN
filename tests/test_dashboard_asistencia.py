@@ -269,6 +269,15 @@ def test_por_colegio_con_calendarios_distintos(client, cabeceras, db, entorno):
     assert (_resumen(datos)["porcentaje"], _resumen(datos)["clases_dictadas"]) == (50.0, 2)
 
 
+def test_colegios_con_el_pa_sin_iniciar(client, cabeceras, entorno):
+    datos = _asistencia(client, cabeceras, entorno, periodo="futuro")
+    assert [(c["colegio"]["nombre"], c["motivo"]) for c in datos["colegios_sin_informacion"]] == [
+        ("Colegio Andino", "periodo_no_iniciado"), ("Colegio Lejano", "periodo_no_iniciado"),
+    ]
+    assert [c["porcentaje"] for c in datos["por_colegio"]] == [None, None]
+    assert _asistencia(client, cabeceras, entorno)["colegios_sin_informacion"] == []
+
+
 # ── Detalle por clase ───────────────────────────────────────────────────────────────
 
 def test_detalle_por_grado_y_seccion(client, cabeceras, db, entorno):

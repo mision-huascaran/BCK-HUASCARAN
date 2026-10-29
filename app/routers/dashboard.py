@@ -9,13 +9,14 @@ from sqlmodel import Session
 
 from app.core.database import get_db
 from app.schemas.dashboard import (
-    AsistenciaDelPeriodo, AsistenciaPorClase, DistribucionSubprograma, FiltrosDashboard, FiltrosDisponibles,
-    LecturaDashboard, ResultadosAprendizaje,
+    AsistenciaDelPeriodo, AsistenciaPorClase, ComparacionResultados, DistribucionSubprograma, FiltrosDashboard,
+    FiltrosDisponibles, LecturaDashboard, ResultadosAprendizaje, TipoResultado, VistaComparacion,
 )
 from app.services import dashboard_service
 from app.services.dashboard.aprendizaje import distribucion_subprograma, resultados_aprendizaje
 from app.services.dashboard.asistencia import asistencia_del_periodo, asistencia_por_clase
 from app.services.dashboard.carga_inicial import filtros_disponibles
+from app.services.dashboard.comparacion import ConsultaComparacion, comparacion_resultados
 from app.services.dashboard.filtros import FiltrosDelPeriodo
 from app.services.dashboard.roles import SoloSupervisor, SupervisorODirectivo
 
@@ -55,6 +56,34 @@ def resultados(db: Db, _usuario: SupervisorODirectivo, filtros: FiltrosDelPeriod
 
     Supervisor y Directivo (solo agregados). Errores: los de los filtros comunes."""
     return resultados_aprendizaje(db, filtros)
+
+
+@router.get("/comparacion-resultados", response_model=ComparacionResultados)
+def comparacion(
+    db: Db,
+    _usuario: SoloSupervisor,
+    filtros: FiltrosDelPeriodo,
+    id_programa: int,
+    todos_los_grados: Annotated[bool, Query(description="Todos los grados. Excluye id_grados.")] = False,
+    id_grados: Annotated[Optional[list[int]], Query(description="Grados elegidos (repetido).")] = None,
+    vista: VistaComparacion = "resumen_colegio",
+    resultado: TipoResultado = "global",
+):
+    """CU033 (paso 7): compara un subprograma entre los colegios (`resumen_colegio`) o
+    entre colegio y grado (`detalle_grado`) en los grados elegidos.
+
+    `global`: índice 1-4 del nivel del programa del Registro de Vuelo sobre los evaluados
+    del grupo (sin promediar grados), de mayor a menor por el valor exacto, con empates
+    1, 1, 3 en orden alfabético; con pendientes, "Evaluación incompleta" y posición
+    provisional. `fluidez`, `comprension` y `nivel_alfabetico`: solo distribuciones, en
+    orden alfabético. Aparte, `sin_evaluaciones` y `no_aplica` (subprograma no
+    configurado en el colegio).
+
+    Solo Supervisor. Errores: los de los filtros comunes; 422 en `id_programa` si no
+    existe y en `id_grados` si la selección está vacía, tiene repetidos o se combina con
+    `todos_los_grados`."""
+    consulta = ConsultaComparacion(id_programa, todos_los_grados, id_grados, vista, resultado)
+    return comparacion_resultados(db, filtros, consulta)
 
 
 @router.get("/asistencia", response_model=AsistenciaDelPeriodo)

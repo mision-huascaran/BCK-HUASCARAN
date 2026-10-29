@@ -99,23 +99,41 @@ def _periodo(
     return periodo
 
 
-def _ids_pedidos(todos_los_colegios: bool, id_colegios: Optional[list[int]]) -> Optional[list[int]]:
-    """Los ids elegidos uno a uno, o None si se pidió todo el alcance."""
-    if todos_los_colegios and id_colegios:
-        raise error_de_campo(CAMPO_COLEGIOS, "Elige todos los colegios o una lista de colegios, no ambas cosas.")
-    if todos_los_colegios:
-        return None
-    if not id_colegios:
-        raise error_de_campo(CAMPO_COLEGIOS, MENSAJE_SIN_COLEGIOS)
-    if len(set(id_colegios)) != len(id_colegios):
-        raise error_de_campo(CAMPO_COLEGIOS, "No repitas colegios en la selección.")
-    return id_colegios
+@dataclass(frozen=True)
+class SeleccionMultiple:
+    """Un filtro "todos o una lista" (colegios, grados): su campo y sus mensajes."""
+
+    campo: str
+    vacia: str
+    ambas: str
+    repetidos: str
+
+    def ids_elegidos(self, todos: bool, ids: Optional[list[int]]) -> Optional[list[int]]:
+        """Los ids elegidos uno a uno, o None si se eligió "todos". Exactamente uno de los
+        dos modos; una lista vacía no equivale a "todos"."""
+        if todos and ids:
+            raise error_de_campo(self.campo, self.ambas)
+        if todos:
+            return None
+        if not ids:
+            raise error_de_campo(self.campo, self.vacia)
+        if len(set(ids)) != len(ids):
+            raise error_de_campo(self.campo, self.repetidos)
+        return ids
+
+
+SELECCION_COLEGIOS = SeleccionMultiple(
+    CAMPO_COLEGIOS,
+    vacia=MENSAJE_SIN_COLEGIOS,
+    ambas="Elige todos los colegios o una lista de colegios, no ambas cosas.",
+    repetidos="No repitas colegios en la selección.",
+)
 
 
 def _colegios(
     db: Session, usuario: Usuario, todos_los_colegios: bool, id_colegios: Optional[list[int]]
 ) -> tuple[list[Colegio], AlcanceColegios]:
-    pedidos = _ids_pedidos(todos_los_colegios, id_colegios)
+    pedidos = SELECCION_COLEGIOS.ids_elegidos(todos_los_colegios, id_colegios)
     alcance = colegios_del_alcance(db, usuario)
     if pedidos is None:
         if not alcance:
