@@ -3,12 +3,10 @@
 from datetime import date, timedelta
 
 import pytest
-from sqlmodel import select
 
 from app.core import tiempo
 from app.models.evaluacion import (
-    ClaseAlumno, LecturaSemanal, LecturaSemanalAlumno, NivelRazkids,
-    RegistroVuelo, SemanaReporte,
+    ClaseAlumno, LecturaSemanal, LecturaSemanalAlumno, SemanaReporte,
 )
 from app.services import dashboard_service as servicio
 from app.schemas.dashboard import FiltrosDashboard
@@ -69,7 +67,7 @@ def test_asistencia_http_sin_autenticacion(client):
     assert respuesta.status_code in (401, 403)
 
 
-@pytest.mark.parametrize("ruta", ["asistencia", "lectura", "niveles", "cumplimiento"])
+@pytest.mark.parametrize("ruta", ["asistencia", "lectura"])
 def test_dashboard_http_docente_no_autorizado(client, cabeceras, ruta):
     respuesta = _get(client, cabeceras, ruta, rol="Docente")
     assert respuesta.status_code == 403, respuesta.text
@@ -94,13 +92,8 @@ def test_dashboard_http_rechaza_colegios_repetidos(client, cabeceras, entorno):
 
 
 def test_dashboard_http_rechaza_colegio_inexistente(client, cabeceras):
-    respuesta = _get(client, cabeceras, "niveles", id_colegio=999999)
+    respuesta = _get(client, cabeceras, "lectura", id_colegio=999999)
     assert respuesta.status_code in (400, 404, 422), respuesta.text
-
-
-def test_dashboard_http_cumplimiento_no_admite_subprograma(client, cabeceras, entorno):
-    respuesta = _get(client, cabeceras, "cumplimiento", id_programa=entorno.programas["Alfabetización"])
-    assert respuesta.status_code in (400, 422), respuesta.text
 
 
 def test_dashboard_sql_lectura_sin_registros(db, entorno):
@@ -143,33 +136,3 @@ def test_dashboard_sql_lectura_suma_lsn_lsl_y_relecturas(db, entorno):
     assert (resultado.libros_lsn, resultado.libros_lsl, resultado.total_libros) == (2, 3, 5)
     assert resultado.alumnos_con_lecturas == 1
     assert sum(resultado.por_mes.values()) == 5
-
-
-def test_dashboard_sql_niveles_sin_decisiones(db, entorno):
-    assert servicio.niveles(db, _f(entorno)) == []
-
-
-def test_dashboard_sql_niveles_decision_colocada_por_pa(db, entorno):
-    alumna = entorno.alumnos["ana"]
-    nivel = db.exec(select(NivelRazkids)).first()
-    assert nivel is not None
-    ahora = tiempo.ahora_utc()
-    db.add(RegistroVuelo(id_alumno=alumna.id_alumno,
-                         id_anio_escolar=entorno.anio.id_anio_escolar,
-                         id_periodo_academico=entorno.periodos["vigente"].id_periodo_academico,
-                         id_colegio=alumna.id_colegio, id_grado=alumna.id_grado,
-                         id_seccion=alumna.id_seccion, id_programa=alumna.id_programa_actual,
-                         id_nivel_colocado=nivel.id_nivel_rk,
-                         id_docente=entorno.id_docente, fecha_registro=ahora,
-                         creado_por=1, creado_en=ahora))
-    db.commit()
-    resultado = servicio.niveles(db, _f(entorno, id_colegio=alumna.id_colegio,
-                                        id_periodo_academico=entorno.periodos["vigente"].id_periodo_academico))
-    assert len(resultado) == 1
-    assert (resultado[0].id_nivel_rk, resultado[0].alumnos) == (nivel.id_nivel_rk, 1)
-
-
-def test_dashboard_sql_cumplimiento_consulta_modulos_reales(db, entorno):
-    resultado = servicio.cumplimiento(db, _f(entorno))
-    assert resultado.modulos
-    assert all(m.vencidos >= 0 and m.incompletos >= 0 for m in resultado.modulos)

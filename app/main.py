@@ -14,7 +14,7 @@ from app.routers import (
     catalogos,
     clases,
     colegios,
-    dashboard, #nuevo
+    dashboard,
     inicio,
     lectura,
     password,
@@ -55,7 +55,7 @@ app.include_router(lectura.router)
 app.include_router(rubricas.router)
 app.include_router(registro_vuelo.router)
 app.include_router(clases.router)
-app.include_router(dashboard.router) #nuevo
+app.include_router(dashboard.router)
 app.include_router(inicio.router)
 app.include_router(seguimiento.router)
 app.include_router(sincronizacion.router)

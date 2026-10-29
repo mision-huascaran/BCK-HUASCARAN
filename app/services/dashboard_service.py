@@ -1,6 +1,6 @@
-"""
+"""Endpoints provisionales del Dashboard (Romina). Se reemplazan en D2, D3 y D5.
+
 El año de referencia sigue CU015; el PA es opcional en indicadores académicos.
-El cumplimiento de CU011 se refiere exclusivamente a obligaciones exigibles HOY.
 """
 from collections import Counter, defaultdict
 from typing import Optional
@@ -12,18 +12,16 @@ from app.core.errores import error_de_campo
 from app.core.tiempo import hoy_lima
 from app.models.evaluacion import (
     ESTADOS_ASISTIO, Asistencia, Clase, ClaseAlumno, LECTURA_NORMAL,
-    LecturaSemanal, LecturaSemanalAlumno, NivelRazkids, NivelRubrica,
+    LecturaSemanal, LecturaSemanalAlumno, NivelRubrica,
     EscalaNivelDescriptivo, RegistroVuelo, RubricaMensual,
 )
 from app.models.organizacion import Alumno, AlumnoPertenencia, AnioEscolar, Colegio, Grado, PeriodoAcademico, Programa, Seccion
 from app.schemas.dashboard import (
-    AsistenciaDashboard, CumplimientoDashboard, CumplimientoModulo,
-    FiltrosDashboard, LecturaDashboard, NivelDashboard,
+    AsistenciaDashboard, FiltrosDashboard, LecturaDashboard,
     AprendizajePeriodoDashboard, AprendizajeSubprograma, DistribucionAprendizaje,
 )
 from app.services import lectura_service, registro_vuelo
-from app.services.calendario import anio_de_referencia, cargar_calendarios, pa_actual_de_colegios
-from app.services.registros_vencidos import MODULOS, estado_de_registros
+from app.services.calendario import anio_de_referencia, cargar_calendarios
 from app.services.nivel_descriptivo import EscalaDescriptiva
 
 
@@ -193,37 +191,6 @@ def libros(db: Session, f: FiltrosDashboard) -> LecturaDashboard:
     )
 
 
-def niveles(db: Session, f: FiltrosDashboard) -> list[NivelDashboard]:
-    """CU031: una decisión vigente por alumno y PA, incluso si cambió de grupo."""
-    anio = validar_filtros(db, f)
-    periodos = _periodos(db, anio, f)
-    if not periodos:
-        return []
-    # Se consultan las decisiones de todo el año; filtrar *después* de escoger la
-    # vigente evita contar una decisión antigua de otro grupo tras un traslado.
-    from app.models.evaluacion import RegistroVuelo
-    filas = db.exec(select(RegistroVuelo).where(
-        RegistroVuelo.id_anio_escolar == anio.id_anio_escolar,
-        col(RegistroVuelo.id_periodo_academico).in_(periodos),
-    )).all()
-    por_alumno_pa: dict[tuple[int, int], list[RegistroVuelo]] = {}
-    for r in filas:
-        por_alumno_pa.setdefault((r.id_alumno, r.id_periodo_academico), []).append(r)
-    conteo = Counter()
-    for (_, pa), registros in por_alumno_pa.items():
-        decision = registro_vuelo.decision_del_periodo(registros, pa)
-        if decision is None or (f.id_colegios is not None and decision.id_colegio not in f.id_colegios) or any(getattr(decision, campo) != getattr(f, campo)
-                                   for campo in ("id_colegio", "id_grado", "id_seccion", "id_programa")
-                                   if getattr(f, campo) is not None):
-            continue
-        conteo[(pa, decision.id_nivel_colocado)] += 1
-    letras = dict(db.exec(select(NivelRazkids.id_nivel_rk, NivelRazkids.letra)).all())
-    return [NivelDashboard(id_periodo_academico=pa, id_nivel_rk=nivel,
-                           letra=letras[nivel], alumnos=cantidad)
-            for (pa, nivel), cantidad in sorted(conteo.items())]
-
-
-
 def aprendizaje(db: Session, f: FiltrosDashboard) -> AprendizajePeriodoDashboard:
     """CU031/CU033: corte por colegio y PA; alumno único según pertenencia histórica.
 
@@ -333,78 +300,3 @@ def aprendizaje(db: Session, f: FiltrosDashboard) -> AprendizajePeriodoDashboard
         fecha_corte_por_colegio={colegio: corte.isoformat() for colegio, corte in cortes.items()},
         resultados=resultados,
     )
-
-def cumplimiento(db: Session, f: FiltrosDashboard) -> CumplimientoDashboard:
-    """CU011: vencidos e incompletos exigibles hoy, nunca un histórico inventado.
-
-    El evaluador no distingue subprograma dentro de la obligación. Por seguridad,
-    una petición por programa se rechaza en vez de devolver un agregado falso.
-    """
-    anio = validar_filtros(db, f)
-    if f.id_programa is not None:
-        raise error_de_campo(
-            "id_programa",
-            "CU011 no permite desagregar todas las obligaciones por subprograma.",
-        )
-
-    calendarios = cargar_calendarios(db)
-    pa_actual = pa_actual_de_colegios(db, solo_activos=True, calendarios=calendarios)
-
-    # No aplicar un filtro de año que solo se valida pero no se usa: CU011
-    # describe obligaciones del PA vigente de cada colegio, no de años pasados.
-    anios_pa = {
-        pa.id_periodo_academico: db.get(PeriodoAcademico, pa.id_periodo_academico).id_anio_escolar
-        for pa in pa_actual.values() if pa.id_periodo_academico is not None
-    }
-    if f.id_anio_escolar is not None and not any(
-        anios_pa.get(pa.id_periodo_academico) == f.id_anio_escolar
-        and (f.id_colegio is None or colegio == f.id_colegio)
-        and (f.id_colegios is None or colegio in f.id_colegios)
-        for colegio, pa in pa_actual.items()
-    ):
-        raise error_de_campo(
-            "id_anio_escolar",
-            "CU011 solo permite consultar obligaciones exigibles del año escolar vigente.",
-        )
-
-    if f.id_periodo_academico is not None and not any(
-        pa.id_periodo_academico == f.id_periodo_academico
-        and (f.id_colegio is None or colegio == f.id_colegio)
-        and (f.id_colegios is None or colegio in f.id_colegios)
-        for colegio, pa in pa_actual.items()
-    ):
-        raise error_de_campo(
-            "id_periodo_academico",
-            "CU011 solo permite consultar obligaciones del PA vigente.",
-        )
-
-    estado = estado_de_registros(db, calendarios)
-
-    def corresponde(item, modulo):
-        if item.modulo != modulo:
-            return False
-        if f.id_colegio is not None and item.id_colegio != f.id_colegio:
-            return False
-        if f.id_colegios is not None and item.id_colegio not in f.id_colegios:
-            return False
-        if f.id_grado is not None and item.id_grado != f.id_grado:
-            return False
-        if f.id_seccion is not None and item.id_seccion != f.id_seccion:
-            return False
-        pa = pa_actual.get(item.id_colegio)
-        if f.id_anio_escolar is not None and (pa is None or anios_pa.get(pa.id_periodo_academico) != f.id_anio_escolar):
-            return False
-        if f.id_periodo_academico is not None and (
-            pa is None or pa.id_periodo_academico != f.id_periodo_academico
-        ):
-            return False
-        return True
-
-    return CumplimientoDashboard(modulos=[
-        CumplimientoModulo(
-            modulo=modulo,
-            vencidos=sum(corresponde(item, modulo) for item in estado.vencidas),
-            incompletos=sum(corresponde(item, modulo) for item in estado.incompletas),
-        )
-        for modulo in MODULOS
-    ])
