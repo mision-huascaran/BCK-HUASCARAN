@@ -31,3 +31,4 @@ environments/
 # OWASP ZAP (Jenkins): no va en la imagen
 zap/
 zap-reports/
+.scannerwork/

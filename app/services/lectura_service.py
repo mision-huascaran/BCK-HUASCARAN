@@ -84,7 +84,9 @@ from app.services.programacion import (
     clases_programadas,
     congelar_lista,
     fila_de_programada,
+    habitual_sin_alumnos,
 )
+from app.services.pertenencia import lista_del_grupo
 from app.services.sincronizacion import (
     MENSAJE_ACTIVIDAD_REQUERIDA,
     OPERACION_AJENA,
@@ -351,6 +353,24 @@ def _clases_de_la_semana(db: Session, filtro: FiltroLectura, semana: SemanaRepor
     return clases_programadas(db, filtro.grupo, semana.fecha_inicio, semana.fecha_fin)
 
 
+def _sin_clases(db: Session, filtro: FiltroLectura, semana: SemanaReporte) -> RechazoOperacion:
+    """Por qué la semana no tiene clases del grupo (D101): si su día de clase cae en la
+    semana pero el grupo no tenía alumnos, `sin_alumnos`; si no, `semana_sin_clase`."""
+    if habitual_sin_alumnos(db, filtro.grupo, semana.fecha_inicio, semana.fecha_fin):
+        return RechazoOperacion(SIN_ALUMNOS, MENSAJE_SIN_ALUMNOS)
+    return RechazoOperacion(SEMANA_SIN_CLASE, MENSAJE_SEMANA_SIN_CLASE)
+
+
+def _con_alumnos_del_programa(db: Session, filtro: FiltroLectura, clase: ClaseProgramada) -> bool:
+    """Si la lista de la clase (la congelada o, si no la tiene, la del grupo en su fecha)
+    tiene alumnos del subprograma del filtro."""
+    fila = db.get(Clase, clase.id_clase) if clase.id_clase is not None else None
+    if fila is not None and fila.lista_congelada_en is not None:
+        return bool(_alumnos_de_la_lista(db, fila.id_clase, filtro.id_programa))
+    lista = lista_del_grupo(db, filtro.id_colegio, filtro.id_grado, filtro.id_seccion, clase.fecha)
+    return any(id_programa == filtro.id_programa for _, id_programa in lista)
+
+
 def _sugerida(clases: list[ClaseProgramada]) -> Optional[ClaseProgramada]:
     """La habitual o reprogramada de la semana (una adicional no la reemplaza sola)."""
     return next((c for c in clases if c.tipo == TIPO_HABITUAL), None)
@@ -499,14 +519,18 @@ def consultar_tabla(db: Session, usuario: Usuario, filtro: FiltroLectura) -> Tab
     sea el suyo: la respuesta trae su `mes` y `id_anio_escolar` para ajustar el filtro. Si
     no existe: 404 `tabla_no_existe`, con la clase de referencia sugerida de toda la
     semana y si el usuario podría crearla; si la semana no tiene clases del grupo, 422
-    `semana_sin_clase`."""
+    `semana_sin_clase`, y si las tiene pero sin alumnos del subprograma en su fecha, 422
+    `sin_alumnos`."""
     semana = _validar_filtro(db, usuario, filtro)
     tabla = _tabla_por_filtro(db, filtro)
     if tabla is not None:
         return _respuesta(db, usuario, tabla)
     clases = _clases_de_la_semana(db, filtro, semana)
     if not clases:
-        raise _no_procesable(MENSAJE_SEMANA_SIN_CLASE, SEMANA_SIN_CLASE)
+        rechazo = _sin_clases(db, filtro, semana)
+        raise _no_procesable(rechazo.detail, rechazo.motivo)
+    if not any(_con_alumnos_del_programa(db, filtro, c) for c in clases):
+        raise _no_procesable(MENSAJE_SIN_ALUMNOS, SIN_ALUMNOS)
     sugerida = _sugerida(clases)
     puede = _escritura_para_crear(db, usuario, filtro, semana, sugerida or clases[0])
     raise ErrorNegocio(
@@ -739,6 +763,8 @@ def _creador(db: Session, usuario: Usuario, filtro: FiltroLectura, semana: Seman
         if semana.fecha_inicio > dia:
             raise RechazoOperacion(SEMANA_FUTURA, MENSAJE_SEMANA_FUTURA)
         clases = _clases_de_la_semana(db, filtro, semana)
+        if not clases:
+            raise _sin_clases(db, filtro, semana)
         elegida = _elegida(clases, data.id_clase_referencia, data.fecha_clase_referencia)
         if elegida.fecha > dia:
             raise RechazoOperacion(CLASE_NO_REALIZADA, MENSAJE_CLASE_NO_REALIZADA)

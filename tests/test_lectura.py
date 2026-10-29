@@ -25,6 +25,7 @@ from app.services.registros_vencidos import estado_de_registros
 from tests.conftest import (
     a_las,
     agregar_no_lectivo,
+    asignar,
     clase_guardada,
     crear_alumno,
     crear_particular,
@@ -32,6 +33,7 @@ from tests.conftest import (
     motivo,
     rangos_en_receso,
     registrar_asistencia,
+    seccion_de,
     semana_de,
 )
 
@@ -144,6 +146,44 @@ def test_get_semana_sin_clase_y_semana_futura(client, db, entorno, doc, activida
         "permitida": False, "motivo": "No es posible adelantar registros. Seleccione la semana actual o una anterior.",
         "id_permiso": None, "aviso_permiso": None,
     }
+
+
+MENSAJE_SIN_ALUMNOS = "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."
+
+
+def test_grupo_sin_alumnos_con_dia_de_clase_es_sin_alumnos_y_sin_dia_es_semana_sin_clase(
+    client, db, entorno, doc, actividad
+):
+    """D101: 3.º del Andino no tiene alumnos. Sin día de clase no hay clase; con día de
+    clase, sí la habría, pero nadie pertenecía al grupo en su fecha."""
+    andino, tercero = entorno.colegios["Andino"], entorno.grados["3.º"]
+    asignar(db, entorno.id_docente, andino, [tercero], entorno.periodos["vigente"], 1)
+    params = {**filtro(db, entorno), "id_grado": tercero, "id_seccion": seccion_de(db, andino, tercero).id_seccion}
+    db.commit()
+    sin_dia = client.get("/lectura/tablas", params=params, headers=doc)
+    fila = db.get(ColegioGrado, (andino.id_colegio, tercero))
+    fila.dia_clase = 1
+    db.add(fila)
+    db.commit()
+
+    consulta = client.get("/lectura/tablas", params=params, headers=doc)
+    creacion = client.post("/lectura/tablas", json={"id_operacion": str(uuid.uuid4()), **params}, headers=doc)
+
+    assert (sin_dia.status_code, motivo(sin_dia)) == (422, "semana_sin_clase")
+    for respuesta in (consulta, creacion):
+        assert (respuesta.status_code, motivo(respuesta), respuesta.json()["detail"]) == (
+            422, "sin_alumnos", MENSAJE_SIN_ALUMNOS)
+    assert db.exec(select(LecturaSemanal)).all() == []
+
+
+def test_get_clase_sin_alumnos_del_subprograma_es_sin_alumnos(client, db, entorno, doc, actividad):
+    """1.º tiene clase (Luis, de Alfabetización), pero nadie de Comprensión Lectora."""
+    sin_comprension = consultar(client, doc, db, entorno, grado="1.º")
+    con_alfabetizacion = consultar(client, doc, db, entorno, grado="1.º", programa=ALFABETIZACION)
+
+    assert (sin_comprension.status_code, motivo(sin_comprension)) == (422, "sin_alumnos")
+    assert sin_comprension.json()["detail"] == MENSAJE_SIN_ALUMNOS
+    assert (con_alfabetizacion.status_code, motivo(con_alfabetizacion)) == (404, "tabla_no_existe")
 
 
 def test_get_con_tabla_filas_de_la_lista_historica_del_programa(client, db, entorno, cabeceras, tabla):

@@ -33,7 +33,11 @@ class AlumnoEditar(ParcheSinNulos):
 
     Si cambia el grupo (colegio, grado, sección o subprograma) de un alumno activo,
     `cambio_grupo_desde` es obligatorio. Si cambia el colegio o el grado sin `id_seccion`,
-    se asigna la única sección activa del grado nuevo (422 si tiene varias)."""
+    se asigna la única sección activa del grado nuevo (422 si tiene varias).
+
+    Un alumno activo sin intervalos de pertenencia confirma en `pertenece_desde` desde qué
+    día forma parte de su grupo (el final, con los demás cambios aplicados): es obligatorio
+    para él y se rechaza para cualquier otro (CU014)."""
 
     nombres: Optional[Texto] = None
     apellidos: Optional[Texto] = None
@@ -42,6 +46,7 @@ class AlumnoEditar(ParcheSinNulos):
     id_seccion: Optional[int] = None
     id_programa: Optional[int] = None
     cambio_grupo_desde: Optional[date] = None
+    pertenece_desde: Optional[date] = None
 
 
 class CambioEstadoAlumno(BaseModel):

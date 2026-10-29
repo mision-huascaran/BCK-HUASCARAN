@@ -10,13 +10,17 @@ exigen) y los colegios que ya tienen algún registro consolidado en su PA vigent
 - Lectura: por grupo, subprograma y semana con clase habitual o reprogramada en el PA en
   curso; vence el sábado 00:00 de esa semana. VENCIDA sin tabla; INCOMPLETA con filas
   "Pendiente". "No realizada" cumple; una semana sin clase no obliga.
-- Rúbrica: por alumno y mes del PA en curso (R1 y R2); vence el día 1 del mes siguiente.
-  VENCIDA sin ninguna dimensión; INCOMPLETA con una sola.
+- Rúbrica: por alumno y mes con días lectivos del PA en curso (R2, y DP-1 para un mes
+  partido entre dos PA); vence el día 1 del mes siguiente. VENCIDA sin ninguna
+  dimensión; INCOMPLETA con una sola.
 - Registro de Vuelo: por alumno y PA ya terminado del año; vence el día siguiente al fin
   del PA. VENCIDA sin fila; INCOMPLETA con fila pero sin nivel colocado (en cualquier
   grupo, V1). Los PA en curso y futuros no vencen.
 
 Solo se exigen los grados con docente asignado a ese PA en un colegio activo.
+
+"El PA en curso" es el PA de referencia de cada colegio: durante el PR n, el PA n que se
+regulariza (DP-2, provisional: `calendario.pa_de_referencia_para_vencidos`).
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -44,11 +48,19 @@ from app.services.calendario import (
     cargar_calendarios,
     en_pa_de_su_colegio,
     pa_actual_de_colegios,
+    pa_de_referencia_para_vencidos,
 )
 from app.services.lectura_service import colegios_con_filas_confirmadas, tablas_con_pendientes
 from app.services.programacion import ClaseProgramada, FiltroGrupos, clases_programadas
 from app.services.registro_vuelo import colegios_con_decisiones
-from app.services.rubrica_service import GrupoMes, alumnos_del_mes, colegios_con_rubricas, mes_evaluado
+from app.services.reglas_provisionales import regla_mes_exigible_en_pa
+from app.services.rubrica_service import (
+    GrupoMes,
+    MesEvaluado,
+    alumnos_del_mes,
+    colegios_con_rubricas,
+    mes_evaluado,
+)
 
 UN_DIA = timedelta(days=1)
 # Lectura: la semana vence el sábado (lunes + 5) a las 00:00.
@@ -82,8 +94,12 @@ class RegistroObligatorio:
 class EstadoRegistros:
     vencidas: list[RegistroObligatorio] = field(default_factory=list)
     incompletas: list[RegistroObligatorio] = field(default_factory=list)
-    # Colegios con algún registro consolidado en su PA vigente (de cualquier módulo).
+    # Colegios con algún registro consolidado en su PA de referencia (de cualquier módulo).
     colegios_con_registros: set[int] = field(default_factory=set)
+    # El PA de referencia de cada colegio y los que hoy están en un PR (sus vencidos son
+    # del PA que regularizan, DP-2): "Incumplimiento de Sede" no los mira.
+    pa_referencia: PaPorColegio = field(default_factory=dict)
+    colegios_en_receso: set[int] = field(default_factory=set)
 
     def absorber(self, otro: "EstadoRegistros") -> None:
         self.vencidas.extend(otro.vencidas)
@@ -106,9 +122,10 @@ def por_modulo(registros: list[RegistroObligatorio]) -> dict[str, int]:
 @dataclass(frozen=True)
 class ContextoVencidos:
     calendarios: Calendarios
-    # PA en que está hoy cada colegio activo.
-    pa_actual: PaPorColegio
-    # Asignados al PA actual de cada colegio.
+    # PA sobre el que se calculan los vencidos de cada colegio activo: el PA en curso o,
+    # durante el PR n, el PA n que se regulariza (DP-2, provisional).
+    pa_referencia: PaPorColegio
+    # Asignados a ese PA de cada colegio.
     docentes: DocentesPorGrado
     colegios_activos: list[int]
     hoy: date
@@ -179,8 +196,8 @@ def _colegios_con_asistencias(db: Session, pa_actual: PaPorColegio) -> set[int]:
 def _clases_del_pa(
     db: Session, contexto: ContextoVencidos, id_colegio: int, hasta: date
 ) -> list[ClaseProgramada]:
-    """Clases programadas del PA actual del colegio hasta `hasta`, de grados con docente."""
-    pa = contexto.pa_actual[id_colegio]
+    """Clases programadas del PA de referencia del colegio hasta `hasta`, de grados con docente."""
+    pa = contexto.pa_referencia[id_colegio]
     if hasta < pa.fecha_inicio:
         return []
     clases = clases_programadas(
@@ -195,11 +212,11 @@ def _clases_del_pa(
 def asistencias(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
     obligaciones = [
         (id_colegio, clase)
-        for id_colegio in sorted(contexto.pa_actual)
+        for id_colegio in sorted(contexto.pa_referencia)
         for clase in _clases_del_pa(db, contexto, id_colegio, contexto.hoy - UN_DIA)
     ]
     incompletas = _incompletas(db, [c.id_clase for _, c in obligaciones if c.tiene_asistencias])
-    estado = EstadoRegistros(colegios_con_registros=_colegios_con_asistencias(db, contexto.pa_actual))
+    estado = EstadoRegistros(colegios_con_registros=_colegios_con_asistencias(db, contexto.pa_referencia))
     for id_colegio, clase in obligaciones:
         if clase.tiene_asistencias and clase.id_clase not in incompletas:
             continue
@@ -210,13 +227,36 @@ def asistencias(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
 
 # ── Seguimiento de Lectura ──────────────────────────────────────────────────────────
 
-def _semanas_vencidas(db: Session, contexto: ContextoVencidos, id_colegio: int) -> dict[tuple, date]:
+@dataclass(frozen=True)
+class ObligacionLectura:
+    """Una tabla de Lectura esperada: grupo, subprograma y semana (su lunes), con la fecha
+    de la clase que la genera, su tabla si existe y si está pendiente (sin tabla, o tabla
+    `normal` con alguna fila "Pendiente")."""
+
+    id_grado: int
+    id_seccion: int
+    id_programa: int
+    lunes: date
+    fecha_clase: date
+    tabla: Optional[LecturaSemanal]
+    pendiente: bool
+
+
+def _semanas_vencidas(
+    db: Session, id_colegio: int, desde: date, hasta: date, calendarios: Calendarios, hoy: date,
+    id_periodo: Optional[int],
+) -> dict[tuple, date]:
     """{(grado, sección, lunes): fecha de la clase} de las semanas con clase habitual o
-    reprogramada del PA actual cuyo sábado ya llegó."""
+    reprogramada con fecha en [desde, min(hasta, hoy)] cuyo sábado ya llegó."""
+    fin = min(hasta, hoy)
+    if fin < desde:
+        return {}
     semanas = {}
-    for clase in _clases_del_pa(db, contexto, id_colegio, contexto.hoy):
+    for clase in clases_programadas(db, FiltroGrupos(id_colegio), desde, fin, calendarios):
         lunes = clase.fecha - timedelta(days=clase.fecha.weekday())
-        if clase.tipo == TIPO_HABITUAL and lunes + timedelta(days=DIAS_HASTA_EL_SABADO) <= contexto.hoy:
+        vencida = lunes + timedelta(days=DIAS_HASTA_EL_SABADO) <= hoy
+        del_periodo = id_periodo is None or clase.id_periodo_academico == id_periodo
+        if clase.tipo == TIPO_HABITUAL and vencida and del_periodo:
             semanas.setdefault((clase.id_grado, clase.id_seccion, lunes), clase.fecha)
     return semanas
 
@@ -233,29 +273,57 @@ def _tablas_del_colegio(db: Session, id_colegio: int, lunes: set[date]) -> dict[
     return {(t.id_grado, t.id_seccion, t.id_programa, inicio): t for t, inicio in filas}
 
 
-def _lectura_del_colegio(db: Session, contexto: ContextoVencidos, id_colegio: int, estado: EstadoRegistros) -> None:
-    semanas = _semanas_vencidas(db, contexto, id_colegio)
+def obligaciones_lectura(
+    db: Session,
+    id_colegio: int,
+    desde: date,
+    hasta: date,
+    calendarios: Calendarios,
+    hoy: date,
+    id_periodo: Optional[int] = None,
+) -> list[ObligacionLectura]:
+    """Tablas de Lectura que ya debían existir en el colegio (CU011): por grupo, subprograma
+    y semana con clase habitual o reprogramada con fecha en [desde, min(hasta, hoy)] (de ese
+    PA si se pasa `id_periodo`), cuyo sábado ya llegó, para cada subprograma con alumnos del
+    grupo en la fecha de la clase. "No realizada" cumple; una semana sin clase no obliga.
+    En orden de grado, sección, semana y subprograma. Consultas fijas por colegio."""
+    semanas = _semanas_vencidas(db, id_colegio, desde, hasta, calendarios, hoy, id_periodo)
     if not semanas:
-        return
-    pa = contexto.pa_actual[id_colegio]
-    intervalos = _intervalos_del_colegio(db, id_colegio, pa.fecha_inicio, pa.fecha_fin)
+        return []
+    intervalos = _intervalos_del_colegio(db, id_colegio, desde, hasta)
     tablas = _tablas_del_colegio(db, id_colegio, {lunes for _, _, lunes in semanas})
     pendientes = tablas_con_pendientes(db, [t.id for t in tablas.values() if t.estado == "normal"])
+    obligaciones = []
     for (grado, seccion, lunes), fecha in sorted(semanas.items()):
         programas = {
             i.id_programa for i in intervalos if (i.id_grado, i.id_seccion) == (grado, seccion) and _contiene(i, fecha)
         }
         for id_programa in sorted(programas):
             tabla = tablas.get((grado, seccion, id_programa, lunes))
-            if tabla is not None and tabla.id not in pendientes:
-                continue
-            obligacion = (LECTURA, id_colegio, grado, seccion, f"{lunes.isoformat()}:{id_programa}")
-            estado.agregar(tabla is None, obligacion, contexto.docentes[(id_colegio, grado)])
+            pendiente = tabla is None or tabla.id in pendientes
+            obligaciones.append(ObligacionLectura(grado, seccion, id_programa, lunes, fecha, tabla, pendiente))
+    return obligaciones
+
+
+def _lectura_del_colegio(db: Session, contexto: ContextoVencidos, id_colegio: int, estado: EstadoRegistros) -> None:
+    pa = contexto.pa_referencia[id_colegio]
+    for obligacion in obligaciones_lectura(
+        db, id_colegio, pa.fecha_inicio, pa.fecha_fin, contexto.calendarios, contexto.hoy, pa.id_periodo_academico
+    ):
+        docentes = contexto.docentes.get((id_colegio, obligacion.id_grado))
+        if not obligacion.pendiente or docentes is None:
+            continue
+        referencia = f"{obligacion.lunes.isoformat()}:{obligacion.id_programa}"
+        estado.agregar(
+            obligacion.tabla is None,
+            (LECTURA, id_colegio, obligacion.id_grado, obligacion.id_seccion, referencia),
+            docentes,
+        )
 
 
 def lectura(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
-    estado = EstadoRegistros(colegios_con_registros=colegios_con_filas_confirmadas(db, contexto.pa_actual))
-    for id_colegio in sorted(contexto.pa_actual):
+    estado = EstadoRegistros(colegios_con_registros=colegios_con_filas_confirmadas(db, contexto.pa_referencia))
+    for id_colegio in sorted(contexto.pa_referencia):
         _lectura_del_colegio(db, contexto, id_colegio, estado)
     return estado
 
@@ -274,12 +342,25 @@ def _meses_vencidos(pa: PeriodoCalendario, hoy: date) -> list[tuple[int, int]]:
         anio, mes = siguiente.year, siguiente.month
 
 
+def _mes_exigible(mes: MesEvaluado, pa: PeriodoCalendario) -> bool:
+    """Si la rúbrica del mes se exige en el PA (DP-1, provisional): si alguno de los PA que
+    pueden evaluarlo es ese, es decir, si el mes tiene días lectivos de él."""
+    return regla_mes_exigible_en_pa(
+        mes.dias_lectivos, _pa_entre(mes.periodos_que_evaluan), pa.id_periodo_academico
+    )
+
+
+def _pa_entre(periodos: tuple[PeriodoCalendario, ...]) -> Callable[[date], Optional[PeriodoCalendario]]:
+    """`pa_de` restringido a esos PA (los del mes, ya resueltos con el calendario del colegio)."""
+    return lambda dia: next((p for p in periodos if p.fecha_inicio <= dia <= p.fecha_fin), None)
+
+
 def _rubrica_del_grupo(db: Session, grupo: GrupoMes, pa: PeriodoCalendario, docentes: list[int], estado: EstadoRegistros) -> None:
     try:
         mes = mes_evaluado(db, grupo)
     except ErrorNegocio:
         return
-    if mes.periodo.id_periodo_academico != pa.id_periodo_academico:
+    if not _mes_exigible(mes, pa):
         return
     evaluaciones = {
         r.id_alumno: r for r in db.exec(select(RubricaMensual).where(
@@ -296,8 +377,8 @@ def _rubrica_del_grupo(db: Session, grupo: GrupoMes, pa: PeriodoCalendario, doce
 
 
 def rubrica(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
-    estado = EstadoRegistros(colegios_con_registros=colegios_con_rubricas(db, contexto.pa_actual))
-    for id_colegio, pa in sorted(contexto.pa_actual.items()):
+    estado = EstadoRegistros(colegios_con_registros=colegios_con_rubricas(db, contexto.pa_referencia))
+    for id_colegio, pa in sorted(contexto.pa_referencia.items()):
         calendario = contexto.calendarios.calendario_en(id_colegio, contexto.hoy)
         intervalos = _intervalos_del_colegio(db, id_colegio, pa.fecha_inicio, pa.fecha_fin)
         grupos = {(i.id_grado, i.id_seccion, i.id_programa) for i in intervalos if (id_colegio, i.id_grado) in contexto.docentes}
@@ -348,7 +429,7 @@ def _vuelo_del_pa(db: Session, id_colegio: int, pa: PeriodoCalendario, estado: E
 
 
 def registro_vuelo(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
-    estado = EstadoRegistros(colegios_con_registros=colegios_con_decisiones(db, contexto.pa_actual))
+    estado = EstadoRegistros(colegios_con_registros=colegios_con_decisiones(db, contexto.pa_referencia))
     for id_colegio in contexto.colegios_activos:
         for pa in _pas_terminados(contexto, id_colegio):
             _vuelo_del_pa(db, id_colegio, pa, estado)
@@ -369,13 +450,16 @@ def estado_de_registros(db: Session, calendarios: Optional[Calendarios] = None) 
     """Vencidos e incompletos de los cuatro módulos. Con `calendarios` ya cargados no
     vuelve a leerlos."""
     calendarios = calendarios or cargar_calendarios(db)
-    pa_actual = pa_actual_de_colegios(db, solo_activos=True, calendarios=calendarios)
+    pa_referencia = pa_de_referencia_para_vencidos(db, solo_activos=True, calendarios=calendarios)
     contexto = ContextoVencidos(
-        calendarios=calendarios, pa_actual=pa_actual, docentes=docentes_por_grado(db, pa_actual),
+        calendarios=calendarios, pa_referencia=pa_referencia, docentes=docentes_por_grado(db, pa_referencia),
         colegios_activos=sorted(db.exec(select(Colegio.id_colegio).where(col(Colegio.activo).is_(True))).all()),
         hoy=hoy_lima(),
     )
-    estado = EstadoRegistros()
+    en_curso = pa_actual_de_colegios(db, solo_activos=True, calendarios=calendarios)
+    estado = EstadoRegistros(
+        pa_referencia=pa_referencia, colegios_en_receso=set(pa_referencia) - set(en_curso),
+    )
     for evaluador in EVALUADORES.values():
         estado.absorber(evaluador(db, contexto))
     return estado

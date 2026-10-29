@@ -531,6 +531,31 @@ def test_porcentaje_excluye_listas_incompletas_y_cuenta_una_vez_la_reprogramada(
         "porcentaje": None, "asistidas": 0, "contabilizadas": 0}
 
 
+def test_porcentaje_cuenta_la_clase_adicional_completa(client, db, entorno, cabeceras, doc, actividad):
+    """D100: una adicional creada por PUT /asistencias, con toda su lista marcada, cuenta."""
+    respuesta = guardar(client, doc, db, entorno, MARTES, [registro(entorno)], adicional=True)
+    assert respuesta.json()["clase"]["tipo"] == "adicional"
+    lista = db.exec(select(ClaseAlumno).join(Clase).where(Clase.fecha == MARTES)).all()
+    assert [f.id_alumno for f in lista] == [entorno.alumnos["ana"].id_alumno]
+
+    de_ana = asistencia_de(client, cabeceras["Supervisor"], entorno.alumnos["ana"])
+
+    assert de_ana == {"porcentaje": 100.0, "asistidas": 1, "contabilizadas": 1}
+
+
+def test_porcentaje_no_cuenta_la_adicional_con_un_alumno_sin_marcar(client, db, entorno, cabeceras, doc, actividad):
+    """CU015: una lista incompleta no cuenta para nadie, aunque sea de otro subprograma."""
+    ana = entorno.alumnos["ana"]
+    nora = crear_alumno(db, "Nora", "Zea", entorno.colegios["Andino"], entorno.grados["2.º"],
+                        entorno.programas["Alfabetización"], 1, desde=LUNES_ANTERIOR - timedelta(days=30))
+    db.commit()
+    guardar(client, doc, db, entorno, MARTES, [registro(entorno)], adicional=True)
+
+    sin_clases = {"porcentaje": None, "asistidas": 0, "contabilizadas": 0}
+    assert asistencia_de(client, cabeceras["Supervisor"], ana) == sin_clases
+    assert asistencia_de(client, cabeceras["Supervisor"], nora) == sin_clases
+
+
 # ── Salud del Sistema (CU012) ───────────────────────────────────────────────────────
 
 def test_salud_cuenta_alumno_por_clase_con_estado_u_observacion_del_pa_vigente(db, entorno):

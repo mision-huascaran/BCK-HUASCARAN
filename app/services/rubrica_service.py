@@ -6,8 +6,9 @@ Comprensión en códigos 0-4 (null = "Sin evaluar"). Se puede guardar incompleta
 
 - El mes: no se evalúan meses futuros ni meses sin días lectivos de un PA en el
   calendario del colegio (422 `mes_futuro`, `mes_sin_actividad`). Su PA es el que tiene
-  más días lectivos del mes (R1); con él se habilita la escritura (módulo `rubrica`) y se
-  guarda la evaluación.
+  más días lectivos del mes (R1), y con él se guarda la evaluación. La escritura (módulo
+  `rubrica`) la habilita cualquiera de los PA con días lectivos en el mes (DP-1,
+  provisional: `habilitacion_del_mes`).
 - Los alumnos del mes (R2): el que ya tiene su evaluación del mes sale solo en el grupo
   en que se guardó, aunque después haya cambiado de grupo (ahí se corrige; en otro grupo
   no se puede crear una segunda: `evaluacion_en_otro_grupo`). El que no la tiene sale en
@@ -19,7 +20,7 @@ Comprensión en códigos 0-4 (null = "Sin evaluar"). Se puede guardar incompleta
   de la guardada se rechaza (`modificacion_concurrente`) sin sobrescribir.
 """
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 from fastapi import status
@@ -42,11 +43,11 @@ from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import PeriodoCalendario, cargar_calendarios, en_pa_de_su_colegio, rango_del_mes
 from app.services.clase_service import colegio_existente, grados_visibles
 from app.services.escritura import Destino, MensajesEscritura, escritura
-from app.services.habilitacion import habilitacion_escritura
+from app.services.habilitacion import Habilitacion, habilitacion_escritura
 from app.services.motor_sugerencias import COMPRENSION, FLUIDEZ, resultado_decimas
 from app.services.pertenencia import alumnos_del_grupo_en_rango
 from app.services.programacion import FiltroGrupos
-from app.services.reglas_provisionales import regla_grupo_del_mes, regla_mes_a_pa
+from app.services.reglas_provisionales import regla_grupo_del_mes, regla_pas_que_evaluan_el_mes
 from app.services.sincronizacion import (
     MENSAJE_ACTIVIDAD_REQUERIDA,
     ContextoOperacion,
@@ -122,7 +123,10 @@ class MesEvaluado:
     desde: date
     hasta: date
     dias_lectivos: list[date]
+    # El PA de R1 (al que se asocia la evaluación).
     periodo: PeriodoCalendario
+    # Los PA desde los que se puede evaluar (DP-1): el de R1 y los demás con días lectivos.
+    periodos_que_evaluan: tuple[PeriodoCalendario, ...]
 
 
 def _no_procesable(detail: str, motivo: str) -> ErrorNegocio:
@@ -140,10 +144,27 @@ def mes_evaluado(db: Session, grupo: GrupoMes) -> MesEvaluado:
         raise _no_procesable(MENSAJE_MES_FUTURO, "mes_futuro")
     calendarios = cargar_calendarios(db, ids_colegio=[grupo.id_colegio])
     dias = calendarios.dias_lectivos(grupo.id_colegio, *rango) if rango is not None else []
-    periodo = regla_mes_a_pa(dias, lambda dia: calendarios.pa_de(grupo.id_colegio, dia))
-    if periodo is None:
+    periodos = regla_pas_que_evaluan_el_mes(dias, lambda dia: calendarios.pa_de(grupo.id_colegio, dia))
+    if not periodos:
         raise _no_procesable(MENSAJE_MES_SIN_ACTIVIDAD, "mes_sin_actividad")
-    return MesEvaluado(rango[0], rango[1], dias, periodo)
+    return MesEvaluado(rango[0], rango[1], dias, periodos[0], tuple(periodos))
+
+
+def habilitacion_del_mes(
+    db: Session, usuario: Usuario, grupo: GrupoMes, mes: MesEvaluado, en: Optional[datetime] = None
+) -> tuple[Habilitacion, PeriodoCalendario]:
+    """La habilitación de escritura del usuario para evaluar el mes (DP-1, provisional):
+    la del primer PA de `mes.periodos_que_evaluan` que lo habilite, con ese PA (el de su
+    permiso, si es uno); si ninguno, la negativa del PA de R1."""
+    for periodo in mes.periodos_que_evaluan:
+        habilitacion = habilitacion_escritura(
+            db, usuario, grupo.id_colegio, grupo.id_grado, periodo.id_periodo_academico, MODULO, en=en
+        )
+        if habilitacion.permitido:
+            return habilitacion, periodo
+    return habilitacion_escritura(
+        db, usuario, grupo.id_colegio, grupo.id_grado, mes.periodo.id_periodo_academico, MODULO, en=en
+    ), mes.periodo
 
 
 def _validar_grupo(db: Session, usuario: Usuario, grupo: GrupoMes) -> Programa:
@@ -278,7 +299,8 @@ def listar(db: Session, usuario: Usuario, grupo: GrupoMes, page: int) -> Rubrica
     }
     valores = _valores(db)
     base = pagina([_item(a, filas.get(a.id_alumno), valores) for a in en_pagina], len(alumnos), page)
-    destino = Destino(MODULO, grupo.id_colegio, grupo.id_grado, mes.periodo)
+    _, periodo_habilitado = habilitacion_del_mes(db, usuario, grupo, mes)
+    destino = Destino(MODULO, grupo.id_colegio, grupo.id_grado, periodo_habilitado)
     ciclo = ciclo_de(db, programa, grupo.id_grado)
     return RubricasDelMes(
         **base.model_dump(), ciclo=ciclo.nombre, id_ciclo=ciclo.id_ciclo,
@@ -400,9 +422,7 @@ def _aplicador(db: Session, usuario: Usuario, item: RubricaGuardar):
         _validar_grupo(db, usuario, grupo)
         mes = mes_evaluado(db, grupo)
         periodo = mes.periodo.id_periodo_academico
-        habilitacion = habilitacion_escritura(
-            db, usuario, grupo.id_colegio, grupo.id_grado, periodo, MODULO, en=contexto.en
-        )
+        habilitacion, _ = habilitacion_del_mes(db, usuario, grupo, mes, en=contexto.en)
         if not habilitacion.permitido:
             raise RechazoOperacion("sin_habilitacion", MENSAJE_SIN_HABILITACION)
         alumno = db.get(Alumno, item.id_alumno)
@@ -455,19 +475,54 @@ def criterios(db: Session, id_programa: int, id_ciclo: int) -> list[Criterio]:
     ]
 
 
-def ultima_rubrica_completa(db: Session, id_alumno: int, id_periodo_academico: int) -> Optional[RubricaMensual]:
-    """La evaluación completa (las dos dimensiones) de mayor mes del alumno en ese PA, o
-    None. La usa el Registro de Vuelo (T9) para la sugerencia de nivel."""
-    return db.exec(
+# ── Última evaluación completa del PA (CU029) ───────────────────────────────────────
+# Regla única para el Registro de Vuelo y los cortes del Dashboard: por alumno y PA, la
+# evaluación completa (las dos dimensiones, `estado_de` = completada) de mayor mes. Una
+# incompleta más reciente no la reemplaza y nunca se usa la de otro PA. El PA de cada
+# evaluación es el guardado (R1 al guardar), no se recalcula.
+
+def _ultimas_completas(db: Session, *condiciones) -> dict[tuple[int, int], RubricaMensual]:
+    filas = db.exec(
         select(RubricaMensual)
         .where(
-            RubricaMensual.id_alumno == id_alumno,
-            RubricaMensual.id_periodo_academico == id_periodo_academico,
+            *condiciones,
             col(RubricaMensual.id_nivel_fluidez).is_not(None),
             col(RubricaMensual.id_nivel_comprension).is_not(None),
         )
-        .order_by(col(RubricaMensual.mes).desc())
-    ).first()
+        .order_by(RubricaMensual.mes, RubricaMensual.id)
+    ).all()
+    # En orden de mes: la última que queda por (alumno, PA) es la de mayor mes.
+    return {(r.id_alumno, r.id_periodo_academico): r for r in filas}
+
+
+def ultimas_rubricas_completas_del_anio(
+    db: Session, ids_alumno: list[int], id_anio_escolar: int
+) -> dict[tuple[int, int], RubricaMensual]:
+    """{(alumno, PA): última evaluación completa} de esos alumnos en todos los PA del año."""
+    if not ids_alumno:
+        return {}
+    return _ultimas_completas(
+        db, col(RubricaMensual.id_alumno).in_(ids_alumno), RubricaMensual.id_anio_escolar == id_anio_escolar
+    )
+
+
+def ultimas_rubricas_completas(
+    db: Session, ids_alumno: list[int], id_periodo_academico: int
+) -> dict[int, RubricaMensual]:
+    """{alumno: última evaluación completa del PA}; sin ella, el alumno no está."""
+    if not ids_alumno:
+        return {}
+    filas = _ultimas_completas(
+        db,
+        col(RubricaMensual.id_alumno).in_(ids_alumno),
+        RubricaMensual.id_periodo_academico == id_periodo_academico,
+    )
+    return {id_alumno: rubrica for (id_alumno, _), rubrica in filas.items()}
+
+
+def ultima_rubrica_completa(db: Session, id_alumno: int, id_periodo_academico: int) -> Optional[RubricaMensual]:
+    """La última evaluación completa del alumno en ese PA, o None."""
+    return ultimas_rubricas_completas(db, [id_alumno], id_periodo_academico).get(id_alumno)
 
 
 def _completadas_del_pa_vigente(pa_por_colegio: dict) -> tuple:

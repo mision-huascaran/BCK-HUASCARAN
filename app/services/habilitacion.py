@@ -13,7 +13,7 @@ con su hora original. La sesión vigente y la actividad activa las exige cada en
 Una sola implementación para los cuatro módulos y para iniciar una actividad (CU009).
 """
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlmodel import Session, col, or_, select
@@ -27,7 +27,7 @@ from app.models.organizacion import (
     PermisoCorreccion,
     Usuario,
 )
-from app.services.calendario import Calendarios, PeriodoCalendario, cargar_calendarios
+from app.services.calendario import CalendarioResuelto, Calendarios, PeriodoCalendario, cargar_calendarios
 
 ORIGEN_ASIGNACION = "asignacion"
 ORIGEN_RETROACTIVA = "retroactiva"
@@ -192,3 +192,21 @@ def pares_a_cargo(db: Session, usuario: Usuario) -> set[tuple[int, int]]:
     cada colegio y las retroactivas durante su PR. No los grupos que solo se ven por un
     permiso. Que sumen al Inicio no habilita escribir en Alumnos (`alcance_docente`)."""
     return {(h.id_colegio, h.id_grado) for h in habilitaciones_vigentes(db, usuario) if h.origen != ORIGEN_PERMISO}
+
+
+def receso_de(calendario: CalendarioResuelto, pa: PeriodoCalendario) -> Optional[PeriodoCalendario]:
+    """El PR que sigue a ese PA."""
+    return next((p for p in calendario.periodos if not p.es_pa and p.numero == pa.numero), None)
+
+
+def asignacion_utilizable(calendarios: Calendarios, fila: DocenteColegioGrado, id_anio: int, hoy: date) -> bool:
+    """Si la asignación todavía sirve: su PA no terminó o, si es retroactiva, su PR no
+    terminó. Sin calendario configurado para su año, se incluye (es de un año futuro)."""
+    calendario = calendarios.aplicable(fila.id_colegio, id_anio)
+    pa = calendario.pa_de(fila.id_periodo_academico) if calendario is not None else None
+    if pa is None:
+        return calendario is None
+    if pa.fecha_fin >= hoy:
+        return True
+    receso = receso_de(calendario, pa) if fila.retroactiva else None
+    return receso is not None and receso.fecha_fin >= hoy

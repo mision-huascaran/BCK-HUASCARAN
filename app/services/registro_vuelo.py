@@ -70,6 +70,7 @@ from app.services.nivel_descriptivo import EscalaDescriptiva
 from app.services.pertenencia import alumnos_del_grupo_en_rango
 from app.services.programacion import FiltroGrupos
 from app.services.reglas_provisionales import regla_decision_vigente
+from app.services.rubrica_service import ultimas_rubricas_completas_del_anio
 from app.services.sincronizacion import (
     MENSAJE_ACTIVIDAD_REQUERIDA,
     ContextoOperacion,
@@ -162,26 +163,12 @@ class DatosVuelo:
         return Letra(id=id_nivel, letra=self.letras[id_nivel]) if id_nivel in self.letras else None
 
 
-def _escalas(db: Session) -> dict[int, EscalaDescriptiva]:
+def escalas_por_grado(db: Session) -> dict[int, EscalaDescriptiva]:
+    """{grado: escala de nivel descriptivo}, todas en una consulta."""
     tramos: dict[int, list[tuple[int, str]]] = defaultdict(list)
     for fila in db.exec(select(EscalaNivelDescriptivo).order_by(EscalaNivelDescriptivo.id_nivel_rk_desde)).all():
         tramos[fila.id_grado].append((fila.id_nivel_rk_desde, fila.nivel))
     return {grado: EscalaDescriptiva(tuple(t)) for grado, t in tramos.items()}
-
-
-def _ultimas_rubricas(db: Session, id_anio: int, ids_alumno: list[int]) -> dict[tuple[int, int], RubricaMensual]:
-    filas = db.exec(
-        select(RubricaMensual)
-        .where(
-            col(RubricaMensual.id_alumno).in_(ids_alumno),
-            RubricaMensual.id_anio_escolar == id_anio,
-            col(RubricaMensual.id_nivel_fluidez).is_not(None),
-            col(RubricaMensual.id_nivel_comprension).is_not(None),
-        )
-        .order_by(RubricaMensual.mes, RubricaMensual.id)
-    ).all()
-    # En orden de mes: la última que queda por (alumno, PA) es la de mayor mes.
-    return {(r.id_alumno, r.id_periodo_academico): r for r in filas}
 
 
 def cargar_datos(db: Session, anio: AnioEscolar, ids_alumno: list[int]) -> DatosVuelo:
@@ -198,11 +185,11 @@ def cargar_datos(db: Session, anio: AnioEscolar, ids_alumno: list[int]) -> Datos
         ).order_by(PeriodoAcademico.numero)).all()),
         letras=dict(db.exec(select(NivelRazkids.id_nivel_rk, NivelRazkids.letra)).all()),
         entrada_por_grado=dict(db.exec(select(NivelEsperadoPorGrado.id_grado, NivelEsperadoPorGrado.id_nivel_rk_esperado)).all()),
-        escalas=_escalas(db),
+        escalas=escalas_por_grado(db),
         niveles_rubrica={n.id_nivel_rubrica: n for n in db.exec(select(NivelRubrica)).all()},
         programas=dict(db.exec(select(Programa.id_programa, Programa.nombre)).all()),
         registros=registros,
-        rubricas=_ultimas_rubricas(db, anio.id_anio_escolar, ids_alumno),
+        rubricas=ultimas_rubricas_completas_del_anio(db, ids_alumno, anio.id_anio_escolar),
     )
 
 
@@ -214,6 +201,27 @@ def decision_del_periodo(registros: list[RegistroVuelo], id_periodo: int) -> Opt
         (r.fecha_registro, r if r.id_nivel_colocado is not None else None)
         for r in registros if r.id_periodo_academico == id_periodo
     ])
+
+
+def nivel_programa(escalas: dict[int, EscalaDescriptiva], id_grado: int, id_nivel_colocado: Optional[int]) -> Optional[str]:
+    """Nivel del programa (Inicio ... Avanzado) de un nivel colocado en la escala del grado."""
+    return escalas.get(id_grado, EscalaDescriptiva(())).nivel(id_nivel_colocado)
+
+
+def decisiones_del_periodo(db: Session, ids_alumno: list[int], id_periodo: int) -> dict[int, RegistroVuelo]:
+    """{alumno: su decisión vigente en el PA (V1), en cualquier grupo}. Sin decisión con
+    nivel colocado, el alumno no está. Su nivel del programa es
+    `nivel_programa(escalas, decision.id_grado, decision.id_nivel_colocado)`: con el grado
+    del registro."""
+    if not ids_alumno:
+        return {}
+    registros: dict[int, list[RegistroVuelo]] = defaultdict(list)
+    for fila in db.exec(select(RegistroVuelo).where(
+        col(RegistroVuelo.id_alumno).in_(ids_alumno), RegistroVuelo.id_periodo_academico == id_periodo,
+    )).all():
+        registros[fila.id_alumno].append(fila)
+    decisiones = {id_alumno: decision_del_periodo(filas, id_periodo) for id_alumno, filas in registros.items()}
+    return {id_alumno: decision for id_alumno, decision in decisiones.items() if decision is not None}
 
 
 def colocado_del_periodo(registros: list[RegistroVuelo], id_periodo: int) -> Optional[int]:
@@ -306,13 +314,12 @@ def resolver_periodo(datos: DatosVuelo, contexto: Contexto, id_alumno: int, peri
     de_otro_colegio = origen_entrada is not None and origen_entrada.id_colegio != contexto.id_colegio
     colocado = fila.id_nivel_colocado if fila else None
     cambio = colocado is not None and fila.id_nivel_entrada_al_decidir != id_entrada
-    escala = datos.escalas.get(contexto.id_grado, EscalaDescriptiva(()))
     return PeriodoAlumno(
         numero=periodo.numero, id_periodo_academico=periodo.id_periodo_academico,
         id_registro=fila.id if fila else None, version=fila.version if fila else None,
         entrada=_entrada(datos, id_entrada, origen, de_otro_colegio),
         sugerencia=sugerencia_de(datos, id_alumno, periodo.id_periodo_academico, id_entrada),
-        nivel_colocado=datos.letra(colocado), nivel_programa=escala.nivel(colocado),
+        nivel_colocado=datos.letra(colocado), nivel_programa=nivel_programa(datos.escalas, contexto.id_grado, colocado),
         proyeccion=datos.letra(fila.id_nivel_proyeccion if fila else None),
         observacion=fila.observacion if fila else None,
         aviso_entrada_cambio=cambio, aviso=AVISO_ENTRADA_CAMBIADA if cambio else None, incompleto=colocado is None,

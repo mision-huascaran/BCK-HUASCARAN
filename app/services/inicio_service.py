@@ -286,10 +286,20 @@ def alertas_sincronizacion(
     ]
 
 
+def nombre_de_sede(nombre: str) -> str:
+    """"Colegio Shilla" (CU011). Si el nombre ya empieza con la palabra "colegio" (sin
+    distinguir mayúsculas ni tildes), queda tal cual: "Colegio de Prueba", no "Colegio
+    Colegio de Prueba"."""
+    palabras = comparable(nombre).split(maxsplit=1)
+    return nombre if palabras and palabras[0] == "colegio" else f"Colegio {nombre}"
+
+
 def alertas_sede(db: Session, estado: EstadoRegistros) -> list[AlertaOperativa]:
     """`incumplimiento_sede` (crítica): colegios activos con registros vencidos y ningún
-    registro obligatorio consolidado (de ninguno de los cuatro módulos) en su PA actual."""
-    sin_registros = {c.id_colegio for c in estado.vencidas} - estado.colegios_con_registros
+    registro obligatorio consolidado (de ninguno de los cuatro módulos) en su PA actual. Los
+    colegios en un PR no cuentan, aunque tengan vencidos del PA que regularizan (DP-2)."""
+    con_vencidas = {c.id_colegio for c in estado.vencidas} - estado.colegios_en_receso
+    sin_registros = con_vencidas - estado.colegios_con_registros
     if not sin_registros:
         return []
     nombres = db.exec(
@@ -299,7 +309,8 @@ def alertas_sede(db: Session, estado: EstadoRegistros) -> list[AlertaOperativa]:
     return [
         _alerta(
             INCUMPLIMIENTO_SEDE,
-            f"Incumplimiento de Sede - Colegio {nombre}: Sin registros obligatorios en el periodo académico actual.",
+            f"Incumplimiento de Sede - {nombre_de_sede(nombre)}: Sin registros obligatorios en el periodo académico "
+            "actual.",
             critica=True,
         )
         for nombre in nombres
@@ -310,25 +321,35 @@ def alertas_operativas(
     db: Session, pa_actual: PaPorColegio, calendarios: Calendarios, estado: EstadoRegistros
 ) -> list[AlertaOperativa]:
     """CU011: sincronización, inactividad y sede, en ese orden; dentro de cada tipo, por
-    nombre del docente o del colegio."""
-    if not pa_actual:
+    nombre del docente o del colegio. La sincronización mira a los asignados al PA de
+    referencia de los vencidos (durante un PR, el que se regulariza: DP-2, provisional);
+    la inactividad y la sede, a los del PA en curso."""
+    docentes = _asignados_ordenados(db, pa_actual)
+    sincronizacion = alertas_sincronizacion(
+        db, _asignados_ordenados(db, estado.pa_referencia), estado.vencidas, ahora_utc()
+    )
+    if not docentes:
+        return sincronizacion
+    return [
+        *sincronizacion,
+        *alertas_inactividad(db, docentes, pa_actual, calendarios, hoy_lima()),
+        *alertas_sede(db, estado),
+    ]
+
+
+def _asignados_ordenados(db: Session, pa_por_colegio: PaPorColegio) -> list[tuple[Usuario, datetime]]:
+    """(docente, su primera asignación) de los asignados al PA de cada colegio, por nombre."""
+    if not pa_por_colegio:
         return []
-    docentes = sorted(
+    return sorted(
         db.exec(
             _de_docentes_asignados(
-                select(Usuario, func.min(DocenteColegioGrado.creado_en)), _asignacion_en_pa_de_su_colegio(pa_actual)
+                select(Usuario, func.min(DocenteColegioGrado.creado_en)), _asignacion_en_pa_de_su_colegio(pa_por_colegio)
             )
             .group_by(Usuario.id_usuario)
         ).all(),
         key=lambda fila: (comparable(fila[0].nombres), comparable(fila[0].apellidos), fila[0].id_usuario),
     )
-    if not docentes:
-        return []
-    return [
-        *alertas_sincronizacion(db, docentes, estado.vencidas, ahora_utc()),
-        *alertas_inactividad(db, docentes, pa_actual, calendarios, hoy_lima()),
-        *alertas_sede(db, estado),
-    ]
 
 
 def inicio_supervisor(db: Session) -> InicioSupervisor:

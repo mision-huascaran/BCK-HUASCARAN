@@ -43,6 +43,60 @@ def regla_mes_a_pa(dias_lectivos: list[date], pa_de: Callable[[date], Optional[T
     return pas[max(conteo, key=lambda clave: (conteo[clave], ultimo_dia[clave]))]
 
 
+# REGLA PROVISIONAL DP-1 (Rúbrica mensual, CU029, D88). Decisión provisional del equipo,
+# pendiente de validar con el analista después de la exposición del 29/10. Un mes partido
+# entre dos PA (octubre de 2026: el PA3 termina el 16 y el PA4 empieza el 19) sigue
+# asociado al PA de R1 (`rubrica_mensual.id_periodo_academico`, que usan el Registro de
+# Vuelo y el Dashboard), pero:
+# - lo puede evaluar un Docente con habilitación de escritura para el grupo en CUALQUIERA
+#   de los PA con días lectivos en el mes (antes, solo en el de R1);
+# - su obligación se exige (y vence el día 1 del mes siguiente) en todo PA con días
+#   lectivos en el mes, aunque R1 lo asocie al anterior: octubre figura vencido el 01/11
+#   con el PA4 en curso.
+# Para revertirla: que `regla_pas_que_evaluan_el_mes` devuelva solo `[PA de R1]` y que
+# `regla_mes_exigible_en_pa` compare con el PA de R1. Docs: docs/decisiones-provisionales.md.
+def regla_pas_que_evaluan_el_mes(dias_lectivos: list[date], pa_de: Callable[[date], Optional[T]]) -> list[T]:
+    """Los PA desde los que se puede evaluar el mes: el de R1 primero y después los demás
+    PA con días lectivos en el mes, en orden cronológico. Vacía si no tiene días lectivos."""
+    del_r1 = regla_mes_a_pa(dias_lectivos, pa_de)
+    if del_r1 is None:
+        return []
+    otros = {}
+    for dia in sorted(dias_lectivos):
+        pa = pa_de(dia)
+        if pa is not None and pa.id_periodo_academico != del_r1.id_periodo_academico:
+            otros.setdefault(pa.id_periodo_academico, pa)
+    return [del_r1, *otros.values()]
+
+
+def regla_mes_exigible_en_pa(
+    dias_lectivos: list[date], pa_de: Callable[[date], Optional[T]], id_periodo_academico: int
+) -> bool:
+    """Si la evaluación del mes se exige en ese PA (DP-1): si el mes tiene días lectivos de él."""
+    return any(
+        pa is not None and pa.id_periodo_academico == id_periodo_academico
+        for pa in map(pa_de, dias_lectivos)
+    )
+
+
+# REGLA PROVISIONAL DP-2 (Inicio del Supervisor, CU011, S21). Decisión provisional del
+# equipo, pendiente de validar con el analista después de la exposición del 29/10. Durante
+# el PR n, los vencidos e incompletos (y la alerta "Sincronización Olvidada", que los usa)
+# se calculan sobre el PA n, el que se está regularizando con asignaciones retroactivas,
+# con las mismas reglas que cuando era el PA actual (incluida DP-1). Al terminar el PR se
+# pasa al PA siguiente, como antes. "Incumplimiento de Sede", "Colegios operando",
+# "Docentes activos" y la Salud del Sistema no cambian. Para revertirla: que
+# `regla_pa_de_referencia` devuelva el periodo solo si es un PA. Docs:
+# docs/decisiones-provisionales.md.
+def regla_pa_de_referencia(periodo: Optional[T], pa_numero: Callable[[int], Optional[T]]) -> Optional[T]:
+    """El PA sobre el que se calculan los vencidos de un colegio que hoy está en `periodo`:
+    ese mismo si es un PA; si es el PR n, el PA n (`pa_numero` lo busca en su calendario);
+    None fuera de todo periodo."""
+    if periodo is None:
+        return None
+    return periodo if periodo.es_pa else pa_numero(periodo.numero)
+
+
 # REGLA CONFIRMADA R2 (Rúbrica mensual, CU029, CU030): mientras el alumno no tenga una
 # evaluación del mes, le corresponde el grupo de su última pertenencia válida en un día
 # lectivo del mes (si el mes está en curso, solo los días ya transcurridos: los filtra el

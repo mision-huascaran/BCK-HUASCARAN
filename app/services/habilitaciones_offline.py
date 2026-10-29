@@ -6,9 +6,6 @@ programados o vigentes, más el calendario de cada (colegio, año escolar) que a
 ellos. No depende del "año en curso": el PR4 puede pasar al año calendario siguiente. El
 backend vuelve a validar todo al sincronizar.
 """
-from datetime import date
-from typing import Optional
-
 from sqlmodel import Session, col, select
 
 from app.core.tiempo import ahora_utc, hoy_lima
@@ -24,29 +21,11 @@ from app.models.organizacion import (
 from app.schemas.calendario import CalendarioDeColegio
 from app.schemas.comun import ItemCatalogo
 from app.schemas.habilitacion import AsignacionUtilizable, MisHabilitaciones, PermisoUtilizable
-from app.services.calendario import CalendarioResuelto, Calendarios, PeriodoCalendario, cargar_calendarios
+from app.services.calendario import Calendarios, cargar_calendarios
 from app.services.calendario_gestion import respuesta
-from app.services.habilitacion import docente_habilitable
+from app.services.habilitacion import asignacion_utilizable, docente_habilitable
 
 ParColegioAnio = tuple[int, int]
-
-
-def _receso_de(calendario: CalendarioResuelto, pa: PeriodoCalendario) -> Optional[PeriodoCalendario]:
-    """El PR que sigue a ese PA."""
-    return next((p for p in calendario.periodos if not p.es_pa and p.numero == pa.numero), None)
-
-
-def _utilizable(calendarios: Calendarios, fila: DocenteColegioGrado, id_anio: int, hoy: date) -> bool:
-    """Si la asignación todavía sirve: su PA no terminó o, si es retroactiva, su PR no
-    terminó. Sin calendario configurado para su año, se incluye (es de un año futuro)."""
-    calendario = calendarios.aplicable(fila.id_colegio, id_anio)
-    pa = calendario.pa_de(fila.id_periodo_academico) if calendario is not None else None
-    if pa is None:
-        return calendario is None
-    if pa.fecha_fin >= hoy:
-        return True
-    receso = _receso_de(calendario, pa) if fila.retroactiva else None
-    return receso is not None and receso.fecha_fin >= hoy
 
 
 def _colegios_activos(db: Session, ids: set[int]) -> dict[int, Colegio]:
@@ -122,7 +101,7 @@ def mis_habilitaciones(db: Session, usuario: Usuario) -> MisHabilitaciones:
     asignaciones = [
         (fila, id_anio)
         for fila, id_anio in filas
-        if fila.id_colegio in colegios and _utilizable(calendarios, fila, id_anio, hoy)
+        if fila.id_colegio in colegios and asignacion_utilizable(calendarios, fila, id_anio, hoy)
     ]
     permisos = [p for p in permisos if p.id_colegio in colegios]
     pares = [(f.id_colegio, id_anio) for f, id_anio in asignaciones] + [(p.id_colegio, p.id_anio_escolar) for p in permisos]
