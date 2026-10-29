@@ -6,6 +6,7 @@ from sqlmodel import select
 
 from app.models.organizacion import ColegioGrado, DocenteColegioGrado
 from app.services import registros_vencidos
+from app.services.inicio_service import nombre_de_sede
 from app.services.registros_vencidos import estado_de_registros
 from tests.conftest import (
     a_las,
@@ -28,7 +29,7 @@ HOY = date(2026, 6, 17)
 LUNES, MARTES = date(2026, 6, 15), date(2026, 6, 16)
 SINCRONIZACION = "Sincronización Olvidada - Rosa Quispe: Registros vencidos, último inicio de sesión hace más de 3 días."
 INACTIVIDAD = "Inactividad Operativa - Rosa Quispe: Sin actividad registrada en los últimos 4 días hábiles."
-SEDE = "Incumplimiento de Sede - Colegio Colegio Andino: Sin registros obligatorios en el periodo académico actual."
+SEDE = "Incumplimiento de Sede - Colegio Andino: Sin registros obligatorios en el periodo académico actual."
 
 
 @pytest.fixture(autouse=True)
@@ -283,7 +284,7 @@ def test_cu011_sincronizacion_olvidada_solo_del_docente_de_los_grados_vencidos(c
 
     assert mensajes == [
         "Sincronización Olvidada - Beto Prueba: Registros vencidos, último inicio de sesión hace más de 3 días.",
-        "Incumplimiento de Sede - Colegio Colegio Lejano: Sin registros obligatorios en el periodo académico actual.",
+        "Incumplimiento de Sede - Colegio Lejano: Sin registros obligatorios en el periodo académico actual.",
     ]
 
 
@@ -300,8 +301,21 @@ def test_cu011_el_incumplimiento_de_sede_mira_el_colegio_guardado_en_el_registro
 
     sedes = [a["mensaje"] for a in alertas(client, sup) if a["tipo"] == "incumplimiento_sede"]
     assert sedes == [
-        "Incumplimiento de Sede - Colegio Colegio Lejano: Sin registros obligatorios en el periodo académico actual."
+        "Incumplimiento de Sede - Colegio Lejano: Sin registros obligatorios en el periodo académico actual."
     ]
+
+
+@pytest.mark.parametrize(
+    "nombre, esperado",
+    [
+        ("Shilla", "Colegio Shilla"),
+        ("Colegio de Prueba", "Colegio de Prueba"),
+        ("COLEGIO Andino", "COLEGIO Andino"),
+        ("Colegiatura", "Colegio Colegiatura"),
+    ],
+)
+def test_d58_la_alerta_de_sede_no_repite_colegio(nombre, esperado):
+    assert nombre_de_sede(nombre) == esperado
 
 
 # ── Calendario de cada colegio (CU027) ──────────────────────────────────────────────

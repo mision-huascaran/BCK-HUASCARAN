@@ -54,6 +54,11 @@ CAMPO_PERTENECE_DESDE = "pertenece_desde"
 CAMPO_CAMBIO_GRUPO_DESDE = "cambio_grupo_desde"
 CAMPO_APLICAR_DESDE = "aplicar_desde"
 MENSAJE_FECHA_DE_CAMBIO = "Indica desde qué fecha el alumno pertenece a su nuevo grupo."
+MENSAJE_CONFIRMA_PERTENENCIA = "Confirma desde qué fecha el alumno forma parte de este grupo."
+MENSAJE_YA_TIENE_PERTENENCIA = "El alumno ya tiene un inicio de pertenencia registrado."
+MENSAJE_USA_PERTENECE_DESDE = (
+    "Este alumno todavía no tiene un inicio de pertenencia: usa 'Pertenece al grupo desde'."
+)
 
 # Campo auditado -> atributo del modelo (el subprograma se guarda en `id_programa_actual`).
 CAMPOS_AUDITADOS = {
@@ -335,6 +340,35 @@ def _fecha_de_cambio(alumno: Alumno, data: AlumnoEditar) -> Optional[date]:
     return data.cambio_grupo_desde
 
 
+def _pertenencia_inicial(db: Session, alumno: Alumno, data: AlumnoEditar) -> Optional[date]:
+    """`pertenece_desde` de un alumno activo sin intervalos (CU014): obligatoria para él,
+    no futura, y en su lugar no se acepta `cambio_grupo_desde` (no hay intervalo que
+    cerrar). A un alumno con intervalos o inactivo (vuelve con "Activar") se le rechaza."""
+    if not pertenencia.sin_pertenencia(db, alumno):
+        if data.pertenece_desde is not None:
+            raise error_de_campo(CAMPO_PERTENECE_DESDE, MENSAJE_YA_TIENE_PERTENENCIA)
+        return None
+    if data.pertenece_desde is None:
+        raise error_de_campo(CAMPO_PERTENECE_DESDE, MENSAJE_CONFIRMA_PERTENENCIA)
+    if data.cambio_grupo_desde is not None:
+        raise error_de_campo(CAMPO_CAMBIO_GRUPO_DESDE, MENSAJE_USA_PERTENECE_DESDE)
+    pertenencia.validar_fecha_efectiva(data.pertenece_desde, CAMPO_PERTENECE_DESDE)
+    return data.pertenece_desde
+
+
+def _aplicar_pertenencia(
+    db: Session, alumno: Alumno, inicial: Optional[date], cambio: Optional[date], movimiento: Movimiento
+) -> Optional[date]:
+    """Abre el primer intervalo (`inicial`) o cambia de grupo (`cambio`) con la ficha ya
+    actualizada. Devuelve la fecha efectiva aplicada, para la auditoría."""
+    if inicial is not None:
+        pertenencia.abrir(db, alumno, inicial, CAMPO_PERTENECE_DESDE, movimiento, alta=True)
+        return inicial
+    if cambio is not None:
+        pertenencia.cambiar_grupo(db, alumno, cambio, CAMPO_CAMBIO_GRUPO_DESDE, movimiento)
+    return cambio
+
+
 def editar_alumno(db: Session, id_alumno: int, data: AlumnoEditar, actor: Usuario) -> AlumnoItem:
     alumno, alcance, id_actividad = _alumno_para_escribir(db, actor, id_alumno)
     if alcance is not None and "id_colegio" in data.model_fields_set and data.id_colegio != alumno.id_colegio:
@@ -344,15 +378,17 @@ def editar_alumno(db: Session, id_alumno: int, data: AlumnoEditar, actor: Usuari
             motivo="cambio_colegio_no_permitido",
         )
 
+    inicial = _pertenencia_inicial(db, alumno, data)
     final = _valores_finales(db, alumno, data, alcance)
     cambios: dict[str, tuple[Any, Any]] = {
         campo: (getattr(alumno, atributo), final[campo])
         for campo, atributo in CAMPOS_AUDITADOS.items()
         if final[campo] != getattr(alumno, atributo)
     }
-    if not cambios:
+    if not cambios and inicial is None:
         return item_de(db, id_alumno)
-    fecha = _fecha_de_cambio(alumno, data) if any(c in cambios for c in CAMPOS_DE_UBICACION) else None
+    cambia_grupo = inicial is None and any(c in cambios for c in CAMPOS_DE_UBICACION)
+    cambio = _fecha_de_cambio(alumno, data) if cambia_grupo else None
 
     ahora = ahora_utc()
     for campo, (_, nuevo) in cambios.items():
@@ -360,10 +396,8 @@ def editar_alumno(db: Session, id_alumno: int, data: AlumnoEditar, actor: Usuari
     alumno.modificado_por = actor.id_usuario
     alumno.modificado_en = ahora
     db.add(alumno)
+    fecha = _aplicar_pertenencia(db, alumno, inicial, cambio, Movimiento(actor.id_usuario, ahora, id_actividad))
     if fecha is not None:
-        pertenencia.cambiar_grupo(
-            db, alumno, fecha, CAMPO_CAMBIO_GRUPO_DESDE, Movimiento(actor.id_usuario, ahora, id_actividad)
-        )
         cambios.update(_fecha_efectiva(fecha))
     registrar_auditoria(
         db, tabla=TABLA, id_registro=alumno.id_alumno, accion=EDITAR, cambios=cambios,

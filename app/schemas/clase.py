@@ -17,6 +17,11 @@ class ClaseItem(BaseModel):
     id_clase: Optional[int] = None
     id_grado: int
     id_seccion: int
+    # Los mismos grado, sección y PA con su nombre ("PA1"…"PA4"), y el año escolar del PA.
+    grado: ItemCatalogo
+    seccion: ItemCatalogo
+    periodo: ItemCatalogo
+    anio_escolar: ItemCatalogo
     fecha_original: date
     # La vigente.
     fecha: date

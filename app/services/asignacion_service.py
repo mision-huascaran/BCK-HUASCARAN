@@ -24,7 +24,7 @@ Las asignaciones se cambian con POST y PATCH /usuarios; aquí no se hace commit.
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Iterable, Optional
 
 from fastapi import status
@@ -58,9 +58,10 @@ from app.schemas.usuario import (
     GradoAsignado,
     PeriodoAsignado,
 )
-from app.services.habilitacion import pares_a_cargo
+from app.services.habilitacion import asignacion_utilizable, pares_a_cargo
 from app.services.calendario import (
     CalendarioResuelto,
+    Calendarios,
     PeriodoCalendario,
     anio_de_referencia,
     cargar_calendarios,
@@ -72,6 +73,10 @@ from app.services.calendario import (
 SIN_ASIGNACION = "Sin asignación"
 RETROACTIVO = "retroactivo"
 PROXIMO = "proximo"
+# `estado` de un periodo en el detalle del Docente (D80), de menor a mayor prioridad.
+CULMINADO = "culminado"
+VIGENTE = "vigente"
+ORDEN_ESTADO = (CULMINADO, PROXIMO, VIGENTE)
 CAMPO_COLEGIOS = "asignacion.colegios"
 MENSAJE_SIN_PROXIMO = (
     "Este año escolar ya no tiene otro periodo académico. Para asignar al Docente al "
@@ -632,6 +637,8 @@ def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetal
     Los periodos del año escolar de referencia si tiene asignaciones en él; si no, los
     del año más reciente en que tenga. None si nunca tuvo asignaciones. `vigente` marca
     el PA en que hoy está cada colegio y `retroactiva`, el PA habilitado con "Retroactivo".
+    `estado` dice si cada periodo es historial (`culminado`), y `solo_historial`, si lo es
+    todo el colegio (D80: el front no lo reenvía en el PATCH).
     """
     filas = db.exec(
         select(DocenteColegioGrado, PeriodoAcademico, Colegio, Grado)
@@ -651,10 +658,9 @@ def detalle_asignacion(db: Session, id_docente: int) -> Optional[AsignacionDetal
     if not filas:
         return None
     id_anio = _anio_del_detalle(db, filas)
-    return AsignacionDetalle(
-        id_anio_escolar=id_anio,
-        colegios=_por_colegio([f for f in filas if f[1].id_anio_escolar == id_anio], pa_actual_de_colegios(db)),
-    )
+    del_anio = [f for f in filas if f[1].id_anio_escolar == id_anio]
+    calendarios = cargar_calendarios(db, ids_colegio={colegio.id_colegio for _, _, colegio, _ in del_anio})
+    return AsignacionDetalle(id_anio_escolar=id_anio, colegios=_por_colegio(del_anio, calendarios, hoy_lima()))
 
 
 def _anio_del_detalle(db: Session, filas: list) -> int:
@@ -665,13 +671,15 @@ def _anio_del_detalle(db: Session, filas: list) -> int:
     return filas[-1][1].id_anio_escolar  # las filas vienen por fecha de inicio del año
 
 
-def _por_colegio(filas: list, pa_actual: dict[int, PeriodoCalendario]) -> list[ColegioAsignadoDetalle]:
+def _por_colegio(filas: list, calendarios: Calendarios, hoy: date) -> list[ColegioAsignadoDetalle]:
     """Agrupa las filas (ya ordenadas) por colegio y periodo."""
+    pa_actual = calendarios.pa_actual_por_colegio({colegio.id_colegio for _, _, colegio, _ in filas}, hoy)
     colegios: dict[int, ColegioAsignadoDetalle] = {}
     periodos: dict[tuple[int, int], PeriodoAsignado] = {}
     for fila, periodo, colegio, grado in filas:
         bloque = colegios.setdefault(
-            colegio.id_colegio, ColegioAsignadoDetalle(id_colegio=colegio.id_colegio, colegio=colegio.nombre, periodos=[])
+            colegio.id_colegio,
+            ColegioAsignadoDetalle(id_colegio=colegio.id_colegio, colegio=colegio.nombre, solo_historial=True, periodos=[]),
         )
         clave = (colegio.id_colegio, periodo.id_periodo_academico)
         if clave not in periodos:
@@ -680,13 +688,37 @@ def _por_colegio(filas: list, pa_actual: dict[int, PeriodoCalendario]) -> list[C
                 numero=periodo.numero,
                 vigente=_es_pa_actual(pa_actual, colegio.id_colegio, periodo.id_periodo_academico),
                 retroactiva=False,
+                estado=CULMINADO,
                 grados=[],
             )
             bloque.periodos.append(periodos[clave])
         item = periodos[clave]
         item.retroactiva = item.retroactiva or fila.retroactiva
+        estado = _estado_del_periodo(calendarios, fila, periodo, item.vigente, hoy)
+        item.estado = max(item.estado, estado, key=ORDEN_ESTADO.index)
         item.grados.append(GradoAsignado(id_grado=grado.id_grado, nombre=grado.nombre))
+    for bloque in colegios.values():
+        bloque.solo_historial = all(p.estado == CULMINADO for p in bloque.periodos)
     return list(colegios.values())
+
+
+def _estado_del_periodo(
+    calendarios: Calendarios, fila: DocenteColegioGrado, periodo: PeriodoAcademico, es_pa_actual: bool, hoy: date
+) -> str:
+    """`vigente` si es el PA actual del colegio o la asignación todavía sirve (una
+    retroactiva durante su PR); `proximo` si el PA no empezó (o su año aún no tiene
+    calendario); si no, `culminado`. Con el calendario aplicable al colegio."""
+    if es_pa_actual:
+        return VIGENTE
+    calendario = calendarios.aplicable(fila.id_colegio, periodo.id_anio_escolar)
+    if calendario is None:
+        return PROXIMO
+    pa = calendario.pa_de(periodo.id_periodo_academico)
+    if pa is not None and pa.fecha_inicio > hoy:
+        return PROXIMO
+    if asignacion_utilizable(calendarios, fila, periodo.id_anio_escolar, hoy):
+        return VIGENTE
+    return CULMINADO
 
 
 def _es_pa_actual(pa_actual: dict[int, PeriodoCalendario], id_colegio: int, id_periodo: int) -> bool:

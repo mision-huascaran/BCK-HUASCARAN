@@ -74,6 +74,11 @@ class GradoAsignado(BaseModel):
     nombre: str
 
 
+# "vigente": el PA en que hoy está el colegio o una retroactiva cuyo PR no terminó;
+# "proximo": un PA que todavía no empieza; "culminado": historial.
+EstadoPeriodoAsignado = Literal["culminado", "vigente", "proximo"]
+
+
 class PeriodoAsignado(BaseModel):
     id_periodo: int
     numero: int
@@ -81,12 +86,16 @@ class PeriodoAsignado(BaseModel):
     vigente: bool
     # Habilitado con "Retroactivo" durante el PR que le sigue.
     retroactiva: bool
+    estado: EstadoPeriodoAsignado
     grados: list[GradoAsignado]
 
 
 class ColegioAsignadoDetalle(BaseModel):
     id_colegio: int
     colegio: str
+    # Todos sus periodos están culminados: es historial y no se reenvía en el PATCH (si se
+    # reenvía, se reasigna en el PA en curso).
+    solo_historial: bool
     periodos: list[PeriodoAsignado]
 
 

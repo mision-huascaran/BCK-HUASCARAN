@@ -3,8 +3,8 @@
 **Rama:** `development` · **Base URL (desarrollo):** `http://127.0.0.1:8000` · **Swagger:** `/docs`
 **Formato:** JSON · **Autenticación:** JWT Bearer con sesión en la BD
 
-> **Verificado el 2026-10-26** contra el OpenAPI generado por la app (`app.openapi()`) y el código de los
-> servicios, en el commit de la **Tanda H** (sobre `59a26c7`). Cubre los 90 endpoints que existen hoy.
+> **Verificado el 2026-10-28** contra el OpenAPI generado por la app (`app.openapi()`) y el código de los
+> servicios, en el commit de la **Tanda L** (sobre `b20a89a`). Cubre los 90 endpoints que existen hoy.
 >
 > **Errores:** todo error de negocio responde `{"detail": "...", "motivo": "codigo", ...extra}`. Los `422`
 > de validación responden `{"detail": "Los datos enviados no son válidos.", "motivo": "validacion",
@@ -364,8 +364,8 @@ agrupada por colegio para prellenar el formulario. Es el año de referencia si e
 "asignacion": {
   "id_anio_escolar": 2,
   "colegios": [
-    {"id_colegio": 1, "colegio": "AMASHCA", "periodos": [
-      {"id_periodo": 10, "numero": 3, "vigente": true, "retroactiva": false,
+    {"id_colegio": 1, "colegio": "AMASHCA", "solo_historial": false, "periodos": [
+      {"id_periodo": 10, "numero": 3, "vigente": true, "retroactiva": false, "estado": "vigente",
        "grados": [{"id_grado": 1, "nombre": "1.º"}]}
     ]}
   ]
@@ -373,7 +373,12 @@ agrupada por colegio para prellenar el formulario. Es el año de referencia si e
 ```
 
 `id_periodo` es el `id_periodo_academico` de ese PA. `vigente`: es el PA en que hoy está ese colegio.
-`retroactiva`: ese PA está habilitado con "Retroactivo". **Error:** `404 usuario_no_encontrado`.
+`retroactiva`: ese PA está habilitado con "Retroactivo". `estado`, según el calendario de ese colegio:
+`vigente` (el PA en que hoy está el colegio, o una retroactiva cuyo PR todavía no terminó), `proximo` (un PA
+que todavía no empieza) o `culminado` (historial). `solo_historial`: todos los periodos de ese colegio están
+`culminado`. **El front no debe reenviar en el `PATCH` los colegios con `solo_historial: true`:** la lista
+del `PATCH` es el conjunto deseado, y un colegio reenviado se reasigna en el PA en curso. Se muestran como
+historial. **Error:** `404 usuario_no_encontrado`.
 
 ### `PATCH /usuarios/{id_usuario}`
 
@@ -817,7 +822,22 @@ Cabecera de la vista de detalle: los campos del `AlumnoItem` más `fecha_registr
 
 Todo opcional: `nombres`, `apellidos`, `id_colegio`, `id_grado`, `id_seccion`, `id_programa` y
 `cambio_grupo_desde` (obligatorio si cambia el grupo o el subprograma: "Indica desde qué fecha el alumno
-pertenece a su nuevo grupo."). Responde el `AlumnoItem`.
+pertenece a su nuevo grupo.") y `pertenece_desde`. Responde el `AlumnoItem`.
+
+`pertenece_desde` ("Pertenece al grupo desde", CU014) es solo para un **alumno activo sin pertenencia**
+(`GET /alumnos/{id}` con `pertenece_desde: null`):
+
+- Para él es **obligatorio** en cualquier `PATCH`: sin él, `422` en `pertenece_desde` ("Confirma desde qué
+  fecha el alumno forma parte de este grupo."). El front propone `fecha_registro`.
+- Hoy o antes (hora de Lima), con el mismo mensaje que al crear. Se aplican los demás cambios y se abre el
+  primer intervalo con el grupo final del alumno, todo en la misma transacción, validado contra las listas
+  de clases ya guardadas como al crear (`409 conflicto_listas_historicas`). Queda en el historial como fecha
+  efectiva.
+- No lleva `cambio_grupo_desde` aunque cambie el grupo: si llega, `422` en `cambio_grupo_desde` ("Este alumno
+  todavía no tiene un inicio de pertenencia: usa 'Pertenece al grupo desde'.").
+- A un alumno que ya tiene pertenencia, o a uno inactivo (vuelve con "Activar" y su `aplicar_desde`), se le
+  rechaza: `422` en `pertenece_desde` ("El alumno ya tiene un inicio de pertenencia registrado.").
+- El Docente necesita, como en toda edición, el alumno en su alcance y una actividad activa.
 
 **Errores:** los de `POST`, `404 alumno_no_encontrado`, `403 cambio_colegio_no_permitido` ("Solo el Supervisor
 puede cambiar el colegio de un alumno."), `409 conflicto_listas_historicas` (el cambio contradice listas de
@@ -854,8 +874,13 @@ contiene hoy), `id_programa`, `page`. Con `page`, paginado de 40; **sin `page`, 
 ```json
 [{ "id_clase": 51, "id_grado": 2, "id_seccion": 4, "fecha_original": "2026-06-15", "fecha": "2026-06-16",
    "tipo": "habitual", "reprogramada": true, "tiene_asistencias": false, "id_periodo_academico": 10,
+   "grado": { "id": 2, "nombre": "2.º" }, "seccion": { "id": 4, "nombre": "A" },
+   "periodo": { "id": 10, "nombre": "PA2" }, "anio_escolar": { "id": 2, "nombre": "2026" },
    "version": 2, "subprogramas": [{ "id": 2, "nombre": "Comprensión Lectora" }] }]
 ```
+
+`grado`, `seccion` y `periodo` son los mismos `id_grado`, `id_seccion` e `id_periodo_academico` con su nombre
+(el PA como "PA1"…"PA4"), y `anio_escolar`, el año de ese PA: para mostrar sin consultar catálogos.
 
 Habituales calculadas (`id_clase: null` si todavía no tienen fila), reprogramadas en su fecha nueva y
 adicionales, por fecha, grado y sección. **Errores:** `403 aula_fuera_de_alcance`, `404 colegio_no_encontrado`,

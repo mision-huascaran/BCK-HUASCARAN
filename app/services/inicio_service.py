@@ -286,6 +286,14 @@ def alertas_sincronizacion(
     ]
 
 
+def nombre_de_sede(nombre: str) -> str:
+    """"Colegio Shilla" (CU011). Si el nombre ya empieza con la palabra "colegio" (sin
+    distinguir mayúsculas ni tildes), queda tal cual: "Colegio de Prueba", no "Colegio
+    Colegio de Prueba"."""
+    palabras = comparable(nombre).split(maxsplit=1)
+    return nombre if palabras and palabras[0] == "colegio" else f"Colegio {nombre}"
+
+
 def alertas_sede(db: Session, estado: EstadoRegistros) -> list[AlertaOperativa]:
     """`incumplimiento_sede` (crítica): colegios activos con registros vencidos y ningún
     registro obligatorio consolidado (de ninguno de los cuatro módulos) en su PA actual."""
@@ -299,7 +307,8 @@ def alertas_sede(db: Session, estado: EstadoRegistros) -> list[AlertaOperativa]:
     return [
         _alerta(
             INCUMPLIMIENTO_SEDE,
-            f"Incumplimiento de Sede - Colegio {nombre}: Sin registros obligatorios en el periodo académico actual.",
+            f"Incumplimiento de Sede - {nombre_de_sede(nombre)}: Sin registros obligatorios en el periodo académico "
+            "actual.",
             critica=True,
         )
         for nombre in nombres

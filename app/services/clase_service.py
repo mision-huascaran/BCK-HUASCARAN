@@ -6,6 +6,7 @@
   mismo PA, sin otra clase del grupo ese día y mientras no tenga asistencias. Si la
   clase todavía no tenía fila, se crea. Queda en el historial y en la auditoría.
 """
+from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
@@ -18,7 +19,16 @@ from app.core.errores import ErrorNegocio, error_de_campo
 from app.core.paginacion import TAMANO_PAGINA, Paginado, pagina
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.evaluacion import TIPO_HABITUAL, Clase, ClaseAlumno, ClaseReprogramacion
-from app.models.organizacion import AlumnoPertenencia, Colegio, Programa, Seccion, Usuario
+from app.models.organizacion import (
+    AlumnoPertenencia,
+    AnioEscolar,
+    Colegio,
+    Grado,
+    PeriodoAcademico,
+    Programa,
+    Seccion,
+    Usuario,
+)
 from app.schemas.clase import ClaseItem, ReprogramacionCrear, ReprogramacionItem
 from app.schemas.comun import ItemCatalogo
 from app.services.actividad_consulta import exigir_rango_valido
@@ -60,9 +70,48 @@ def _concurrente() -> ErrorNegocio:
     )
 
 
-def a_item(clase: ClaseProgramada, subprogramas: Optional[list[ItemCatalogo]] = None) -> ClaseItem:
+@dataclass(frozen=True)
+class Nombres:
+    """Grado, sección, PA y año escolar de un lote de clases, por id."""
+
+    grados: dict[int, ItemCatalogo]
+    secciones: dict[int, ItemCatalogo]
+    periodos: dict[int, tuple[ItemCatalogo, ItemCatalogo]]
+
+
+def _nombres_de(db: Session, clases: list[ClaseProgramada]) -> Nombres:
+    """Los nombres que muestran las clases, en lote (3 consultas) para todas."""
+    if not clases:
+        return Nombres({}, {}, {})
+    ids_grado = {c.id_grado for c in clases}
+    ids_seccion = {c.id_seccion for c in clases}
+    ids_periodo = {c.id_periodo_academico for c in clases}
+    grados = db.exec(select(Grado.id_grado, Grado.nombre).where(col(Grado.id_grado).in_(ids_grado))).all()
+    secciones = db.exec(
+        select(Seccion.id_seccion, Seccion.nombre).where(col(Seccion.id_seccion).in_(ids_seccion))
+    ).all()
+    periodos = db.exec(
+        select(PeriodoAcademico.id_periodo_academico, PeriodoAcademico.numero, AnioEscolar.id_anio_escolar,
+               AnioEscolar.nombre)
+        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
+        .where(col(PeriodoAcademico.id_periodo_academico).in_(ids_periodo))
+    ).all()
+    return Nombres(
+        grados={i: ItemCatalogo(id=i, nombre=nombre) for i, nombre in grados},
+        secciones={i: ItemCatalogo(id=i, nombre=nombre) for i, nombre in secciones},
+        periodos={
+            i: (ItemCatalogo(id=i, nombre=f"PA{numero}"), ItemCatalogo(id=id_anio, nombre=anio))
+            for i, numero, id_anio, anio in periodos
+        },
+    )
+
+
+def a_item(clase: ClaseProgramada, nombres: Nombres, subprogramas: Optional[list[ItemCatalogo]] = None) -> ClaseItem:
+    periodo, anio_escolar = nombres.periodos[clase.id_periodo_academico]
     return ClaseItem(
         id_clase=clase.id_clase, id_grado=clase.id_grado, id_seccion=clase.id_seccion,
+        grado=nombres.grados[clase.id_grado], seccion=nombres.secciones[clase.id_seccion], periodo=periodo,
+        anio_escolar=anio_escolar,
         fecha_original=clase.fecha_original, fecha=clase.fecha, tipo=clase.tipo, reprogramada=clase.reprogramada,
         tiene_asistencias=clase.tiene_asistencias, id_periodo_academico=clase.id_periodo_academico,
         version=clase.version, subprogramas=subprogramas or [],
@@ -176,7 +225,8 @@ def listar_clases(
         pares = [(c, p) for c, p in zip(clases, _subprogramas(db, filtro.id_colegio, clases)) if id_programa in p]
         total, pares = len(pares), pares[tramo]
     catalogo = _catalogo_programas(db)
-    items = [a_item(c, [catalogo[i] for i in sorted(p)]) for c, p in pares]
+    nombres = _nombres_de(db, [c for c, _ in pares])
+    items = [a_item(c, nombres, [catalogo[i] for i in sorted(p)]) for c, p in pares]
     return items if page is None else pagina(items, total, page)
 
 
@@ -293,10 +343,11 @@ def reprogramar(db: Session, id_colegio: int, data: ReprogramacionCrear, actor: 
         db.rollback()
         raise _concurrente() from None
     db.refresh(fila)
-    return a_item(ClaseProgramada(
+    reprogramada = ClaseProgramada(
         fila.id_clase, fila.id_grado, fila.id_seccion, fila.fecha_original, fila.fecha, fila.tipo, True, False,
         fila.id_periodo_academico, fila.version,
-    ))
+    )
+    return a_item(reprogramada, _nombres_de(db, [reprogramada]))
 
 
 def _actual(

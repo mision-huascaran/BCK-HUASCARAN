@@ -122,8 +122,30 @@ def test_listado_arreglo_y_paginado(client, db, entorno, cabeceras):
         ("2026-06-22", entorno.grados["1.º"]), ("2026-06-22", entorno.grados["2.º"]),
     ]
     assert set(arreglo[0]) == {"id_clase", "id_grado", "id_seccion", "fecha_original", "fecha", "tipo", "reprogramada",
-                               "tiene_asistencias", "id_periodo_academico", "version", "subprogramas"}
+                               "tiene_asistencias", "id_periodo_academico", "version", "subprogramas",
+                               "grado", "seccion", "periodo", "anio_escolar"}
     assert (pagina["page_size"], len(pagina["items"])) == (TAMANO_PAGINA, min(TAMANO_PAGINA, pagina["total"]))
+
+
+def nombres(clase) -> tuple:
+    return tuple((clase[c]["id"], clase[c]["nombre"]) for c in ("grado", "seccion", "periodo", "anio_escolar"))
+
+
+def test_d83_el_listado_trae_grado_seccion_pa_y_anio_con_nombre(client, db, entorno, cabeceras):
+    dia_de_clase(db, entorno, 1)
+    dia_de_clase(db, entorno, 1, grado="1.º")
+
+    arreglo = listar(client, cabeceras["Supervisor"], entorno, desde="2026-06-15", hasta="2026-06-15").json()
+
+    pa2, anio = entorno.periodos["vigente"].id_periodo_academico, entorno.anio
+    assert [nombres(c) for c in arreglo] == [
+        ((entorno.grados["1.º"], "1.º"), (entorno.alumnos["luis"].id_seccion, "Única"), (pa2, "PA2"),
+         (anio.id_anio_escolar, anio.nombre)),
+        ((entorno.grados["2.º"], "2.º"), (ana(entorno).id_seccion, "Única"), (pa2, "PA2"),
+         (anio.id_anio_escolar, anio.nombre)),
+    ]
+    assert all((c["id_grado"], c["id_seccion"], c["id_periodo_academico"]) == (
+        c["grado"]["id"], c["seccion"]["id"], c["periodo"]["id"]) for c in arreglo)
 
 
 # ── Subprogramas (CU013) ────────────────────────────────────────────────────────────
@@ -228,6 +250,15 @@ def test_reprogramar_mueve_la_obligacion(client, db, entorno, cabeceras, los_lun
         LUNES.isoformat(), MIERCOLES.isoformat(), True, 1)
     fechas = [c.fecha for c in programadas(db, entorno, LUNES, MIERCOLES)]
     assert fechas == [MIERCOLES]
+
+
+def test_d83_la_reprogramacion_devuelve_los_nombres(client, entorno, cabeceras, los_lunes):
+    clase = reprogramar(client, cabeceras, entorno, LUNES, MIERCOLES).json()
+
+    assert nombres(clase) == (
+        (entorno.grados["2.º"], "2.º"), (ana(entorno).id_seccion, "Única"),
+        (entorno.periodos["vigente"].id_periodo_academico, "PA2"), (entorno.anio.id_anio_escolar, entorno.anio.nombre),
+    )
 
 
 def test_reprogramar_de_nuevo_deja_historial(client, db, entorno, cabeceras, los_lunes):

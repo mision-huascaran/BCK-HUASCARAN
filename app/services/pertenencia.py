@@ -148,6 +148,12 @@ def _ultima(db: Session, id_alumno: int) -> Optional[AlumnoPertenencia]:
     ).first()
 
 
+def sin_pertenencia(db: Session, alumno: Alumno) -> bool:
+    """Alumno activo sin ningún intervalo: todavía no tiene un inicio de pertenencia y lo
+    confirma al editarlo (CU014)."""
+    return alumno.activo and _ultima(db, alumno.id_alumno) is None
+
+
 # ── Validaciones ────────────────────────────────────────────────────────────────────
 
 MENSAJE_CONFLICTO_LISTAS = (
