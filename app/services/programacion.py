@@ -110,22 +110,44 @@ def _tiene_alumnos(intervalos: list[Intervalo], fecha: date) -> bool:
     return any(inicio <= fecha and (fin is None or fin > fecha) for inicio, fin in intervalos)
 
 
+def _fechas_habituales(db: Session, calendarios: Calendarios, filtro: FiltroGrupos, desde: date, hasta: date):
+    """(grado, sección, fecha, PA) de cada día de clase lectivo de un PA en el rango, sin
+    mirar si el grupo tiene alumnos."""
+    for (grado, seccion), dia in _grupos_con_dia(db, filtro).items():
+        for fecha in fechas_del_dia(dia, desde, hasta):
+            pa = calendarios.pa_de(filtro.id_colegio, fecha)
+            if pa is not None and calendarios.es_lectivo(filtro.id_colegio, fecha):
+                yield grado, seccion, fecha, pa
+
+
 def _habituales(
     db: Session, calendarios: Calendarios, filtro: FiltroGrupos, desde: date, hasta: date
 ) -> dict[tuple[int, int, date], ClaseProgramada]:
     """Habituales calculadas con fecha original en el rango, por (grado, sección, fecha)."""
     pertenencias = _pertenencias(db, filtro, desde, hasta)
-    calculadas = {}
-    for (grado, seccion), dia in _grupos_con_dia(db, filtro).items():
-        for fecha in fechas_del_dia(dia, desde, hasta):
-            pa = calendarios.pa_de(filtro.id_colegio, fecha)
-            if pa is None or not calendarios.es_lectivo(filtro.id_colegio, fecha):
-                continue
-            if _tiene_alumnos(pertenencias[(grado, seccion)], fecha):
-                calculadas[(grado, seccion, fecha)] = ClaseProgramada(
-                    None, grado, seccion, fecha, fecha, TIPO_HABITUAL, False, False, pa.id_periodo_academico
-                )
-    return calculadas
+    return {
+        (grado, seccion, fecha): ClaseProgramada(
+            None, grado, seccion, fecha, fecha, TIPO_HABITUAL, False, False, pa.id_periodo_academico
+        )
+        for grado, seccion, fecha, pa in _fechas_habituales(db, calendarios, filtro, desde, hasta)
+        if _tiene_alumnos(pertenencias[(grado, seccion)], fecha)
+    }
+
+
+def habitual_sin_alumnos(db: Session, filtro: FiltroGrupos, desde: date, hasta: date) -> bool:
+    """Si en el rango cae un día de clase del grupo que no se programa solo porque el
+    grupo no tenía alumnos (sin contar las fechas que se reprogramaron a otro día). Lo
+    usa Lectura para distinguir "sin alumnos" de "sin clase"."""
+    calendarios = cargar_calendarios(db, ids_colegio=[filtro.id_colegio])
+    trasladadas = set(db.exec(
+        select(Clase.fecha_original).where(
+            *filtro.de(Clase), Clase.tipo == TIPO_HABITUAL, col(Clase.fecha_original).between(desde, hasta),
+            Clase.fecha != Clase.fecha_original,
+        )
+    ).all())
+    return any(
+        fecha not in trasladadas for _, _, fecha, _ in _fechas_habituales(db, calendarios, filtro, desde, hasta)
+    )
 
 
 def con_asistencias(db: Session, ids_clase: list[int]) -> set[int]:
