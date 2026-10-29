@@ -30,6 +30,7 @@ from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadItem, ActividadRespuesta
 from app.services.habilitacion import habilitaciones_vigentes
+from app.services.sincronizacion import MENSAJE_ACTIVIDAD_REQUERIDA
 from app.services.sesiones import (
     CIERRE_ACTIVIDAD_FORZADO,
     CIERRE_ACTIVIDAD_MANUAL,
@@ -124,7 +125,7 @@ def requerir_actividad_activa(db: Session, usuario: Usuario) -> Optional[uuid.UU
     if actividad is None:
         raise ErrorNegocio(
             status.HTTP_409_CONFLICT,
-            "Debe iniciar una actividad para realizar cambios.",
+            MENSAJE_ACTIVIDAD_REQUERIDA,
             motivo="actividad_requerida",
         )
     return actividad.id_actividad

@@ -6,18 +6,29 @@
   mismo PA, sin otra clase del grupo ese día y mientras no tenga asistencias. Si la
   clase todavía no tenía fila, se crea. Queda en el historial y en la auditoría.
 """
+from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
 from fastapi import status
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio, error_de_campo
 from app.core.paginacion import TAMANO_PAGINA, Paginado, pagina
 from app.core.tiempo import ahora_utc, hoy_lima
-from app.models.evaluacion import TIPO_HABITUAL, Clase, ClaseReprogramacion
-from app.models.organizacion import Colegio, Seccion, Usuario
+from app.models.evaluacion import TIPO_HABITUAL, Clase, ClaseAlumno, ClaseReprogramacion
+from app.models.organizacion import (
+    AlumnoPertenencia,
+    AnioEscolar,
+    Colegio,
+    Grado,
+    PeriodoAcademico,
+    Programa,
+    Seccion,
+    Usuario,
+)
 from app.schemas.clase import ClaseItem, ReprogramacionCrear, ReprogramacionItem
 from app.schemas.comun import ItemCatalogo
 from app.services.actividad_consulta import exigir_rango_valido
@@ -59,12 +70,51 @@ def _concurrente() -> ErrorNegocio:
     )
 
 
-def a_item(clase: ClaseProgramada) -> ClaseItem:
+@dataclass(frozen=True)
+class Nombres:
+    """Grado, sección, PA y año escolar de un lote de clases, por id."""
+
+    grados: dict[int, ItemCatalogo]
+    secciones: dict[int, ItemCatalogo]
+    periodos: dict[int, tuple[ItemCatalogo, ItemCatalogo]]
+
+
+def _nombres_de(db: Session, clases: list[ClaseProgramada]) -> Nombres:
+    """Los nombres que muestran las clases, en lote (3 consultas) para todas."""
+    if not clases:
+        return Nombres({}, {}, {})
+    ids_grado = {c.id_grado for c in clases}
+    ids_seccion = {c.id_seccion for c in clases}
+    ids_periodo = {c.id_periodo_academico for c in clases}
+    grados = db.exec(select(Grado.id_grado, Grado.nombre).where(col(Grado.id_grado).in_(ids_grado))).all()
+    secciones = db.exec(
+        select(Seccion.id_seccion, Seccion.nombre).where(col(Seccion.id_seccion).in_(ids_seccion))
+    ).all()
+    periodos = db.exec(
+        select(PeriodoAcademico.id_periodo_academico, PeriodoAcademico.numero, AnioEscolar.id_anio_escolar,
+               AnioEscolar.nombre)
+        .join(AnioEscolar, AnioEscolar.id_anio_escolar == PeriodoAcademico.id_anio_escolar)
+        .where(col(PeriodoAcademico.id_periodo_academico).in_(ids_periodo))
+    ).all()
+    return Nombres(
+        grados={i: ItemCatalogo(id=i, nombre=nombre) for i, nombre in grados},
+        secciones={i: ItemCatalogo(id=i, nombre=nombre) for i, nombre in secciones},
+        periodos={
+            i: (ItemCatalogo(id=i, nombre=f"PA{numero}"), ItemCatalogo(id=id_anio, nombre=anio))
+            for i, numero, id_anio, anio in periodos
+        },
+    )
+
+
+def a_item(clase: ClaseProgramada, nombres: Nombres, subprogramas: Optional[list[ItemCatalogo]] = None) -> ClaseItem:
+    periodo, anio_escolar = nombres.periodos[clase.id_periodo_academico]
     return ClaseItem(
         id_clase=clase.id_clase, id_grado=clase.id_grado, id_seccion=clase.id_seccion,
+        grado=nombres.grados[clase.id_grado], seccion=nombres.secciones[clase.id_seccion], periodo=periodo,
+        anio_escolar=anio_escolar,
         fecha_original=clase.fecha_original, fecha=clase.fecha, tipo=clase.tipo, reprogramada=clase.reprogramada,
         tiene_asistencias=clase.tiene_asistencias, id_periodo_academico=clase.id_periodo_academico,
-        version=clase.version,
+        version=clase.version, subprogramas=subprogramas or [],
     )
 
 
@@ -99,16 +149,61 @@ def _rango_por_defecto(calendarios: Calendarios, id_colegio: int) -> Optional[tu
     return (calendario.fecha_inicio, calendario.fecha_fin) if calendario is not None else None
 
 
+def _subprogramas(db: Session, id_colegio: int, clases: list[ClaseProgramada]) -> list[set[int]]:
+    """Ids de los subprogramas de los alumnos de cada clase en su fecha vigente: de su
+    lista congelada si la tiene; si no, de la pertenencia en esa fecha. En lote (3
+    consultas) para todas las clases."""
+    if not clases:
+        return []
+    ids_clase = [c.id_clase for c in clases if c.id_clase is not None]
+    congeladas = set(db.exec(
+        select(Clase.id_clase).where(col(Clase.id_clase).in_(ids_clase), col(Clase.lista_congelada_en).is_not(None))
+    ).all()) if ids_clase else set()
+    de_lista: dict[int, set[int]] = {i: set() for i in congeladas}
+    if congeladas:
+        for id_clase, id_programa in db.exec(
+            select(ClaseAlumno.id_clase, ClaseAlumno.id_programa).where(col(ClaseAlumno.id_clase).in_(congeladas)).distinct()
+        ).all():
+            de_lista[id_clase].add(id_programa)
+    calculadas = [c for c in clases if c.id_clase not in congeladas]
+    intervalos: dict[tuple[int, int], list[tuple]] = {}
+    if calculadas:
+        fechas = [c.fecha for c in calculadas]
+        for p in db.exec(select(AlumnoPertenencia).where(
+            AlumnoPertenencia.id_colegio == id_colegio,
+            col(AlumnoPertenencia.id_grado).in_({c.id_grado for c in calculadas}),
+            AlumnoPertenencia.desde <= max(fechas),
+            or_(col(AlumnoPertenencia.hasta).is_(None), col(AlumnoPertenencia.hasta) > min(fechas)),
+        )).all():
+            intervalos.setdefault((p.id_grado, p.id_seccion), []).append((p.desde, p.hasta, p.id_programa))
+    resultado = []
+    for c in clases:
+        if c.id_clase in congeladas:
+            resultado.append(de_lista[c.id_clase])
+        else:
+            resultado.append({
+                programa for desde, hasta, programa in intervalos.get((c.id_grado, c.id_seccion), [])
+                if desde <= c.fecha and (hasta is None or hasta > c.fecha)
+            })
+    return resultado
+
+
+def _catalogo_programas(db: Session) -> dict[int, ItemCatalogo]:
+    return {p.id_programa: ItemCatalogo(id=p.id_programa, nombre=p.nombre) for p in db.exec(select(Programa)).all()}
+
+
 def listar_clases(
     db: Session,
     usuario: Usuario,
     filtro: FiltroGrupos,
     rango: tuple[Optional[date], Optional[date]],
     page: Optional[int],
+    id_programa: Optional[int] = None,
 ) -> list[ClaseItem] | Paginado[ClaseItem]:
     """Clases del colegio (por fecha vigente, grado y sección) en [desde, hasta]; por
     defecto, el año del calendario del colegio que contiene hoy. Con `page`, paginado de
-    40; sin él, el arreglo completo (para elegir la clase de referencia, CU024)."""
+    40; sin él, el arreglo completo (para elegir la clase de referencia, CU024). Con
+    `id_programa`, solo las que tienen alumnos de ese subprograma (antes de paginar)."""
     colegio_existente(db, filtro.id_colegio)
     grados = grados_visibles(db, usuario, filtro.id_colegio, filtro.id_grado)
     desde, hasta = rango
@@ -120,11 +215,19 @@ def listar_clases(
         clases = []
     else:
         clases = clases_programadas(db, filtro, desde, hasta, calendarios)
-    items = [a_item(c) for c in clases if grados is None or c.id_grado in grados]
-    if page is None:
-        return items
-    inicio = (page - 1) * TAMANO_PAGINA
-    return pagina(items[inicio:inicio + TAMANO_PAGINA], len(items), page)
+    clases = [c for c in clases if grados is None or c.id_grado in grados]
+    tramo = slice((page - 1) * TAMANO_PAGINA, page * TAMANO_PAGINA) if page is not None else slice(None)
+    if id_programa is None:
+        # Sin filtro, los subprogramas solo hacen falta para la página.
+        total, clases = len(clases), clases[tramo]
+        pares = list(zip(clases, _subprogramas(db, filtro.id_colegio, clases)))
+    else:
+        pares = [(c, p) for c, p in zip(clases, _subprogramas(db, filtro.id_colegio, clases)) if id_programa in p]
+        total, pares = len(pares), pares[tramo]
+    catalogo = _catalogo_programas(db)
+    nombres = _nombres_de(db, [c for c, _ in pares])
+    items = [a_item(c, nombres, [catalogo[i] for i in sorted(p)]) for c, p in pares]
+    return items if page is None else pagina(items, total, page)
 
 
 # ── Reprogramar ─────────────────────────────────────────────────────────────────────
@@ -240,10 +343,11 @@ def reprogramar(db: Session, id_colegio: int, data: ReprogramacionCrear, actor: 
         db.rollback()
         raise _concurrente() from None
     db.refresh(fila)
-    return a_item(ClaseProgramada(
+    reprogramada = ClaseProgramada(
         fila.id_clase, fila.id_grado, fila.id_seccion, fila.fecha_original, fila.fecha, fila.tipo, True, False,
         fila.id_periodo_academico, fila.version,
-    ))
+    )
+    return a_item(reprogramada, _nombres_de(db, [reprogramada]))
 
 
 def _actual(

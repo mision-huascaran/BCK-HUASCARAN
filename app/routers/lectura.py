@@ -16,6 +16,7 @@ from app.schemas.lectura import (
     MAX_FILAS_POR_LOTE,
     ClaseReferenciaCambiar,
     FilaLecturaGuardar,
+    HabilitarRegistro,
     NoRealizadaMarcar,
     TablaLectura,
     TablaLecturaCrear,
@@ -46,7 +47,8 @@ def consultar_tabla(
 ):
     """La tabla de lectura del grupo, subprograma y semana, con sus filas (la lista
     histórica de la clase de referencia con ese subprograma) y si el usuario puede
-    escribir (`escritura`).
+    escribir (`escritura`). El mes no la identifica: se devuelve aunque el `mes` enviado
+    no sea el suyo, y la respuesta trae su `mes` e `id_anio_escolar` de ubicación.
 
     Errores: 404 `tabla_no_existe` (con `clase_referencia_sugerida` y `escritura`, lo
     necesario para crearla), 422 `semana_sin_clase`, 403 `aula_fuera_de_alcance`, 404
@@ -61,7 +63,8 @@ def consultar_tabla(
 def crear_tabla(data: TablaLecturaCrear, db: Db, docente: Docente):
     """Crea la tabla con una fila vacía por alumno de la lista de la clase de referencia
     (por defecto, la habitual o reprogramada de la semana; si no tiene fila, se crea y
-    se congela su lista). Idempotente por `id_operacion`.
+    se congela su lista). El `mes` de la tabla es el de su clase, aunque el enviado sea
+    otro. Idempotente por `id_operacion`.
 
     Errores: 409 `tabla_existente` (con su `id`); 422 `semana_futura`,
     `clase_no_realizada`, `semana_sin_clase`, `clase_fuera_de_la_semana`,
@@ -73,8 +76,9 @@ def crear_tabla(data: TablaLecturaCrear, db: Db, docente: Docente):
 
 @router.patch("/tablas/{id_tabla}/clase-referencia", response_model=TablaLectura)
 def cambiar_clase_referencia(id_tabla: int, data: ClaseReferenciaCambiar, db: Db, docente: Docente):
-    """Cambia la clase de referencia a otra del grupo en la misma semana y mes (por
-    `id_clase` o por `fecha`), solo sin datos de lectura y si no está "No realizada".
+    """Cambia la clase de referencia a otra del grupo en la misma semana, en cualquier mes
+    (por `id_clase` o por `fecha`), solo sin datos de lectura y si no está "No realizada".
+    Si la clase es de otro mes, la tabla pasa a ese `mes`.
 
     Errores: 404 `tabla_no_encontrada`; 409 `modificacion_concurrente`,
     `tabla_con_datos`, `lectura_no_realizada`, `clase_ya_usada`; 422
@@ -112,3 +116,19 @@ def marcar_no_realizada(id_tabla: int, data: NoRealizadaMarcar, db: Db, docente:
     `modificacion_concurrente`.
     """
     return lectura_service.marcar_no_realizada(db, docente, id_tabla, data)
+
+
+@router.post("/tablas/{id_tabla}/habilitar-registro", response_model=TablaLectura)
+def habilitar_registro(id_tabla: int, data: HabilitarRegistro, db: Db, docente: Docente):
+    """"Habilitar registro de lectura" (CU026): revierte la declaración "No realizada"
+    vigente con su "Motivo de la corrección" (`motivo`) y la `version` de la tabla
+    consultada. Requiere actividad y habilitación de Seguimiento de Lectura para el PA de
+    la clase de referencia, como una declaración nueva. La tabla vuelve a "normal" y se
+    conserva el historial (`declaraciones`); no amplía el plazo. Idempotente por
+    `id_operacion`.
+
+    Errores: 404 `tabla_no_encontrada`; 422 `validacion` (motivo vacío),
+    `sin_habilitacion`, `actividad_requerida`; 409 `declaracion_no_vigente` (la tabla ya
+    no está "No realizada"), `modificacion_concurrente` (con `id` y `version` actuales).
+    """
+    return lectura_service.habilitar_registro(db, docente, id_tabla, data)

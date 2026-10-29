@@ -15,6 +15,7 @@ from sqlalchemy import Integer, String, cast, func, literal, union
 from sqlmodel import Session, select
 
 from app.core.errores import ErrorNegocio
+from app.core.texto import comparable_sql
 from app.core.paginacion import Paginado, pagina, paginar
 from app.models.evaluacion import (
     Asistencia,
@@ -148,7 +149,9 @@ def _consulta(modulo: _Modulo, id_actividad: uuid.UUID):
         .join(Grado, Grado.id_grado == entidad.id_grado)
         .join(Seccion, Seccion.id_seccion == entidad.id_seccion)
     )
-    return modulo.joins(consulta).order_by(Colegio.nombre, Grado.id_grado, Seccion.nombre, tocados.c.id)
+    return modulo.joins(consulta).order_by(
+        comparable_sql(Colegio.nombre), Colegio.id_colegio, Grado.id_grado, comparable_sql(Seccion.nombre), tocados.c.id
+    )
 
 
 def _item(modulo: str, fila) -> RegistroDeActividad:

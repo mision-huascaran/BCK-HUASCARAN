@@ -107,13 +107,17 @@ def listar_semanas(
     id_colegio: int,
     id_grado: int,
     id_seccion: int,
+    id_programa: Optional[int] = None,
 ):
-    """Semanas (lunes a viernes) del año con alguna clase del grupo (programada o
-    guardada) en ese mes, para elegir la tabla de lectura (CU023). Una semana que cae en
-    dos meses aparece en el mes de su clase. Errores: 403 `sin_permiso` (Directivo), 403
-    `aula_fuera_de_alcance` (Docente), 404 `colegio_no_encontrado` y `anio_no_encontrado`, 422 `seccion_inexistente`."""
+    """Semanas (lunes a viernes) del año ubicadas en ese mes, para elegir la tabla de
+    lectura (CU023): las que tienen una tabla del grupo con ese `mes` y, sin tabla, las
+    que tienen su clase habitual o reprogramada en ese mes (si solo hay adicionales, la
+    primera). Con `id_programa`, la tabla y la regla son de ese subprograma. Una semana
+    que cae en dos meses aparece en uno solo, con sus fechas completas. Errores: 403
+    `sin_permiso` (Directivo), 403 `aula_fuera_de_alcance` (Docente), 404
+    `colegio_no_encontrado` y `anio_no_encontrado`, 422 `seccion_inexistente`."""
     grupo = FiltroGrupos(id_colegio, id_grado, id_seccion)
-    return lectura_service.semanas_con_clase(db, usuario, grupo, id_anio_escolar, mes)
+    return lectura_service.semanas_con_clase(db, usuario, grupo, id_anio_escolar, mes, id_programa)
 
 
 @router.get("/niveles-razkids", response_model=list[NivelRazkidsResponse])

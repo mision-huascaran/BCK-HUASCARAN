@@ -6,11 +6,12 @@ from sqlmodel import select
 
 from app.core.paginacion import TAMANO_PAGINA
 from app.models.evaluacion import ClaseReprogramacion
-from app.models.organizacion import ColegioGrado
+from app.models.organizacion import AlumnoPertenencia, ColegioGrado
 from app.services.programacion import FiltroGrupos, clases_programadas
 from tests.conftest import (
     a_las,
     agregar_no_lectivo,
+    crear_alumno,
     crear_particular,
     motivo,
     rangos_relativos,
@@ -121,8 +122,94 @@ def test_listado_arreglo_y_paginado(client, db, entorno, cabeceras):
         ("2026-06-22", entorno.grados["1.º"]), ("2026-06-22", entorno.grados["2.º"]),
     ]
     assert set(arreglo[0]) == {"id_clase", "id_grado", "id_seccion", "fecha_original", "fecha", "tipo", "reprogramada",
-                               "tiene_asistencias", "id_periodo_academico", "version"}
+                               "tiene_asistencias", "id_periodo_academico", "version", "subprogramas",
+                               "grado", "seccion", "periodo", "anio_escolar"}
     assert (pagina["page_size"], len(pagina["items"])) == (TAMANO_PAGINA, min(TAMANO_PAGINA, pagina["total"]))
+
+
+def nombres(clase) -> tuple:
+    return tuple((clase[c]["id"], clase[c]["nombre"]) for c in ("grado", "seccion", "periodo", "anio_escolar"))
+
+
+def test_d83_el_listado_trae_grado_seccion_pa_y_anio_con_nombre(client, db, entorno, cabeceras):
+    dia_de_clase(db, entorno, 1)
+    dia_de_clase(db, entorno, 1, grado="1.º")
+
+    arreglo = listar(client, cabeceras["Supervisor"], entorno, desde="2026-06-15", hasta="2026-06-15").json()
+
+    pa2, anio = entorno.periodos["vigente"].id_periodo_academico, entorno.anio
+    assert [nombres(c) for c in arreglo] == [
+        ((entorno.grados["1.º"], "1.º"), (entorno.alumnos["luis"].id_seccion, "Única"), (pa2, "PA2"),
+         (anio.id_anio_escolar, anio.nombre)),
+        ((entorno.grados["2.º"], "2.º"), (ana(entorno).id_seccion, "Única"), (pa2, "PA2"),
+         (anio.id_anio_escolar, anio.nombre)),
+    ]
+    assert all((c["id_grado"], c["id_seccion"], c["id_periodo_academico"]) == (
+        c["grado"]["id"], c["seccion"]["id"], c["periodo"]["id"]) for c in arreglo)
+
+
+# ── Subprogramas (CU013) ────────────────────────────────────────────────────────────
+
+ALFA, CL = "Alfabetización", "Comprensión Lectora"
+
+
+def subprogramas(clase) -> list[str]:
+    return [s["nombre"] for s in clase["subprogramas"]]
+
+
+@pytest.fixture
+def beto(db, entorno):
+    """Beto, en Alfabetización, en el 2.º del Andino con Ana (Comprensión Lectora): el 2.º
+    tiene los dos subprogramas y el 1.º (Luis), solo Alfabetización. Clase los lunes."""
+    dia_de_clase(db, entorno, 1)
+    dia_de_clase(db, entorno, 1, grado="1.º")
+    return crear_alumno(db, "Beto", "Alfa", entorno.colegios["Andino"], entorno.grados["2.º"],
+                        entorno.programas[ALFA], 1, desde=entorno.anio.fecha_inicio)
+
+
+def test_subprogramas_de_la_clase_en_una_sola_fila(client, entorno, cabeceras, beto):
+    sup = cabeceras["Supervisor"]
+    lunes = {"desde": LUNES.isoformat(), "hasta": LUNES.isoformat()}
+
+    todas = listar(client, sup, entorno, **lunes).json()
+    con_alfa = listar(client, sup, entorno, id_programa=entorno.programas[ALFA], **lunes).json()
+    con_cl = listar(client, sup, entorno, id_programa=entorno.programas[CL], **lunes).json()
+
+    assert [(c["id_grado"], subprogramas(c)) for c in todas] == [
+        (entorno.grados["1.º"], [ALFA]), (entorno.grados["2.º"], sorted([ALFA, CL], key=lambda n: entorno.programas[n])),
+    ]
+    assert [c["id_grado"] for c in con_alfa] == [entorno.grados["1.º"], entorno.grados["2.º"]]
+    # El 1.º no tiene alumnos de Comprensión Lectora; el 2.º sale una sola vez.
+    assert [c["id_grado"] for c in con_cl] == [entorno.grados["2.º"]]
+
+
+def test_subprogramas_de_la_lista_congelada_y_de_la_calculada(client, db, entorno, cabeceras, beto):
+    registrar_asistencia(db, ana(entorno), LUNES, lista=[ana(entorno), beto])
+    # Después de congelar la lista del lunes, Beto pasa a Comprensión Lectora desde el inicio.
+    intervalo = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == beto.id_alumno)).one()
+    intervalo.id_programa = entorno.programas[CL]
+    db.add(intervalo)
+    db.commit()
+
+    congelada, calculada = listar(client, cabeceras["Supervisor"], entorno, desde=LUNES.isoformat(),
+                                  hasta=LUNES_SIGUIENTE.isoformat(), id_grado=entorno.grados["2.º"]).json()
+
+    assert len(subprogramas(congelada)) == 2
+    assert subprogramas(calculada) == [CL]
+
+
+def test_filtro_por_subprograma_antes_de_paginar(client, entorno, cabeceras, beto):
+    sup = cabeceras["Supervisor"]
+
+    del_segundo = listar(client, sup, entorno, id_grado=entorno.grados["2.º"], page=1).json()
+    con_cl = listar(client, sup, entorno, id_programa=entorno.programas[CL], page=1).json()
+    con_alfa = listar(client, sup, entorno, id_programa=entorno.programas[ALFA], page=1).json()
+    todas = listar(client, sup, entorno, page=1).json()
+
+    assert con_cl["total"] == del_segundo["total"] > 0
+    assert len(con_cl["items"]) == min(TAMANO_PAGINA, con_cl["total"])
+    assert all(CL in subprogramas(c) for c in con_cl["items"])
+    assert con_alfa["total"] == todas["total"]
 
 
 def test_listado_marca_las_que_tienen_asistencias(client, db, entorno, cabeceras):
@@ -163,6 +250,15 @@ def test_reprogramar_mueve_la_obligacion(client, db, entorno, cabeceras, los_lun
         LUNES.isoformat(), MIERCOLES.isoformat(), True, 1)
     fechas = [c.fecha for c in programadas(db, entorno, LUNES, MIERCOLES)]
     assert fechas == [MIERCOLES]
+
+
+def test_d83_la_reprogramacion_devuelve_los_nombres(client, entorno, cabeceras, los_lunes):
+    clase = reprogramar(client, cabeceras, entorno, LUNES, MIERCOLES).json()
+
+    assert nombres(clase) == (
+        (entorno.grados["2.º"], "2.º"), (ana(entorno).id_seccion, "Única"),
+        (entorno.periodos["vigente"].id_periodo_academico, "PA2"), (entorno.anio.id_anio_escolar, entorno.anio.nombre),
+    )
 
 
 def test_reprogramar_de_nuevo_deja_historial(client, db, entorno, cabeceras, los_lunes):

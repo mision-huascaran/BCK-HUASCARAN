@@ -6,6 +6,7 @@ import pytest
 from sqlmodel import select
 
 from app.models.organizacion import Calendario, CalendarioPeriodo, DocenteColegioGrado
+from app.core import tiempo
 from app.services import registros_vencidos
 from app.services.calendario import cargar_calendarios
 from tests.conftest import (
@@ -15,6 +16,7 @@ from tests.conftest import (
     cabecera_de,
     crear_docente,
     crear_particular,
+    crear_permiso,
     iniciar_actividad,
     motivo,
     rangos_en_receso,
@@ -182,6 +184,69 @@ def test_cu011_en_un_receso_cuentan_las_del_pa_siguiente_y_las_retroactivas(clie
     db.add(retro)
     db.commit()
     assert client.get("/inicio/supervisor", headers=cabecera).json()["docentes_activos"] == 2
+
+
+def _activos_y_operando(client, db, entorno) -> tuple[int, int]:
+    return (
+        client.get("/inicio/supervisor", headers=cabecera_de(db, entorno.supervisor)).json()["docentes_activos"],
+        client.get("/inicio/directivo", headers=cabecera_de(db, entorno.usuarios["Directivo"])).json()["colegios_operando"],
+    )
+
+
+@pytest.mark.parametrize("colegio, esperado", [("Lejano", 2), ("Andino", 1)])
+def test_cu011_el_permiso_vigente_cuenta_solo_si_su_colegio_esta_en_un_pr(client, db, entorno, colegio, esperado):
+    """Regla confirmada I1: Lejano está en su PR2 y Andino en el PA2. Un Docente sin
+    asignaciones con un permiso vigente cuenta en el receso, no durante un PA. Rosa
+    (Andino, PA2) cuenta siempre. Colegios operando (CU012) no cambia."""
+    lejano_en_receso(db, entorno)
+    con_permiso = crear_docente(db, entorno, "Permiso", "permiso@sicedu.test", "70000012")
+    db.commit()
+    antes = _activos_y_operando(client, db, entorno)
+
+    crear_permiso(db, entorno, con_permiso.id_docente, colegio, "3.º", periodo="vigente")
+
+    assert antes == (1, 1)
+    assert _activos_y_operando(client, db, entorno) == (esperado, 1)
+
+
+@pytest.mark.parametrize("estado", ["revocado", "vencido", "programado"])
+def test_cu011_un_permiso_no_vigente_no_cuenta(client, db, entorno, estado):
+    lejano_en_receso(db, entorno)
+    con_permiso = crear_docente(db, entorno, "Permiso", "permiso@sicedu.test", "70000012")
+    ahora = tiempo.ahora_utc()
+    ventana = {
+        "revocado": {"revocado_en": ahora - timedelta(minutes=10), "revocado_por": entorno.supervisor.id_usuario},
+        "vencido": {"inicio": ahora - timedelta(hours=3), "fin": ahora - timedelta(hours=1)},
+        "programado": {"inicio": ahora + timedelta(hours=1), "fin": ahora + timedelta(hours=3)},
+    }[estado]
+
+    crear_permiso(db, entorno, con_permiso.id_docente, "Lejano", "3.º", periodo="vigente", **ventana)
+
+    assert _activos_y_operando(client, db, entorno)[0] == 1
+
+
+def test_cu011_permiso_y_retroactiva_cuentan_una_sola_vez(client, db, entorno):
+    lejano_en_receso(db, entorno)
+    ambos = crear_docente(db, entorno, "Ambos", "ambos@sicedu.test", "70000012")
+    asignar(db, ambos.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
+    fila = db.exec(select(DocenteColegioGrado).where(DocenteColegioGrado.id_docente == ambos.id_docente)).one()
+    fila.retroactiva = True
+    db.add(fila)
+    db.commit()
+
+    crear_permiso(db, entorno, ambos.id_docente, "Lejano", "4.º", periodo="vigente")
+
+    assert _activos_y_operando(client, db, entorno)[0] == 2
+
+
+def test_cu011_en_un_receso_no_cuenta_una_asignacion_dos_pa_mas_adelante(client, db, entorno, reloj):
+    """En el PR1 el PA siguiente es el PA2: una asignación solo del PA3 no basta."""
+    lejano = crear_docente(db, entorno, "Lejana", "lejana@sicedu.test", "70000012")
+    asignar(db, lejano.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["futuro"], 1)
+    db.commit()
+    reloj.fijar(a_las(entorno.fin("pasado") + timedelta(days=10)))
+
+    assert _activos_y_operando(client, db, entorno) == (1, 1)
 
 
 def test_cu011_solo_cuenta_asignaciones_del_periodo_vigente(client, db, entorno, cabeceras):
@@ -389,6 +454,18 @@ def test_cu020_filtros(client, db, entorno, cabeceras):
     assert nombres(sincronizacion="pendiente") == []
     assert nombres(sincronizacion="sin_informacion") == ["Nunca", "Rosa"]
     assert nombres(activo="false") == []
+
+
+def test_cu020_orden_por_nombre_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, cabeceras):
+    for i, nombre in enumerate(("beto", "Álvaro", "Carla")):
+        crear_docente(db, entorno, nombre, f"docente{i}@sicedu.test", f"7200000{i}")
+    db.commit()
+
+    items = client.get(
+        "/seguimiento/docentes", params={"sincronizacion": "sin_informacion"}, headers=cabeceras["Supervisor"]
+    ).json()["items"]
+
+    assert [d["nombres"] for d in items] == ["Álvaro", "beto", "Carla", "Rosa"]
 
 
 def test_cu020_ultima_conexion_null_si_nunca_inicio_sesion(client, db, entorno, cabeceras):

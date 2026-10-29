@@ -25,6 +25,18 @@ uat) como secreto. En cada arranque el contenedor ejecuta, en orden:
 3. `python -m app.seed_data`, solo si `CARGAR_DATOS_PRUEBA=true`
 4. `uvicorn`
 
+### Trivy
+
+Antes del despliegue, Jenkins construye la imagen como `huascaran-bck-<entorno>:candidata` y
+la escanea con Trivy 0.76.1, fijado por digest
+(`aquasec/trivy@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c`).
+Solo se permiten hallazgos LOW: uno MEDIUM, HIGH, CRITICAL o UNKNOWN, o un escaneo que no
+termina, detiene el pipeline y no se despliega. No hay excepciones ni forma de omitir el
+control. Si pasa, la imagen se etiqueta como `:actual` y es la que levanta `docker-compose.yml`.
+
+El reporte completo (incluidos los LOW) queda en Jenkins → build → Artifacts →
+`trivy-reports/backend-trivy.html`, también cuando el escaneo falla.
+
 ## Datos maestros reales: `python -m app.cli`
 
 Son distintos del seed (`app/seed_data.py`, datos de prueba ficticios). Todos los comandos

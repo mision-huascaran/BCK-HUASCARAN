@@ -16,7 +16,7 @@ MINUTOS_VIGENCIA_PIN = int(VIGENCIA_PIN.total_seconds() // 60)
 HORAS_VIGENCIA_TEMPORAL = int(VIGENCIA_CONTRASENA_TEMPORAL.total_seconds() // 3600)
 AVISO_TEMPORAL = (
     f"Esta contraseña temporal vence en {HORAS_VIGENCIA_TEMPORAL} horas. Deberás cambiarla "
-    "en tu primer ingreso; si vence antes, usa la opción \"¿Olvidó su contraseña?\" "
+    "en tu primer ingreso; si vence antes, usa la opción \"¿Olvidaste tu contraseña?\" "
     "para recuperar el acceso."
 )
 

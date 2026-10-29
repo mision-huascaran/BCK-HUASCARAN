@@ -10,15 +10,21 @@ from sqlmodel import select
 
 from app.cli.catalogos import cargar_catalogos
 from app.models.evaluacion import DescriptorRubrica, NivelRubrica, RubricaMensual
-from app.models.organizacion import AlumnoPertenencia, CicloEbr
+from app.models.organizacion import AlumnoPertenencia, CicloEbr, DocenteColegioGrado
 from app.models.trazabilidad import Auditoria
 from app.services import cambios, rubrica_service
 from app.services.calendario import pa_actual_de_colegios
+from app.services.registros_vencidos import estado_de_registros
 from tests.conftest import (
     a_las,
+    agregar_no_lectivo,
+    asignar,
+    cabecera_de,
     crear_alumno,
+    crear_docente,
     crear_permiso,
     fijar_periodo,
+    iniciar_actividad,
     motivo,
     rangos_relativos,
     seccion_de,
@@ -31,6 +37,10 @@ HOY = date(2026, 6, 17)
 JUNIO, MAYO, ABRIL, JULIO = 6, 5, 4, 7
 CL, ALFA = "Comprensión Lectora", "Alfabetización"
 MENSAJE_VALOR = "Selecciona una valoración permitida para esta dimensión."
+MENSAJE_EN_OTRO_GRUPO = (
+    "Este alumno ya tiene una evaluación registrada para este mes. Para corregirla, contacta al "
+    "Docente que la registró o a tu Supervisor."
+)
 
 
 @pytest.fixture(autouse=True)
@@ -106,8 +116,9 @@ def test_listado_r2_e_inactivos(client, entorno, doc, actividad):
     junio_alfa = listar(client, doc, entorno, programa=ALFA)
     mayo_cl = listar(client, doc, entorno, mes=MAYO)
 
-    # Carlos cambió de subprograma a mitad de junio: se lo evalúa en el grupo del último
-    # día lectivo del mes (Alfabetización). Inés salió el 10/06 y sigue en junio.
+    # Carlos cambió de subprograma a mitad de junio sin evaluación: se lo evalúa solo en el
+    # grupo del último día lectivo transcurrido (Alfabetización). Inés salió el 10/06 y
+    # sigue en junio.
     assert nombres(junio_cl) == ["Inés Inactiva", "Ana Torres"]
     assert [i["inactivo"] for i in junio_cl.json()["items"]] == [True, False]
     assert nombres(junio_alfa) == ["Carlos Cambio"]
@@ -122,6 +133,17 @@ def test_listado_r2_e_inactivos(client, entorno, doc, actividad):
         "id_alumno": entorno.alumnos["ana"].id_alumno, "nombre": "Ana Torres", "inactivo": False, "id_rubrica": None,
         "fluidez": None, "comprension": None, "estado": "pendiente", "resultado_decimas": None, "version": None,
     }
+
+
+def test_listado_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, doc):
+    for nombre, apellidos in (("Zoe", "Ñahui"), ("Iris", "álvarez"), ("Abel", "ALVA"), ("Bea", "Ávila")):
+        crear_alumno(db, nombre, apellidos, entorno.colegios["Andino"], entorno.grados["2.º"],
+                     entorno.programas[CL], 1, desde=entorno.anio.fecha_inicio)
+    db.commit()
+
+    assert nombres(listar(client, doc, entorno)) == [
+        "Abel ALVA", "Iris álvarez", "Bea Ávila", "Inés Inactiva", "Zoe Ñahui", "Ana Torres",
+    ]
 
 
 def test_listado_sin_alumnos(client, entorno, cabeceras):
@@ -142,8 +164,8 @@ def test_mes_futuro_o_sin_actividad(client, entorno, doc, mes, codigo):
 
 
 def test_r1_mes_partido_entre_dos_pa(client, db, entorno, doc):
-    """Si el PA1 llega al 08/05 y el PA2 empieza el 11/05, mayo es del PA2 (el de su último
-    día lectivo)."""
+    """Si el PA1 llega al 08/05 y el PA2 empieza el 11/05, mayo es del PA2 (el de más días
+    lectivos del mes)."""
     fijar_periodo(db, entorno.calendario, "PA1", fin=date(2026, 5, 8))
     fijar_periodo(db, entorno.calendario, "PR1", inicio=date(2026, 5, 9), fin=date(2026, 5, 10))
     fijar_periodo(db, entorno.calendario, "PA2", inicio=date(2026, 5, 11))
@@ -153,6 +175,31 @@ def test_r1_mes_partido_entre_dos_pa(client, db, entorno, doc):
 
     assert mayo["id_periodo_academico"] == entorno.periodos["vigente"].id_periodo_academico
     assert abril["id_periodo_academico"] == entorno.periodos["pasado"].id_periodo_academico
+
+
+def _pa1_hasta_el_22_de_mayo(db, entorno):
+    """PA1 hasta el viernes 22/05 (15 días lectivos de mayo); PA2 desde el miércoles 27/05 (3)."""
+    fijar_periodo(db, entorno.calendario, "PA1", fin=date(2026, 5, 22))
+    fijar_periodo(db, entorno.calendario, "PR1", inicio=date(2026, 5, 23), fin=date(2026, 5, 26))
+    fijar_periodo(db, entorno.calendario, "PA2", inicio=date(2026, 5, 27))
+
+
+def test_r1_mes_con_mas_dias_del_pa_anterior(client, db, entorno, doc):
+    _pa1_hasta_el_22_de_mayo(db, entorno)
+
+    mayo = listar(client, doc, entorno, mes=MAYO).json()
+
+    assert mayo["id_periodo_academico"] == entorno.periodos["pasado"].id_periodo_academico
+
+
+def test_r1_los_dias_no_lectivos_del_pa_no_cuentan(client, db, entorno, doc):
+    _pa1_hasta_el_22_de_mayo(db, entorno)
+    agregar_no_lectivo(db, entorno.calendario, date(2026, 5, 4), date(2026, 5, 22))
+
+    mayo = listar(client, doc, entorno, mes=MAYO).json()
+
+    # Al PA1 le queda a lo más el 01/05; el PA2 tiene 3 días lectivos.
+    assert mayo["id_periodo_academico"] == entorno.periodos["vigente"].id_periodo_academico
 
 
 def test_listado_roles_y_alcance(client, entorno, cabeceras):
@@ -246,6 +293,56 @@ def test_alumno_que_no_pertenecia_al_grupo_ese_mes(client, entorno, doc, activid
     ] * 2
 
 
+def _ana_pasa_a_alfabetizacion(db, entorno, desde=date(2026, 6, 15)):
+    ana = entorno.alumnos["ana"]
+    intervalo = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == ana.id_alumno)).one()
+    intervalo.hasta = desde
+    db.add(intervalo)
+    db.add(AlumnoPertenencia(
+        id_alumno=ana.id_alumno, id_colegio=intervalo.id_colegio, id_grado=intervalo.id_grado,
+        id_seccion=intervalo.id_seccion, id_programa=entorno.programas[ALFA], desde=desde,
+        creado_por=1, creado_en=a_las(HOY),
+    ))
+    db.commit()
+
+
+def test_r2_mes_en_curso_solo_cuentan_los_dias_transcurridos(client, db, entorno, doc):
+    """Ana pasa a Alfabetización el lunes 22/06, después de hoy (17/06): en junio todavía
+    le corresponde Comprensión Lectora."""
+    _ana_pasa_a_alfabetizacion(db, entorno, desde=date(2026, 6, 22))
+
+    assert "Ana Torres" in nombres(listar(client, doc, entorno))
+    assert "Ana Torres" not in nombres(listar(client, doc, entorno, programa=ALFA))
+
+
+def test_r2_la_evaluacion_guardada_conserva_su_grupo(client, db, entorno, doc, actividad):
+    [creada] = guardar(client, doc, item(entorno, fluidez=1)).json()
+    _ana_pasa_a_alfabetizacion(db, entorno)
+
+    en_cl = listar(client, doc, entorno)
+    en_alfa = listar(client, doc, entorno, programa=ALFA)
+    [corregida] = guardar(client, doc, item(entorno, version=1, fluidez=2, comprension=3)).json()
+
+    assert creada["estado"] == "aceptada", creada
+    assert nombres(en_cl) == ["Inés Inactiva", "Ana Torres"]
+    assert nombres(en_alfa) == ["Carlos Cambio"]
+    assert corregida["estado"] == "aceptada", corregida
+    fila = db.exec(select(RubricaMensual)).one()
+    assert (fila.id_programa, fila.version) == (entorno.programas[CL], 2)
+
+
+def test_r2_no_se_crea_una_segunda_evaluacion_en_otro_grupo(client, db, entorno, doc, actividad):
+    guardar(client, doc, item(entorno, fluidez=1))
+    _ana_pasa_a_alfabetizacion(db, entorno)
+
+    [resultado] = guardar(client, doc, item(entorno, grupo_=grupo(entorno, programa=ALFA), comprension=1)).json()
+
+    assert (resultado["estado"], resultado["motivo"], resultado["detail"]) == (
+        "rechazada", "evaluacion_en_otro_grupo", MENSAJE_EN_OTRO_GRUPO,
+    )
+    assert len(db.exec(select(RubricaMensual)).all()) == 1
+
+
 def test_sin_habilitacion_y_con_permiso(client, db, entorno, doc, actividad):
     [sin_permiso] = guardar(client, doc, item(entorno, grupo_=grupo(entorno, mes=ABRIL), fluidez=2)).json()
     permiso = crear_permiso(db, entorno, entorno.id_docente, "Andino", "2.º", modulo="rubrica")
@@ -266,7 +363,7 @@ def test_sin_actividad(client, entorno, doc):
     [sin_actividad] = guardar(client, doc, item(entorno, fluidez=2)).json()
 
     assert (sin_actividad["motivo"], sin_actividad["detail"]) == (
-        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar las rúbricas.",
+        "actividad_requerida", "Debes iniciar una actividad de trabajo para registrar o modificar información.",
     )
 
 
@@ -389,3 +486,103 @@ def test_detalle_del_alumno_lee_la_rubrica_mensual(client, entorno, doc, activid
             for e in rubrica["evaluaciones"]] == [
         (JUNIO, "Logrado", None, "incompleta", None), (MAYO, "Inicio", "En proceso", "completada", 16),
     ]
+
+
+# ── DP-1 (D88, provisional): el mes partido entre dos PA ────────────────────────────
+# Mayo con el PA1 hasta el 22 (R1: PA1) y el PA2 desde el 27, como octubre entre el PA3 y
+# el PA4.
+
+def _docente_solo_de(client, db, entorno, periodo, correo, dni) -> dict:
+    """Un Docente asignado a 2.º del Andino solo en ese PA (en lugar del del entorno), con
+    actividad en curso."""
+    andino, segundo = entorno.colegios["Andino"], entorno.grados["2.º"]
+    db.delete(db.exec(select(DocenteColegioGrado).where(
+        DocenteColegioGrado.id_colegio == andino.id_colegio, DocenteColegioGrado.id_grado == segundo,
+        DocenteColegioGrado.id_periodo_academico == entorno.periodos[periodo].id_periodo_academico,
+    )).one())
+    db.flush()
+    otro = crear_docente(db, entorno, "Otro", correo, dni)
+    asignar(db, otro.id_docente, andino, [segundo], entorno.periodos[periodo], 1)
+    db.commit()
+    cabecera = cabecera_de(db, otro)
+    iniciar_actividad(client, cabecera)
+    return cabecera
+
+
+def test_dp1_un_docente_solo_del_pa_siguiente_evalua_el_mes_partido(client, db, entorno):
+    _pa1_hasta_el_22_de_mayo(db, entorno)
+    del_pa2 = _docente_solo_de(client, db, entorno, "vigente", "pa2@sicedu.test", "70000002")
+
+    mayo = listar(client, del_pa2, entorno, mes=MAYO).json()
+    [guardado] = guardar(client, del_pa2, item(entorno, grupo_=grupo(entorno, mes=MAYO), fluidez=2)).json()
+
+    pa1 = entorno.periodos["pasado"].id_periodo_academico
+    assert (mayo["escritura"]["permitida"], mayo["id_periodo_academico"]) == (True, pa1)
+    assert guardado["estado"] == "aceptada"
+    # La evaluación sigue asociada al PA de R1, y la usa el Registro de Vuelo del PA1.
+    fila = db.exec(select(RubricaMensual)).one()
+    assert (fila.id_periodo_academico, fila.id_permiso) == (pa1, None)
+    guardar(client, del_pa2, item(entorno, grupo_=grupo(entorno, mes=MAYO), version=1, fluidez=2, comprension=3))
+    assert rubrica_service.ultima_rubrica_completa(db, entorno.alumnos["ana"].id_alumno, pa1).mes == MAYO
+
+
+def test_dp1_un_permiso_de_un_pa_sin_dias_en_el_mes_no_sirve(client, db, entorno):
+    """Junio es íntegro del PA2: un permiso del PA1 no lo habilita (como el PA2 en octubre)."""
+    otro = crear_docente(db, entorno, "Otro", "pa1@sicedu.test", "70000003")
+    crear_permiso(db, entorno, otro.id_docente, "Andino", "2.º", modulo="rubrica")
+    db.commit()
+    cabecera = cabecera_de(db, otro)
+    iniciar_actividad(client, cabecera)
+
+    junio = listar(client, cabecera, entorno, mes=JUNIO).json()
+    [rechazado] = guardar(client, cabecera, item(entorno, fluidez=2)).json()
+
+    assert junio["escritura"]["permitida"] is False
+    assert rechazado["motivo"] == "sin_habilitacion"
+
+
+def test_dp1_un_permiso_del_pa_de_r1_sigue_sirviendo(client, db, entorno):
+    _pa1_hasta_el_22_de_mayo(db, entorno)
+    otro = crear_docente(db, entorno, "Otro", "permiso@sicedu.test", "70000004")
+    permiso = crear_permiso(db, entorno, otro.id_docente, "Andino", "2.º", modulo="rubrica")
+    db.commit()
+    cabecera = cabecera_de(db, otro)
+    iniciar_actividad(client, cabecera)
+
+    mayo = listar(client, cabecera, entorno, mes=MAYO).json()
+    [guardado] = guardar(client, cabecera, item(entorno, grupo_=grupo(entorno, mes=MAYO), fluidez=2)).json()
+
+    assert (mayo["escritura"]["permitida"], mayo["escritura"]["id_permiso"]) == (True, permiso.id_permiso)
+    assert guardado["estado"] == "aceptada"
+    assert db.exec(select(RubricaMensual)).one().id_permiso == permiso.id_permiso
+
+
+def _rubricas_vencidas(db) -> set[str]:
+    return {r.referencia for r in estado_de_registros(db).vencidas if r.modulo == "rubrica"}
+
+
+def test_dp1_el_mes_partido_vence_en_el_pa_siguiente_y_el_mes_integro_anterior_no(db, entorno, miercoles):
+    _pa1_hasta_el_22_de_mayo(db, entorno)
+    ana = entorno.alumnos["ana"].id_alumno
+
+    miercoles.fijar(a_las(date(2026, 5, 31), 9))
+    antes = _rubricas_vencidas(db)
+    miercoles.fijar(a_las(date(2026, 6, 1), 9))
+    el_1_de_junio = _rubricas_vencidas(db)
+
+    assert f"{MAYO}:{ana}" not in antes
+    assert f"{MAYO}:{ana}" in el_1_de_junio
+    # Abril es íntegro del PA1: no se exige durante el PA2.
+    assert not any(r.startswith(f"{ABRIL}:") for r in el_1_de_junio)
+
+
+def test_dp2_durante_el_pr2_la_rubrica_del_ultimo_mes_del_pa2_figura_vencida(db, entorno, miercoles):
+    """S21 (provisional), como septiembre en "QA Sur": julio es del PA2 (hasta el 17/07) y
+    vence el 01/08, ya en el PR2. Antes no figuraba (en un PR no había vencidos)."""
+    fijar_periodo(db, entorno.calendario, "PR2", fin=date(2026, 8, 5))
+    fijar_periodo(db, entorno.calendario, "PA3", inicio=date(2026, 8, 6))
+    ana = entorno.alumnos["ana"].id_alumno
+
+    miercoles.fijar(a_las(date(2026, 8, 1), 9))
+
+    assert f"{JULIO}:{ana}" in _rubricas_vencidas(db)

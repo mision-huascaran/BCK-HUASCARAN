@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import Depends, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
+from jwt import InvalidTokenError
 from sqlalchemy import or_, update
 from sqlmodel import Session, col
 
@@ -29,8 +29,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", auto_error=False)
 
 MOTIVO_SESION_INVALIDA = "sesion_invalida"
 MOTIVO_SESION_EXPIRADA = "sesion_expirada"
-MENSAJE_SESION_INVALIDA = "La sesión no es válida. Inicie sesión nuevamente."
-MENSAJE_SESION_EXPIRADA = "La sesión ha expirado. Inicie sesión nuevamente."
+MENSAJE_SESION_INVALIDA = "La sesión no es válida. Inicia sesión nuevamente."
+MENSAJE_SESION_EXPIRADA = "La sesión ha expirado. Inicia sesión nuevamente."
 MOTIVO_SIN_PERMISO = "sin_permiso"
 MENSAJE_SIN_PERMISO = "No tienes permisos para realizar esta acción"
 # `sesion.ultima_peticion_en` se escribe a lo sumo una vez por este lapso.
@@ -53,7 +53,7 @@ def verificar_firma(token: Optional[str]) -> dict:
         raise sesion_invalida()
     try:
         return decode_access_token(token)
-    except JWTError:
+    except InvalidTokenError:
         raise sesion_invalida() from None
 
 

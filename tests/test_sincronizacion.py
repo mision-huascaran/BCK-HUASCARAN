@@ -294,7 +294,7 @@ def test_salud_en_el_inicio_del_directivo(client, cabeceras, monkeypatch):
     assert client.get("/inicio/directivo", headers=directivo).json()["salud_sistema"] is None
 
     client.post("/sincronizacion/pendientes", json=[pendiente(), pendiente(modulo="alumnos")], headers=cabeceras["Docente"])
-    monkeypatch.setitem(salud_sistema.CONTADORES, "lectura", lambda _db, _pa: 2)
+    monkeypatch.setitem(salud_sistema.CONTADORES, "lectura", lambda _db, _pa: ["lectura:a", "lectura:b"])
 
     # 2 sincronizados y 1 pendiente de los cuatro módulos (el de Alumnos no cuenta).
     assert client.get("/inicio/directivo", headers=directivo).json()["salud_sistema"] == 67
@@ -488,6 +488,8 @@ def test_mis_habilitaciones(client, db, entorno, cabeceras):
     # La del PA1 ya terminó; la del PA2 sigue.
     assert cuerpo["asignaciones"] == [
         {"id_colegio": entorno.colegios["Andino"].id_colegio, "id_grado": entorno.grados[g],
+         "colegio": {"id": entorno.colegios["Andino"].id_colegio, "nombre": "Colegio Andino"},
+         "grado": {"id": entorno.grados[g], "nombre": g},
          "id_periodo_academico": vigente, "retroactiva": False}
         for g in ("1.º", "2.º")
     ]
@@ -530,16 +532,6 @@ def test_mis_habilitaciones_roles(client, cabeceras):
 
 # ── Ajustes de P2 (5.1) ─────────────────────────────────────────────────────────────
 
-def test_desde_periodo_e_inicio_asignacion_juntos_es_422(client, entorno, cabeceras):
-    url = f"/usuarios/{entorno.docente.id_usuario}"
-    cambio = {"grados": [entorno.grados["3.º"]], "desde_periodo": entorno.periodos["futuro"].id_periodo_academico,
-              "inicio_asignacion": "proximo"}
-
-    respuesta = client.patch(url, json={"asignacion": cambio}, headers=cabeceras["Supervisor"])
-
-    assert (respuesta.status_code, motivo(respuesta)) == (422, "inicio_asignacion_ambiguo")
-
-
 @pytest.fixture
 def con_retroactiva(client, db, entorno, cabeceras):
     """Docente nuevo con asignación retroactiva en Lejano 3.º (hoy en su PR2)."""
@@ -547,8 +539,10 @@ def con_retroactiva(client, db, entorno, cabeceras):
     datos = {
         "nombres": "Nuevo", "apellidos": "Docente", "dni": "60000001", "correo": "nuevo@sicedu.test",
         "id_rol": entorno.roles["Docente"],
-        "asignacion": {"id_colegio": entorno.colegios["Lejano"].id_colegio, "id_anio_escolar": entorno.anio.id_anio_escolar,
-                       "grados": [entorno.grados["3.º"]], "inicio_asignacion": "retroactivo"},
+        "asignacion": {"id_anio_escolar": entorno.anio.id_anio_escolar, "colegios": [{
+            "id_colegio": entorno.colegios["Lejano"].id_colegio, "grados": [entorno.grados["3.º"]],
+            "inicio_asignacion": "retroactivo",
+        }]},
     }
     creado = client.post("/usuarios", json=datos, headers=cabeceras["Supervisor"])
     assert creado.status_code == 201, creado.text

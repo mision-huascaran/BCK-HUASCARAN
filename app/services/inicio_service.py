@@ -14,8 +14,9 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from app.core.texto import comparable, comparable_sql
 from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
-from app.models.organizacion import Alumno, Colegio, DocenteColegioGrado, Rol, Usuario
+from app.models.organizacion import Alumno, Colegio, DocenteColegioGrado, PermisoCorreccion, Rol, Usuario
 from app.models.seguridad import Sesion
 from app.models.trazabilidad import Actividad
 from app.schemas.actividad import ActividadActiva
@@ -90,16 +91,50 @@ def _asignacion_en_pa_de_su_colegio(pa_por_colegio: PaPorColegio):
     return en_pa_de_su_colegio(DocenteColegioGrado.id_colegio, DocenteColegioGrado.id_periodo_academico, pa_por_colegio)
 
 
+def _de_docentes_activos(consulta):
+    """Restringe `consulta` (sobre `Usuario`) a los usuarios activos con rol Docente."""
+    return consulta.join(Rol, Rol.id_rol == Usuario.id_rol).where(col(Usuario.activo).is_(True), Rol.nombre == DOCENTE)
+
+
 def _de_docentes_asignados(consulta, condicion):
     """Restringe `consulta` (sobre `Usuario`) a los usuarios activos con rol Docente con
     alguna asignación que cumple `condicion`, en un colegio activo (una fila por
     asignación: agrupar o contar distintos)."""
     return (
-        consulta.join(Rol, Rol.id_rol == Usuario.id_rol)
+        _de_docentes_activos(consulta)
         .join(DocenteColegioGrado, DocenteColegioGrado.id_docente == Usuario.id_docente)
         .join(Colegio, Colegio.id_colegio == DocenteColegioGrado.id_colegio)
-        .where(col(Usuario.activo).is_(True), Rol.nombre == DOCENTE, condicion, col(Colegio.activo).is_(True))
+        .where(condicion, col(Colegio.activo).is_(True))
     )
+
+
+def _con_permiso_vigente(consulta, ids_colegio: list[int]):
+    """Restringe `consulta` (sobre `Usuario`) a los Docentes activos con un permiso de
+    corrección vigente ahora (no revocado, inicio <= ahora < fin) en uno de esos colegios,
+    si está activo."""
+    ahora = ahora_utc()
+    return (
+        _de_docentes_activos(consulta)
+        .join(PermisoCorreccion, PermisoCorreccion.id_docente == Usuario.id_docente)
+        .join(Colegio, Colegio.id_colegio == PermisoCorreccion.id_colegio)
+        .where(
+            col(PermisoCorreccion.revocado_en).is_(None),
+            PermisoCorreccion.inicio <= ahora,
+            PermisoCorreccion.fin > ahora,
+            col(PermisoCorreccion.id_colegio).in_(ids_colegio),
+            col(Colegio.activo).is_(True),
+        )
+    )
+
+
+def _en_receso_hoy(calendarios: Calendarios, ids_colegio: list[int], hoy: date) -> list[int]:
+    """Los colegios cuyo calendario hoy está en un PR."""
+    en_receso = []
+    for id_colegio in ids_colegio:
+        periodo = calendarios.periodo_de(id_colegio, hoy)
+        if periodo is not None and not periodo.es_pa:
+            en_receso.append(id_colegio)
+    return en_receso
 
 
 def _ids_colegios_activos(db: Session) -> list[int]:
@@ -107,11 +142,16 @@ def _ids_colegios_activos(db: Session) -> list[int]:
 
 
 def docentes_activos(db: Session, calendarios: Calendarios) -> int:
-    """CU011: docentes con cuenta activa y alguna asignación habilitada hoy según el
-    calendario de su colegio (en un PA, la de ese PA; en un PR, las retroactivas
-    habilitadas y las del PA siguiente). Cada docente cuenta una vez."""
-    condicion = asignacion_habilitada_sql(habilitantes(calendarios, _ids_colegios_activos(db), hoy_lima()))
-    return db.exec(_de_docentes_asignados(select(func.count(func.distinct(Usuario.id_usuario))), condicion)).one()
+    """CU011 (REGLA CONFIRMADA I1): docentes con cuenta activa y, según el calendario de
+    cada colegio, alguna asignación habilitada hoy (en un PA, la de ese PA; en un PR, una
+    retroactiva del PA anterior o una del PA inmediatamente siguiente) o, en un colegio
+    que hoy está en un PR, un permiso de corrección vigente. Cada docente cuenta una vez."""
+    hoy = hoy_lima()
+    ids_colegio = _ids_colegios_activos(db)
+    condicion = asignacion_habilitada_sql(habilitantes(calendarios, ids_colegio, hoy))
+    asignados = _de_docentes_asignados(select(Usuario.id_usuario), condicion)
+    con_permiso = _con_permiso_vigente(select(Usuario.id_usuario), _en_receso_hoy(calendarios, ids_colegio, hoy))
+    return db.exec(select(func.count()).select_from(asignados.union(con_permiso).subquery())).one()
 
 
 def _nombre(usuario: Usuario) -> str:
@@ -246,19 +286,31 @@ def alertas_sincronizacion(
     ]
 
 
+def nombre_de_sede(nombre: str) -> str:
+    """"Colegio Shilla" (CU011). Si el nombre ya empieza con la palabra "colegio" (sin
+    distinguir mayúsculas ni tildes), queda tal cual: "Colegio de Prueba", no "Colegio
+    Colegio de Prueba"."""
+    palabras = comparable(nombre).split(maxsplit=1)
+    return nombre if palabras and palabras[0] == "colegio" else f"Colegio {nombre}"
+
+
 def alertas_sede(db: Session, estado: EstadoRegistros) -> list[AlertaOperativa]:
     """`incumplimiento_sede` (crítica): colegios activos con registros vencidos y ningún
-    registro obligatorio consolidado (de ninguno de los cuatro módulos) en su PA actual."""
-    sin_registros = {c.id_colegio for c in estado.vencidas} - estado.colegios_con_registros
+    registro obligatorio consolidado (de ninguno de los cuatro módulos) en su PA actual. Los
+    colegios en un PR no cuentan, aunque tengan vencidos del PA que regularizan (DP-2)."""
+    con_vencidas = {c.id_colegio for c in estado.vencidas} - estado.colegios_en_receso
+    sin_registros = con_vencidas - estado.colegios_con_registros
     if not sin_registros:
         return []
     nombres = db.exec(
-        select(Colegio.nombre).where(col(Colegio.id_colegio).in_(sin_registros)).order_by(Colegio.nombre)
+        select(Colegio.nombre).where(col(Colegio.id_colegio).in_(sin_registros))
+        .order_by(comparable_sql(Colegio.nombre), Colegio.id_colegio)
     ).all()
     return [
         _alerta(
             INCUMPLIMIENTO_SEDE,
-            f"Incumplimiento de Sede - Colegio {nombre}: Sin registros obligatorios en el periodo académico actual.",
+            f"Incumplimiento de Sede - {nombre_de_sede(nombre)}: Sin registros obligatorios en el periodo académico "
+            "actual.",
             critica=True,
         )
         for nombre in nombres
@@ -269,25 +321,35 @@ def alertas_operativas(
     db: Session, pa_actual: PaPorColegio, calendarios: Calendarios, estado: EstadoRegistros
 ) -> list[AlertaOperativa]:
     """CU011: sincronización, inactividad y sede, en ese orden; dentro de cada tipo, por
-    nombre del docente o del colegio."""
-    if not pa_actual:
-        return []
-    docentes = sorted(
-        db.exec(
-            _de_docentes_asignados(
-                select(Usuario, func.min(DocenteColegioGrado.creado_en)), _asignacion_en_pa_de_su_colegio(pa_actual)
-            )
-            .group_by(Usuario.id_usuario)
-        ).all(),
-        key=lambda fila: (fila[0].nombres, fila[0].apellidos, fila[0].id_usuario),
+    nombre del docente o del colegio. La sincronización mira a los asignados al PA de
+    referencia de los vencidos (durante un PR, el que se regulariza: DP-2, provisional);
+    la inactividad y la sede, a los del PA en curso."""
+    docentes = _asignados_ordenados(db, pa_actual)
+    sincronizacion = alertas_sincronizacion(
+        db, _asignados_ordenados(db, estado.pa_referencia), estado.vencidas, ahora_utc()
     )
     if not docentes:
-        return []
+        return sincronizacion
     return [
-        *alertas_sincronizacion(db, docentes, estado.vencidas, ahora_utc()),
+        *sincronizacion,
         *alertas_inactividad(db, docentes, pa_actual, calendarios, hoy_lima()),
         *alertas_sede(db, estado),
     ]
+
+
+def _asignados_ordenados(db: Session, pa_por_colegio: PaPorColegio) -> list[tuple[Usuario, datetime]]:
+    """(docente, su primera asignación) de los asignados al PA de cada colegio, por nombre."""
+    if not pa_por_colegio:
+        return []
+    return sorted(
+        db.exec(
+            _de_docentes_asignados(
+                select(Usuario, func.min(DocenteColegioGrado.creado_en)), _asignacion_en_pa_de_su_colegio(pa_por_colegio)
+            )
+            .group_by(Usuario.id_usuario)
+        ).all(),
+        key=lambda fila: (comparable(fila[0].nombres), comparable(fila[0].apellidos), fila[0].id_usuario),
+    )
 
 
 def inicio_supervisor(db: Session) -> InicioSupervisor:

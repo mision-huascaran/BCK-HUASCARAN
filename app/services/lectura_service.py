@@ -1,17 +1,25 @@
 """Seguimiento de Lectura (CU023 a CU026).
 
 Una tabla por grupo (colegio × grado × sección), subprograma y semana (lunes a viernes),
-atada a una clase de referencia del grupo en esa semana:
+atada a una clase de referencia del grupo en esa semana. El mes no es identidad: una
+semana que cae en dos meses tiene una sola tabla.
 
-- Por defecto, la habitual o reprogramada cuya fecha vigente cae en la semana; una
-  adicional no la reemplaza sola, pero el Docente puede elegirla mientras la tabla no
-  tenga datos de lectura ni esté "No realizada". El `mes` de la tabla es el de su clase.
+- Las clases de la semana son todas las del grupo con fecha vigente en la semana, en
+  cualquier mes. Por defecto, la habitual o reprogramada; una adicional no la reemplaza
+  sola, pero el Docente puede elegirla mientras la tabla no tenga datos de lectura ni
+  esté "No realizada".
+- El `mes` (y `id_anio_escolar`) de la tabla solo la ubican en los filtros: es el de la
+  fecha de su clase de referencia; sin tabla, el de la habitual o reprogramada de la
+  semana (o, si solo hay adicionales, el de la primera).
 - Al crear la tabla, si la clase no tiene fila se crea y se congela su lista en la misma
   transacción; hay una fila por cada alumno de esa lista con el subprograma de la tabla.
 - La asistencia de la clase de referencia manda: presente o tardanza habilitan los datos
   de lectura; ausente deja la fila en "No aplica"; sin asistencia, "Pendiente".
 - "No realizada" (CU026): para toda la tabla, con motivo, solo si ninguna fila tiene
-  datos de lectura; bloquea los datos de lectura y las observaciones.
+  datos de lectura; bloquea los datos de lectura y las observaciones. Cada declaración
+  queda en el historial (`lectura_no_realizada`). "Habilitar registro de lectura" la
+  revierte con un motivo de corrección (si sigue vigente y con la misma versión): la
+  tabla vuelve a "normal" y se conserva todo; se puede volver a declarar después.
 
 Lectura: el Docente en su alcance de lectura; el Supervisor, de todo y en solo lectura.
 Cada escritura es una operación (`procesar_operacion`) del Docente, con actividad y
@@ -30,6 +38,7 @@ from sqlmodel import Session, col, select
 
 from app.core.database import insert_con_conflicto
 from app.core.errores import ErrorNegocio, error_de_campo
+from app.core.texto import comparable_sql
 from app.core.tiempo import ahora_utc, fecha_lima, hoy_lima
 from app.models.evaluacion import (
     ESTADOS_ASISTIO,
@@ -40,6 +49,7 @@ from app.models.evaluacion import (
     Asistencia,
     Clase,
     ClaseAlumno,
+    LecturaNoRealizada,
     LecturaSemanal,
     LecturaSemanalAlumno,
     SemanaReporte,
@@ -47,17 +57,21 @@ from app.models.evaluacion import (
 from app.models.organizacion import Alumno, AnioEscolar, Programa, Usuario
 from app.schemas.asistencia import Escritura
 from app.schemas.catalogos import SemanaResponse
+from app.schemas.comun import ItemCatalogo
 from app.schemas.lectura import (
     ClaseReferencia,
     ClaseReferenciaCambiar,
+    DeclaracionNoRealizada,
     FilaLectura,
     FilaLecturaGuardar,
+    HabilitarRegistro,
     NoRealizadaMarcar,
     TablaLectura,
     TablaLecturaCrear,
 )
 from app.schemas.sincronizacion import ResultadoOperacion
 from app.services.asistencia_service import exigir_seccion
+from app.services import claves_registro
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import cargar_calendarios, en_pa_de_su_colegio, rango_del_mes
 from app.services.clase_service import colegio_existente, grados_visibles
@@ -70,8 +84,11 @@ from app.services.programacion import (
     clases_programadas,
     congelar_lista,
     fila_de_programada,
+    habitual_sin_alumnos,
 )
+from app.services.pertenencia import lista_del_grupo
 from app.services.sincronizacion import (
+    MENSAJE_ACTIVIDAD_REQUERIDA,
     OPERACION_AJENA,
     RECHAZADA,
     ContextoOperacion,
@@ -108,10 +125,12 @@ LSN_INCOMPLETO = "lsn_incompleto"
 LSN_INVALIDO = "lsn_invalido"
 ALUMNO_FUERA_DE_LA_TABLA = "alumno_fuera_de_la_tabla"
 NO_REALIZADA = "lectura_no_realizada"
+DECLARACION_NO_VIGENTE = "declaracion_no_vigente"
 MODIFICACION_CONCURRENTE = "modificacion_concurrente"
 # Los rechazos que se responden 409 (el resto, 422).
 CONFLICTOS = frozenset({
-    TABLA_EXISTENTE, TABLA_CON_DATOS, CLASE_YA_USADA, NO_REALIZADA, MODIFICACION_CONCURRENTE, OPERACION_AJENA,
+    TABLA_EXISTENTE, TABLA_CON_DATOS, CLASE_YA_USADA, NO_REALIZADA, DECLARACION_NO_VIGENTE, MODIFICACION_CONCURRENTE,
+    OPERACION_AJENA,
 })
 
 MENSAJE_TABLA_NO_EXISTE = "No existe una tabla de lectura semanal para los filtros seleccionados."
@@ -119,7 +138,7 @@ MENSAJE_TABLA_NO_ENCONTRADA = "La tabla de lectura semanal no existe."
 MENSAJE_SEMANA_NO_ENCONTRADA = "La semana no existe en el año escolar seleccionado."
 MENSAJE_ANIO_NO_ENCONTRADO = "El año escolar no existe."
 MENSAJE_PROGRAMA_INEXISTENTE = "El subprograma no existe."
-MENSAJE_SEMANA_SIN_CLASE = "El grupo no tiene clases en la semana y mes seleccionados: no hay lectura que registrar."
+MENSAJE_SEMANA_SIN_CLASE = "El grupo no tiene clases en la semana seleccionada: no hay lectura que registrar."
 MENSAJE_TABLA_EXISTENTE = "Ya existe una tabla de lectura semanal para los filtros seleccionados."
 MENSAJE_SIN_ALUMNOS = "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."
 MENSAJE_SEMANA_FUTURA = "No es posible adelantar registros. Seleccione la semana actual o una anterior."
@@ -139,7 +158,7 @@ MENSAJE_FILA_CONCURRENTE = (
     "nuevamente."
 )
 MENSAJE_SIN_HABILITACION_CREAR = "No tienes una habilitación vigente para crear la tabla de lectura de esta semana."
-MENSAJE_SIN_ACTIVIDAD_CREAR = "Actividad no iniciada. Inicie su jornada para registrar información."
+MENSAJE_SIN_ACTIVIDAD_CREAR = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SIN_ASISTENCIA = (
     "El estudiante debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
 )
@@ -149,7 +168,7 @@ MENSAJE_ALUMNO_FUERA = "El estudiante no corresponde a la clase de referencia de
 MENSAJE_SIN_HABILITACION_FILAS = (
     "No tienes una habilitación vigente para registrar o corregir la lectura de esta semana."
 )
-MENSAJE_SIN_ACTIVIDAD_FILAS = "Debes iniciar una actividad de trabajo para registrar o modificar la lectura semanal."
+MENSAJE_SIN_ACTIVIDAD_FILAS = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_NO_REALIZADA = "La lectura semanal de esta tabla fue marcada como no realizada."
 MENSAJE_MOTIVO_OBLIGATORIO = (
     "Es obligatorio registrar una justificación para indicar por qué no se realizó la lectura semanal."
@@ -161,9 +180,11 @@ MENSAJE_NO_REALIZADA_CON_DATOS = (
 MENSAJE_SIN_HABILITACION_NO_REALIZADA = (
     "No tienes una habilitación vigente para marcar la lectura semanal como no realizada en la semana seleccionada."
 )
-MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA = (
-    "Debes iniciar una actividad de trabajo para marcar la lectura semanal como no realizada."
-)
+MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA = MENSAJE_ACTIVIDAD_REQUERIDA
+MENSAJE_MOTIVO_CORRECCION = "Ingresa el motivo de la corrección."
+MENSAJE_DECLARACION_NO_VIGENTE = "La lectura ya no figura como no realizada. Consulta la versión actual."
+# Campo solo de auditoría de la reversión.
+CAMPO_MOTIVO_CORRECCION = "motivo_correccion"
 MENSAJE_SOLO_LECTURA = "El Supervisor consulta la lectura semanal en solo lectura."
 
 MENSAJES_ESCRITURA = MensajesEscritura(MENSAJE_SOLO_LECTURA, MENSAJE_SIN_HABILITACION_FILAS, MENSAJE_SIN_ACTIVIDAD_FILAS)
@@ -287,8 +308,14 @@ class FiltroLectura:
     def columnas(self) -> dict[str, int]:
         return dict(self.__dict__)
 
+    def identidad(self) -> dict[str, int]:
+        """Lo que identifica la tabla: grupo, subprograma y semana (sin año ni mes)."""
+        return {c: v for c, v in self.__dict__.items() if c not in ("id_anio_escolar", "mes")}
+
     def clave(self) -> str:
-        return "-".join(str(v) for v in self.__dict__.values())
+        """Clave de entidad de la operación de crear: sin el mes, para que dos creaciones
+        de la misma semana desde meses distintos sean la misma entidad."""
+        return "-".join(str(v) for v in self.identidad().values())
 
     @classmethod
     def de(cls, origen) -> "FiltroLectura":
@@ -322,14 +349,37 @@ def _validar_filtro(db: Session, usuario: Usuario, filtro: FiltroLectura) -> Sem
 
 
 def _clases_de_la_semana(db: Session, filtro: FiltroLectura, semana: SemanaReporte) -> list[ClaseProgramada]:
-    """Clases del grupo en la semana con fecha en el mes de la tabla."""
-    clases = clases_programadas(db, filtro.grupo, semana.fecha_inicio, semana.fecha_fin)
-    return [c for c in clases if c.fecha.month == filtro.mes]
+    """Clases del grupo con fecha vigente en la semana, en cualquier mes."""
+    return clases_programadas(db, filtro.grupo, semana.fecha_inicio, semana.fecha_fin)
+
+
+def _sin_clases(db: Session, filtro: FiltroLectura, semana: SemanaReporte) -> RechazoOperacion:
+    """Por qué la semana no tiene clases del grupo (D101): si su día de clase cae en la
+    semana pero el grupo no tenía alumnos, `sin_alumnos`; si no, `semana_sin_clase`."""
+    if habitual_sin_alumnos(db, filtro.grupo, semana.fecha_inicio, semana.fecha_fin):
+        return RechazoOperacion(SIN_ALUMNOS, MENSAJE_SIN_ALUMNOS)
+    return RechazoOperacion(SEMANA_SIN_CLASE, MENSAJE_SEMANA_SIN_CLASE)
+
+
+def _con_alumnos_del_programa(db: Session, filtro: FiltroLectura, clase: ClaseProgramada) -> bool:
+    """Si la lista de la clase (la congelada o, si no la tiene, la del grupo en su fecha)
+    tiene alumnos del subprograma del filtro."""
+    fila = db.get(Clase, clase.id_clase) if clase.id_clase is not None else None
+    if fila is not None and fila.lista_congelada_en is not None:
+        return bool(_alumnos_de_la_lista(db, fila.id_clase, filtro.id_programa))
+    lista = lista_del_grupo(db, filtro.id_colegio, filtro.id_grado, filtro.id_seccion, clase.fecha)
+    return any(id_programa == filtro.id_programa for _, id_programa in lista)
 
 
 def _sugerida(clases: list[ClaseProgramada]) -> Optional[ClaseProgramada]:
     """La habitual o reprogramada de la semana (una adicional no la reemplaza sola)."""
     return next((c for c in clases if c.tipo == TIPO_HABITUAL), None)
+
+
+def _ubicacion(clases: list[ClaseProgramada]) -> Optional[ClaseProgramada]:
+    """La clase que ubica en un mes una semana sin tabla: la habitual o reprogramada; si
+    solo hay adicionales, la primera."""
+    return _sugerida(clases) or (clases[0] if clases else None)
 
 
 def _coincide(clase: ClaseProgramada, id_clase: Optional[int], fecha: Optional[date]) -> bool:
@@ -358,13 +408,22 @@ def _referencia(clase: ClaseProgramada | Clase) -> ClaseReferencia:
 
 
 def _tabla_por_filtro(db: Session, filtro: FiltroLectura) -> Optional[LecturaSemanal]:
+    """La tabla del grupo, subprograma y semana, en cualquier mes."""
     return db.exec(
-        select(LecturaSemanal).where(*(getattr(LecturaSemanal, c) == v for c, v in filtro.columnas().items()))
+        select(LecturaSemanal).where(*(getattr(LecturaSemanal, c) == v for c, v in filtro.identidad().items()))
     ).first()
 
 
 def _filtro_de(tabla: LecturaSemanal) -> FiltroLectura:
     return FiltroLectura.de(tabla)
+
+
+def _clave_tabla(filtro: FiltroLectura) -> str:
+    return claves_registro.tabla_lectura(**filtro.identidad())
+
+
+def _clave_fila(tabla: LecturaSemanal, id_alumno: int) -> str:
+    return claves_registro.fila_lectura(**_filtro_de(tabla).identidad(), id_alumno=id_alumno)
 
 
 # ── Consulta ────────────────────────────────────────────────────────────────────────
@@ -385,7 +444,7 @@ def _filas(
         .join(Alumno, Alumno.id_alumno == LecturaSemanalAlumno.id_alumno)
         .outerjoin(Asistencia, _asistencia_de_la_referencia())
         .where(LecturaSemanalAlumno.id_lectura_semanal == tabla.id)
-        .order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+        .order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
     )
     if id_alumno is not None:
         consulta = consulta.where(LecturaSemanalAlumno.id_alumno == id_alumno)
@@ -412,6 +471,28 @@ def _fila_salida(
     )
 
 
+def _declaraciones(db: Session, id_tabla: int) -> list[DeclaracionNoRealizada]:
+    """Historial "No realizada" de la tabla, la más reciente primero, con los nombres de
+    quién declaró y quién revirtió."""
+    filas = db.exec(
+        select(LecturaNoRealizada).where(LecturaNoRealizada.id_lectura_semanal == id_tabla)
+        .order_by(col(LecturaNoRealizada.fecha_registro).desc(), col(LecturaNoRealizada.id).desc())
+    ).all()
+    ids = {f.declarada_por for f in filas} | {f.revertida_por for f in filas if f.revertida_por is not None}
+    nombres = {
+        u.id_usuario: ItemCatalogo(id=u.id_usuario, nombre=f"{u.nombres} {u.apellidos}")
+        for u in db.exec(select(Usuario).where(col(Usuario.id_usuario).in_(ids))).all()
+    } if ids else {}
+    return [
+        DeclaracionNoRealizada(
+            id=f.id, motivo=f.motivo, declarada_por=nombres[f.declarada_por], fecha_registro=f.fecha_registro,
+            vigente=f.revertida_en is None, motivo_correccion=f.motivo_correccion,
+            revertida_por=nombres.get(f.revertida_por), fecha_registro_reversion=f.fecha_registro_reversion,
+        )
+        for f in filas
+    ]
+
+
 def _respuesta(db: Session, usuario: Usuario, tabla: LecturaSemanal) -> TablaLectura:
     clase = db.get(Clase, tabla.id_clase_referencia)
     filtro = _filtro_de(tabla)
@@ -420,6 +501,7 @@ def _respuesta(db: Session, usuario: Usuario, tabla: LecturaSemanal) -> TablaLec
         **filtro.columnas(), clase_referencia=_referencia(clase),
         filas=_filas_salida(db, tabla, clase.fecha),
         escritura=_escritura(db, usuario, filtro.grupo, clase.fecha),
+        declaraciones=_declaraciones(db, tabla.id),
     )
 
 
@@ -433,16 +515,22 @@ def _escritura_para_crear(
 
 
 def consultar_tabla(db: Session, usuario: Usuario, filtro: FiltroLectura) -> TablaLectura:
-    """La tabla de los filtros (CU023, CU024). Si no existe: 404 `tabla_no_existe`, con
-    la clase de referencia sugerida y si el usuario podría crearla; si la semana no tiene
-    clases del grupo en ese mes, 422 `semana_sin_clase`."""
+    """La tabla del grupo, subprograma y semana (CU023, CU024), aunque el `mes` enviado no
+    sea el suyo: la respuesta trae su `mes` y `id_anio_escolar` para ajustar el filtro. Si
+    no existe: 404 `tabla_no_existe`, con la clase de referencia sugerida de toda la
+    semana y si el usuario podría crearla; si la semana no tiene clases del grupo, 422
+    `semana_sin_clase`, y si las tiene pero sin alumnos del subprograma en su fecha, 422
+    `sin_alumnos`."""
     semana = _validar_filtro(db, usuario, filtro)
     tabla = _tabla_por_filtro(db, filtro)
     if tabla is not None:
         return _respuesta(db, usuario, tabla)
     clases = _clases_de_la_semana(db, filtro, semana)
     if not clases:
-        raise _no_procesable(MENSAJE_SEMANA_SIN_CLASE, SEMANA_SIN_CLASE)
+        rechazo = _sin_clases(db, filtro, semana)
+        raise _no_procesable(rechazo.detail, rechazo.motivo)
+    if not any(_con_alumnos_del_programa(db, filtro, c) for c in clases):
+        raise _no_procesable(MENSAJE_SIN_ALUMNOS, SIN_ALUMNOS)
     sugerida = _sugerida(clases)
     puede = _escritura_para_crear(db, usuario, filtro, semana, sugerida or clases[0])
     raise ErrorNegocio(
@@ -454,10 +542,27 @@ def consultar_tabla(db: Session, usuario: Usuario, filtro: FiltroLectura) -> Tab
     )
 
 
+def _semana_en_el_mes(
+    clases: list[ClaseProgramada], meses_de_tablas: set[int], hay_tabla: bool, mes: int, id_programa: Optional[int]
+) -> bool:
+    """Con `id_programa`: el mes de su tabla si existe; si no, el de la clase que ubica la
+    semana. Sin él: el de alguna tabla del grupo o el de esa clase."""
+    ubicacion = _ubicacion(clases)
+    por_clase = ubicacion is not None and ubicacion.fecha.month == mes
+    if id_programa is not None and hay_tabla:
+        return mes in meses_de_tablas
+    return mes in meses_de_tablas or por_clase
+
+
 def semanas_con_clase(
-    db: Session, usuario: Usuario, grupo: FiltroGrupos, id_anio_escolar: int, mes: int
+    db: Session, usuario: Usuario, grupo: FiltroGrupos, id_anio_escolar: int, mes: int,
+    id_programa: Optional[int] = None,
 ) -> list[SemanaResponse]:
-    """Semanas del año con alguna clase del grupo (programada o guardada) en ese mes."""
+    """Semanas del año ubicadas en ese mes (CU023): las que tienen una tabla del grupo (y
+    del subprograma, si se envía) con ese `mes` y, mientras no tengan tabla, las que
+    tienen su clase habitual o reprogramada en ese mes (o la primera, si solo hay
+    adicionales). Una semana partida entre dos meses aparece en uno solo, con sus fechas
+    completas."""
     _validar_grupo(db, usuario, grupo)
     anio = db.get(AnioEscolar, id_anio_escolar)
     if anio is None:
@@ -465,22 +570,36 @@ def semanas_con_clase(
     rango = rango_del_mes(anio, mes)
     if rango is None:
         return []
-    fechas = {c.fecha for c in clases_programadas(db, grupo, *rango)}
     semanas = db.exec(
         select(SemanaReporte)
         .where(SemanaReporte.id_anio_escolar == id_anio_escolar, SemanaReporte.fecha_inicio <= rango[1],
                SemanaReporte.fecha_fin >= rango[0])
         .order_by(SemanaReporte.fecha_inicio)
     ).all()
+    if not semanas:
+        return []
+    clases = clases_programadas(db, grupo, semanas[0].fecha_inicio, semanas[-1].fecha_fin)
+    consulta = select(LecturaSemanal.id_semana, LecturaSemanal.mes).where(
+        *grupo.de(LecturaSemanal), col(LecturaSemanal.id_semana).in_([s.id_semana for s in semanas]),
+    )
+    if id_programa is not None:
+        consulta = consulta.where(LecturaSemanal.id_programa == id_programa)
+    meses_de_tablas: dict[int, set[int]] = {}
+    for id_semana, mes_tabla in db.exec(consulta).all():
+        meses_de_tablas.setdefault(id_semana, set()).add(mes_tabla)
     hoy = hoy_lima()
-    return [
-        SemanaResponse(
-            id=s.id_semana, id_semana=s.id_semana, numero_semana=s.numero_semana, fecha_inicio=s.fecha_inicio,
-            fecha_fin=s.fecha_fin, cerrada=s.fecha_fin < hoy,
-        )
-        for s in semanas
-        if any(s.fecha_inicio <= f <= s.fecha_fin for f in fechas)
-    ]
+    respuesta = []
+    for s in semanas:
+        de_la_semana = [c for c in clases if s.fecha_inicio <= c.fecha <= s.fecha_fin]
+        if not de_la_semana:
+            continue
+        if _semana_en_el_mes(de_la_semana, meses_de_tablas.get(s.id_semana, set()), s.id_semana in meses_de_tablas,
+                             mes, id_programa):
+            respuesta.append(SemanaResponse(
+                id=s.id_semana, id_semana=s.id_semana, numero_semana=s.numero_semana, fecha_inicio=s.fecha_inicio,
+                fecha_fin=s.fecha_fin, cerrada=s.fecha_fin < hoy,
+            ))
+    return respuesta
 
 
 # ── Escrituras: piezas comunes ──────────────────────────────────────────────────────
@@ -509,12 +628,15 @@ def _firmar(registro: LecturaSemanal | LecturaSemanalAlumno, captura: _Captura, 
 
 
 def _guardar_cambios(
-    db: Session, registro: LecturaSemanal | LecturaSemanalAlumno, cambios: dict[str, tuple], captura: _Captura
+    db: Session, registro: LecturaSemanal | LecturaSemanalAlumno, cambios: dict[str, tuple], captura: _Captura,
+    solo_auditoria: Optional[dict[str, tuple]] = None,
 ) -> None:
-    """Aplica y audita los cambios (campo -> (anterior, nuevo)) del registro."""
+    """Aplica y audita los cambios (campo -> (anterior, nuevo)) del registro; los de
+    `solo_auditoria` se auditan pero no son columnas del registro."""
     ahora = ahora_utc()
     registrar_auditoria(
-        db, tabla=registro.__tablename__, id_registro=registro.id, accion=EDITAR, cambios=cambios,
+        db, tabla=registro.__tablename__, id_registro=registro.id, accion=EDITAR,
+        cambios={**cambios, **(solo_auditoria or {})},
         id_usuario=captura.usuario.id_usuario, fecha=ahora, id_actividad=captura.contexto.id_actividad,
         id_permiso=captura.id_permiso,
     )
@@ -614,9 +736,11 @@ def _insertar_tabla(db: Session, filtro: FiltroLectura, elegida: ClaseProgramada
     if not alumnos:
         raise RechazoOperacion(SIN_ALUMNOS, MENSAJE_SIN_ALUMNOS)
     ahora = ahora_utc()
+    # El mes ubica la tabla: el de su clase, aunque la consulta se haya hecho desde otro.
+    ubicacion = {**filtro.columnas(), "mes": clase.fecha.month}
     id_tabla = db.execute(
         insert_con_conflicto(db, _tabla)
-        .values(**filtro.columnas(), id_clase_referencia=clase.id_clase, estado=LECTURA_NORMAL,
+        .values(**ubicacion, id_clase_referencia=clase.id_clase, estado=LECTURA_NORMAL,
                 **_firma_nueva(captura, ahora))
         .on_conflict_do_nothing()
         .returning(_tabla.c.id)
@@ -639,6 +763,8 @@ def _creador(db: Session, usuario: Usuario, filtro: FiltroLectura, semana: Seman
         if semana.fecha_inicio > dia:
             raise RechazoOperacion(SEMANA_FUTURA, MENSAJE_SEMANA_FUTURA)
         clases = _clases_de_la_semana(db, filtro, semana)
+        if not clases:
+            raise _sin_clases(db, filtro, semana)
         elegida = _elegida(clases, data.id_clase_referencia, data.fecha_clase_referencia)
         if elegida.fecha > dia:
             raise RechazoOperacion(CLASE_NO_REALIZADA, MENSAJE_CLASE_NO_REALIZADA)
@@ -658,14 +784,14 @@ def crear_tabla(db: Session, usuario: Usuario, data: TablaLecturaCrear) -> Tabla
     existente con otro `id_operacion` es 409 `tabla_existente` (con su `id`)."""
     filtro = FiltroLectura.de(data)
     semana = _validar_filtro(db, usuario, filtro)
-    operacion = Operacion(MODULO, TABLA, filtro.clave(), MENSAJE_SIN_ACTIVIDAD_CREAR)
+    operacion = Operacion(MODULO, TABLA, filtro.clave(), MENSAJE_SIN_ACTIVIDAD_CREAR, _clave_tabla(filtro))
     return _ejecutar(db, usuario, data, _creador(db, usuario, filtro, semana, data), operacion)
 
 
 # ── Cambiar la clase de referencia (CU024) ──────────────────────────────────────────
 
 def _exigir_clase_libre(db: Session, id_clase: int, tabla: LecturaSemanal) -> None:
-    """REGLA PROVISIONAL L1: una tabla por clase de referencia y subprograma."""
+    """L1 (regla confirmada): una tabla por clase de referencia y subprograma."""
     otra = db.exec(select(LecturaSemanal.id).where(
         LecturaSemanal.id_clase_referencia == id_clase, LecturaSemanal.id_programa == tabla.id_programa,
         LecturaSemanal.id != tabla.id,
@@ -713,7 +839,11 @@ def _cambiador(db: Session, usuario: Usuario, id_tabla: int, data: ClaseReferenc
         clase = _clase_con_lista(db, filtro.grupo, elegida, usuario.id_usuario)
         _exigir_clase_libre(db, clase.id_clase, tabla)
         _regenerar_filas(db, tabla, clase.id_clase, captura)
-        _guardar_cambios(db, tabla, {"id_clase_referencia": (tabla.id_clase_referencia, clase.id_clase)}, captura)
+        cambios = {"id_clase_referencia": (tabla.id_clase_referencia, clase.id_clase)}
+        if clase.fecha.month != tabla.mes:
+            # La tabla pasa a ubicarse en el mes de su nueva clase (sigue siendo la misma).
+            cambios["mes"] = (tabla.mes, clase.fecha.month)
+        _guardar_cambios(db, tabla, cambios, captura)
         return {"id": tabla.id}
 
     return aplicar
@@ -722,10 +852,12 @@ def _cambiador(db: Session, usuario: Usuario, id_tabla: int, data: ClaseReferenc
 def cambiar_clase_referencia(
     db: Session, usuario: Usuario, id_tabla: int, data: ClaseReferenciaCambiar
 ) -> TablaLectura:
-    """Cambia la clase de referencia (CU024) a otra del grupo en la misma semana y mes,
-    solo sin datos de lectura y si la tabla no está "No realizada"."""
-    _tabla_visible(db, usuario, id_tabla)
-    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_FILAS)
+    """Cambia la clase de referencia (CU024) a otra del grupo en la misma semana, en
+    cualquier mes, con alumnos del subprograma de la tabla en su lista histórica; solo sin
+    datos de lectura y si la tabla no está "No realizada". Si la clase es de otro mes, la
+    tabla pasa a ese mes (no se crea otra)."""
+    tabla = _tabla_visible(db, usuario, id_tabla)
+    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_FILAS, _clave_tabla(_filtro_de(tabla)))
     return _ejecutar(db, usuario, data, _cambiador(db, usuario, id_tabla, data), operacion)
 
 
@@ -745,21 +877,99 @@ def _marcador(db: Session, usuario: Usuario, id_tabla: int, data: NoRealizadaMar
         nuevos = {"estado": LECTURA_NO_REALIZADA, "motivo_no_realizada": motivo}
         cambios = {c: (getattr(tabla, c), v) for c, v in nuevos.items() if getattr(tabla, c) != v}
         if cambios:
-            _guardar_cambios(db, tabla, cambios, _Captura(usuario, contexto, id_permiso))
+            captura = _Captura(usuario, contexto, id_permiso)
+            _registrar_declaracion(db, tabla, motivo, captura)
+            _guardar_cambios(db, tabla, cambios, captura)
         return {"id": tabla.id}
 
     return aplicar
 
 
+def _declaracion_vigente(db: Session, id_tabla: int) -> Optional[LecturaNoRealizada]:
+    return db.exec(select(LecturaNoRealizada).where(
+        LecturaNoRealizada.id_lectura_semanal == id_tabla, col(LecturaNoRealizada.revertida_en).is_(None),
+    )).first()
+
+
+def _registrar_declaracion(db: Session, tabla: LecturaSemanal, motivo: str, captura: _Captura) -> None:
+    """Una declaración nueva en el historial; si la tabla ya estaba "No realizada", solo
+    se corrige el motivo de la vigente (sigue habiendo una sola vigente)."""
+    vigente = _declaracion_vigente(db, tabla.id)
+    if vigente is not None:
+        vigente.motivo = motivo
+        db.add(vigente)
+        return
+    db.add(LecturaNoRealizada(
+        id_lectura_semanal=tabla.id, motivo=motivo, declarada_por=captura.usuario.id_usuario,
+        id_docente=captura.usuario.id_docente, id_actividad=captura.contexto.id_actividad,
+        id_permiso=captura.id_permiso, fecha_registro=captura.contexto.en, creado_en=ahora_utc(),
+    ))
+
+
 def marcar_no_realizada(db: Session, usuario: Usuario, id_tabla: int, data: NoRealizadaMarcar) -> TablaLectura:
     """Marca toda la tabla como "No realizada" con su motivo (CU026). 422 si falta el
     motivo; 409 `tabla_con_datos` si alguna fila tiene datos de lectura."""
-    _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla)
     motivo = (data.motivo or "").strip()
     if not motivo:
         raise error_de_campo("motivo", MENSAJE_MOTIVO_OBLIGATORIO)
-    operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA)
+    operacion = Operacion(
+        MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA, _clave_tabla(_filtro_de(tabla))
+    )
     return _ejecutar(db, usuario, data, _marcador(db, usuario, id_tabla, data, motivo), operacion)
+
+
+# ── Habilitar registro de lectura (CU026) ───────────────────────────────────────────
+
+def _no_vigente(tabla: LecturaSemanal) -> RechazoOperacion:
+    return RechazoOperacion(
+        DECLARACION_NO_VIGENTE, MENSAJE_DECLARACION_NO_VIGENTE, {"id": tabla.id, "version": tabla.version}
+    )
+
+
+def _revertidor(db: Session, usuario: Usuario, id_tabla: int, data: HabilitarRegistro, motivo: str):
+    def aplicar(contexto: ContextoOperacion) -> dict[str, Any]:
+        tabla = _tabla_bloqueada(db, id_tabla)
+        clase = db.get(Clase, tabla.id_clase_referencia)
+        id_permiso = _exigir_habilitacion(
+            db, usuario, _filtro_de(tabla).grupo, clase.id_periodo_academico, contexto.en,
+            MENSAJE_SIN_HABILITACION_FILAS,
+        )
+        # Sin declaración vigente (rechazada o ya revertida por otra operación) no se
+        # aplica nada; después, la versión: no se revierte otra versión de la tabla.
+        vigente = _declaracion_vigente(db, tabla.id)
+        if tabla.estado != LECTURA_NO_REALIZADA or vigente is None:
+            raise _no_vigente(tabla)
+        _exigir_version_tabla(tabla, data.version)
+        ahora = ahora_utc()
+        vigente.revertida_por, vigente.motivo_correccion = usuario.id_usuario, motivo
+        vigente.id_actividad_reversion, vigente.id_permiso_reversion = contexto.id_actividad, id_permiso
+        vigente.fecha_registro_reversion, vigente.revertida_en = contexto.en, ahora
+        db.add(vigente)
+        cambios = {"estado": (tabla.estado, LECTURA_NORMAL), "motivo_no_realizada": (tabla.motivo_no_realizada, None)}
+        _guardar_cambios(
+            db, tabla, cambios, _Captura(usuario, contexto, id_permiso),
+            solo_auditoria={CAMPO_MOTIVO_CORRECCION: (None, motivo)},
+        )
+        return {"id": tabla.id}
+
+    return aplicar
+
+
+def habilitar_registro(db: Session, usuario: Usuario, id_tabla: int, data: HabilitarRegistro) -> TablaLectura:
+    """Revierte la declaración "No realizada" vigente (CU026) con su motivo de corrección:
+    la tabla vuelve a "normal" (las filas se recalculan como siempre) y se conservan la
+    declaración, la corrección, quién, con qué actividad y autorización y cuándo. 422 si
+    falta el motivo; 409 `declaracion_no_vigente` si ya no está "No realizada" y
+    `modificacion_concurrente` si cambió la versión."""
+    tabla = _tabla_visible(db, usuario, id_tabla)
+    motivo = (data.motivo or "").strip()
+    if not motivo:
+        raise error_de_campo("motivo", MENSAJE_MOTIVO_CORRECCION)
+    operacion = Operacion(
+        MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_NO_REALIZADA, _clave_tabla(_filtro_de(tabla))
+    )
+    return _ejecutar(db, usuario, data, _revertidor(db, usuario, id_tabla, data, motivo), operacion)
 
 
 # ── Filas (CU024, CU025) ────────────────────────────────────────────────────────────
@@ -848,11 +1058,12 @@ def guardar_filas(
     """Registra o corrige filas de la tabla (CU024, CU025). Cada ítem es una operación con
     su resultado; un lote puede tener aceptadas y rechazadas. Un ítem sin cambios no
     escribe ni audita."""
-    _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla)
     resultados = [
         procesar_operacion(
             db, usuario, item, _editor(db, usuario, id_tabla, item),
-            Operacion(MODULO, TABLA_FILA, f"{id_tabla}:{item.id_alumno}", MENSAJE_SIN_ACTIVIDAD_FILAS),
+            Operacion(MODULO, TABLA_FILA, f"{id_tabla}:{item.id_alumno}", MENSAJE_SIN_ACTIVIDAD_FILAS,
+                      _clave_fila(tabla, item.id_alumno)),
         )
         for item in items
     ]

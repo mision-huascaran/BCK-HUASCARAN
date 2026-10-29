@@ -1,5 +1,5 @@
 """Permisos excepcionales de corrección (CU028), T4."""
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 import pytest
 from sqlmodel import select
@@ -7,7 +7,7 @@ from sqlmodel import select
 from app.core import tiempo
 from app.models.organizacion import AnioEscolar, PeriodoAcademico, PermisoCorreccion
 from app.models.trazabilidad import Auditoria
-from tests.conftest import a_las, crear_docente, crear_permiso, iso, motivo
+from tests.conftest import a_las, cabecera_de, crear_docente, crear_permiso, iso, motivo
 
 
 @pytest.fixture
@@ -59,6 +59,39 @@ def test_cu028_otorgar_programado(client, entorno, sup, url):
     respuesta = client.post(url, json=pedido(entorno, desde_ahora=False, inicio=iso(inicio)), headers=sup)
 
     assert (respuesta.status_code, respuesta.json()["estado"]) == (201, "programado")
+
+
+def test_cu028_fechas_sin_zona_son_hora_de_lima(client, db, entorno, sup, url):
+    # D76: el input datetime-local manda "2026-10-26T12:39" sin offset; antes era un 500.
+    inicio = (tiempo.ahora_utc() + timedelta(hours=3)).astimezone(tiempo.ZONA_LIMA).replace(second=0, microsecond=0)
+    fin = inicio + timedelta(days=1)
+    sin_zona = {"inicio": inicio.replace(tzinfo=None).isoformat(), "fin": fin.replace(tzinfo=None).isoformat()}
+
+    respuesta = client.post(url, json=pedido(entorno, desde_ahora=False, **sin_zona), headers=sup)
+
+    assert respuesta.status_code == 201
+    guardado = db.get(PermisoCorreccion, respuesta.json()["id"])
+    assert (guardado.inicio, guardado.fin) == (inicio.astimezone(timezone.utc), fin.astimezone(timezone.utc))
+
+
+@pytest.mark.parametrize("formato", [lambda d: d.astimezone(tiempo.ZONA_LIMA).isoformat(), iso])
+def test_cu028_fechas_con_offset_o_z(client, db, entorno, sup, url, formato):
+    inicio = (tiempo.ahora_utc() + timedelta(hours=3)).replace(microsecond=0)
+
+    respuesta = client.post(url, json=pedido(entorno, desde_ahora=False, inicio=formato(inicio),
+                                             fin=formato(inicio + timedelta(days=1))), headers=sup)
+
+    assert respuesta.status_code == 201
+    assert db.get(PermisoCorreccion, respuesta.json()["id"]).inicio == inicio
+
+
+def test_cu028_inicio_pasado_sin_zona_es_422(client, entorno, sup, url):
+    pasado = (tiempo.ahora_utc() - timedelta(hours=1)).astimezone(tiempo.ZONA_LIMA).replace(tzinfo=None)
+
+    respuesta = client.post(url, json=pedido(entorno, desde_ahora=False, inicio=pasado.isoformat()), headers=sup)
+
+    mensaje = "Selecciona una fecha y hora futura o utiliza la opción ‘Desde ahora’."
+    assert (respuesta.status_code, errores(respuesta)) == (422, [("inicio", mensaje)])
 
 
 @pytest.mark.parametrize(
@@ -167,8 +200,9 @@ def test_cu028_solo_el_supervisor(client, entorno, cabeceras, url, rol, codigo):
 
 # ── Estado, listado y detalle ───────────────────────────────────────────────────────
 
-def test_cu028_estado_calculado_en_el_tiempo(client, db, entorno, sup, url, reloj):
+def test_cu028_estado_calculado_en_el_tiempo(client, db, entorno, url, reloj):
     reloj.fijar(a_las(entorno.hoy, 10))
+    sup = cabecera_de(db, entorno.usuarios["Supervisor"])
     inicio = tiempo.ahora_utc() + timedelta(hours=1)
     creado = client.post(
         url, json=pedido(entorno, desde_ahora=False, inicio=iso(inicio), fin=iso(inicio + timedelta(hours=2))),

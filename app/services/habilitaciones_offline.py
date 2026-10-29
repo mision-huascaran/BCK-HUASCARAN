@@ -6,38 +6,26 @@ programados o vigentes, más el calendario de cada (colegio, año escolar) que a
 ellos. No depende del "año en curso": el PR4 puede pasar al año calendario siguiente. El
 backend vuelve a validar todo al sincronizar.
 """
-from datetime import date
-from typing import Optional
-
 from sqlmodel import Session, col, select
 
 from app.core.tiempo import ahora_utc, hoy_lima
-from app.models.organizacion import Colegio, DocenteColegioGrado, PeriodoAcademico, PermisoCorreccion, Usuario
+from app.models.organizacion import (
+    AnioEscolar,
+    Colegio,
+    DocenteColegioGrado,
+    Grado,
+    PeriodoAcademico,
+    PermisoCorreccion,
+    Usuario,
+)
 from app.schemas.calendario import CalendarioDeColegio
+from app.schemas.comun import ItemCatalogo
 from app.schemas.habilitacion import AsignacionUtilizable, MisHabilitaciones, PermisoUtilizable
-from app.services.calendario import CalendarioResuelto, Calendarios, PeriodoCalendario, cargar_calendarios
+from app.services.calendario import Calendarios, cargar_calendarios
 from app.services.calendario_gestion import respuesta
-from app.services.habilitacion import docente_habilitable
+from app.services.habilitacion import asignacion_utilizable, docente_habilitable
 
 ParColegioAnio = tuple[int, int]
-
-
-def _receso_de(calendario: CalendarioResuelto, pa: PeriodoCalendario) -> Optional[PeriodoCalendario]:
-    """El PR que sigue a ese PA."""
-    return next((p for p in calendario.periodos if not p.es_pa and p.numero == pa.numero), None)
-
-
-def _utilizable(calendarios: Calendarios, fila: DocenteColegioGrado, id_anio: int, hoy: date) -> bool:
-    """Si la asignación todavía sirve: su PA no terminó o, si es retroactiva, su PR no
-    terminó. Sin calendario configurado para su año, se incluye (es de un año futuro)."""
-    calendario = calendarios.aplicable(fila.id_colegio, id_anio)
-    pa = calendario.pa_de(fila.id_periodo_academico) if calendario is not None else None
-    if pa is None:
-        return calendario is None
-    if pa.fecha_fin >= hoy:
-        return True
-    receso = _receso_de(calendario, pa) if fila.retroactiva else None
-    return receso is not None and receso.fecha_fin >= hoy
 
 
 def _colegios_activos(db: Session, ids: set[int]) -> dict[int, Colegio]:
@@ -45,6 +33,21 @@ def _colegios_activos(db: Session, ids: set[int]) -> dict[int, Colegio]:
         return {}
     filas = db.exec(select(Colegio).where(col(Colegio.id_colegio).in_(ids), col(Colegio.activo).is_(True))).all()
     return {c.id_colegio: c for c in filas}
+
+
+def _grados(db: Session, ids: set[int]) -> dict[int, str]:
+    """Nombre de cada grado, en una sola consulta."""
+    if not ids:
+        return {}
+    return dict(db.exec(select(Grado.id_grado, Grado.nombre).where(col(Grado.id_grado).in_(ids))).all())
+
+
+def _nombres(colegios: dict[int, Colegio], grados: dict[int, str], id_colegio: int, id_grado: int) -> dict:
+    """`colegio` y `grado` con nombre, para que el front arme el filtro de aulas sin red."""
+    return {
+        "colegio": ItemCatalogo(id=id_colegio, nombre=colegios[id_colegio].nombre),
+        "grado": ItemCatalogo(id=id_grado, nombre=grados[id_grado]),
+    }
 
 
 def _asignaciones(db: Session, id_docente: int) -> list[tuple[DocenteColegioGrado, int]]:
@@ -74,13 +77,14 @@ def _permisos(db: Session, id_docente: int) -> list[PermisoCorreccion]:
 
 
 def _calendarios_de(
-    pares: list[ParColegioAnio], calendarios: Calendarios, colegios: dict[int, Colegio]
+    db: Session, pares: list[ParColegioAnio], calendarios: Calendarios, colegios: dict[int, Colegio]
 ) -> list[CalendarioDeColegio]:
+    nombres = dict(db.exec(select(AnioEscolar.id_anio_escolar, AnioEscolar.nombre)).all())
     salida = []
     for id_colegio, id_anio in sorted(set(pares)):
         aplicable = calendarios.aplicable(id_colegio, id_anio)
         if aplicable is not None:
-            datos = respuesta(aplicable, colegios[id_colegio]).model_dump()
+            datos = respuesta(aplicable, colegios[id_colegio], nombres.get(id_anio)).model_dump()
             salida.append(CalendarioDeColegio(**datos, id_colegio=id_colegio))
     return salida
 
@@ -97,16 +101,17 @@ def mis_habilitaciones(db: Session, usuario: Usuario) -> MisHabilitaciones:
     asignaciones = [
         (fila, id_anio)
         for fila, id_anio in filas
-        if fila.id_colegio in colegios and _utilizable(calendarios, fila, id_anio, hoy)
+        if fila.id_colegio in colegios and asignacion_utilizable(calendarios, fila, id_anio, hoy)
     ]
     permisos = [p for p in permisos if p.id_colegio in colegios]
     pares = [(f.id_colegio, id_anio) for f, id_anio in asignaciones] + [(p.id_colegio, p.id_anio_escolar) for p in permisos]
+    grados = _grados(db, {f.id_grado for f, _ in asignaciones} | {p.id_grado for p in permisos})
     return MisHabilitaciones(
         generado_en=generado_en,
         asignaciones=[
             AsignacionUtilizable(
                 id_colegio=f.id_colegio, id_grado=f.id_grado, id_periodo_academico=f.id_periodo_academico,
-                retroactiva=f.retroactiva,
+                retroactiva=f.retroactiva, **_nombres(colegios, grados, f.id_colegio, f.id_grado),
             )
             for f, _ in asignaciones
         ],
@@ -114,8 +119,9 @@ def mis_habilitaciones(db: Session, usuario: Usuario) -> MisHabilitaciones:
             PermisoUtilizable(
                 id_permiso=p.id_permiso, id_colegio=p.id_colegio, id_grado=p.id_grado,
                 id_periodo_academico=p.id_periodo_academico, modulo=p.modulo, inicio=p.inicio, fin=p.fin,
+                **_nombres(colegios, grados, p.id_colegio, p.id_grado),
             )
             for p in permisos
         ],
-        calendarios=_calendarios_de(pares, calendarios, colegios),
+        calendarios=_calendarios_de(db, pares, calendarios, colegios),
     )

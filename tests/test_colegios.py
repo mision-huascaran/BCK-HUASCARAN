@@ -4,7 +4,7 @@ from sqlmodel import select
 
 from app.models.organizacion import Colegio, ColegioGrado
 from app.models.trazabilidad import Auditoria
-from tests.conftest import crear_alumno, motivo, releer
+from tests.conftest import crear_alumno, crear_colegio, motivo, releer
 
 
 def oferta(entorno, *grados, dia=1) -> list[dict]:
@@ -114,7 +114,7 @@ def test_cu013_colegio_cargado_sin_dias_los_muestra_en_null(client, entorno, sup
 def test_cu013_nombre_duplicado_sin_distinguir_mayusculas_tildes_ni_espacios(client, entorno, sup, nombre):
     respuesta = client.post("/colegios", json=datos(entorno, nombre=nombre), headers=sup)
 
-    assert respuesta.status_code == 409
+    assert (respuesta.status_code, respuesta.json()["detail"]) == (409, "Ya existe un colegio registrado con ese nombre.")
     assert motivo(respuesta) == "colegio_duplicado"
 
 
@@ -151,11 +151,25 @@ def test_cu013_listado_activos_por_defecto_y_filtros(client, db, entorno, sup):
     assert [c["nombre"] for c in inactivos] == ["Colegio Lejano"]
 
 
+def test_cu013_listado_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, sup):
+    for nombre in ("Zeta", "colegio Beta", "Ámbar"):
+        crear_colegio(db, nombre, [entorno.grados["1.º"]], [], entorno.supervisor.id_usuario)
+    db.commit()
+
+    listado = client.get("/colegios", headers=sup).json()["items"]
+    con_estado = client.get("/colegios/estado-calendario", headers=sup).json()
+
+    esperado = ["Ámbar", "Colegio Andino", "colegio Beta", "Colegio Lejano", "Zeta"]
+    assert [c["nombre"] for c in listado] == esperado
+    assert [c["nombre"] for c in con_estado] == esperado
+
+
 def test_cu013_ubicaciones_para_los_filtros(client, entorno, sup):
     todas = client.get("/colegios/ubicaciones", headers=sup).json()
     de_lima = client.get("/colegios/ubicaciones", params={"departamento": "Lima"}, headers=sup).json()
 
-    assert todas == {"departamentos": ["Lima", "Áncash"], "distritos": ["Marcará", "Miraflores"]}
+    # Sin distinguir mayúsculas ni tildes: "Áncash" antes que "Lima".
+    assert todas == {"departamentos": ["Áncash", "Lima"], "distritos": ["Marcará", "Miraflores"]}
     assert de_lima["distritos"] == ["Miraflores"]
 
 
@@ -311,9 +325,11 @@ def test_cu013_inactivar_no_toca_alumnos_y_saca_al_colegio_del_alcance(client, d
 
     assert respuesta.json()["activo"] is False
     assert client.patch(f"/colegios/{andino}/desactivar", headers=sup).status_code == 200
-    assert client.get("/alumnos", headers=sup, params={"id_colegio": andino}).json()["total"] == 2
+    # D63: sus alumnos siguen activos, pero no salen en el listado mientras esté inactivo.
+    assert client.get("/alumnos", headers=sup, params={"id_colegio": andino}).json()["total"] == 0
     assert client.get("/colegios", headers=cabeceras["Docente"]).json()["total"] == 0
     assert client.patch(f"/colegios/{andino}/activar", headers=sup).json()["activo"] is True
+    assert client.get("/alumnos", headers=sup, params={"id_colegio": andino}).json()["total"] == 2
     acciones = db.exec(select(Auditoria.accion).order_by(Auditoria.id_auditoria)).all()
     assert acciones == ["inactivar", "activar"]
     assert client.patch("/colegios/999/activar", headers=sup).status_code == 404

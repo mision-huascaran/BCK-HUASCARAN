@@ -2,7 +2,8 @@
 calendario de ese colegio:
 
 - en un PA: las de ese PA;
-- en un PR: las retroactivas habilitadas del PA anterior y las del PA siguiente;
+- en un PR: las retroactivas habilitadas del PA anterior y las del PA inmediatamente
+  siguiente (REGLA CONFIRMADA I1);
 - con `cierre_usa_ultimo_pa` (Colegios Operando), en el PR4 o después del fin del año:
   las del último PA del año.
 
@@ -42,7 +43,11 @@ def _ultimo_pa_terminado(calendarios: Calendarios, id_colegio: int, hoy: date) -
 
 
 def _en_receso(
-    calendarios: Calendarios, id_colegio: int, periodo: PeriodoCalendario, hoy: date, cierre_usa_ultimo_pa: bool
+    calendarios: Calendarios,
+    id_colegio: int,
+    periodo: PeriodoCalendario,
+    hoy: date,
+    cierre_usa_ultimo_pa: bool,
 ) -> Habilitantes:
     if cierre_usa_ultimo_pa and periodo.numero == ULTIMO_PR:
         return Habilitantes(periodos={periodo.id_periodo_academico})
@@ -54,7 +59,10 @@ def _en_receso(
 
 
 def habilitantes_del_colegio(
-    calendarios: Calendarios, id_colegio: int, hoy: date, cierre_usa_ultimo_pa: bool = False
+    calendarios: Calendarios,
+    id_colegio: int,
+    hoy: date,
+    cierre_usa_ultimo_pa: bool = False,
 ) -> Habilitantes:
     periodo = calendarios.periodo_de(id_colegio, hoy)
     if periodo is None:
@@ -66,7 +74,10 @@ def habilitantes_del_colegio(
 
 
 def habilitantes(
-    calendarios: Calendarios, ids_colegio: list[int], hoy: date, cierre_usa_ultimo_pa: bool = False
+    calendarios: Calendarios,
+    ids_colegio: list[int],
+    hoy: date,
+    cierre_usa_ultimo_pa: bool = False,
 ) -> dict[int, Habilitantes]:
     return {c: habilitantes_del_colegio(calendarios, c, hoy, cierre_usa_ultimo_pa) for c in ids_colegio}
 

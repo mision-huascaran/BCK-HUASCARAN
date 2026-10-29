@@ -4,12 +4,16 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.schemas.calendario import CalendarioDeColegio
+from app.schemas.comun import ItemCatalogo
 from app.schemas.permiso import ModuloPermiso
 
 
 class AsignacionUtilizable(BaseModel):
     id_colegio: int
     id_grado: int
+    # Con nombre, para armar el filtro de aulas sin conexión.
+    colegio: ItemCatalogo
+    grado: ItemCatalogo
     id_periodo_academico: int
     retroactiva: bool
 
@@ -18,6 +22,8 @@ class PermisoUtilizable(BaseModel):
     id_permiso: int
     id_colegio: int
     id_grado: int
+    colegio: ItemCatalogo
+    grado: ItemCatalogo
     id_periodo_academico: int
     modulo: ModuloPermiso
     inicio: datetime

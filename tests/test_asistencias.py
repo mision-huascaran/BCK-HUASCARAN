@@ -139,6 +139,21 @@ def test_get_clase_programada_con_la_lista_del_grupo(client, db, entorno, doc):
     }]
 
 
+def test_lista_sin_distinguir_mayusculas_ni_tildes(client, db, entorno, doc, actividad):
+    """La lista del grupo (sin clase guardada) y la lista congelada salen en el mismo orden."""
+    for nombre, apellidos in (("Zoe", "Ñahui"), ("Iris", "álvarez"), ("Abel", "ALVA"), ("Bea", "Ávila")):
+        crear_alumno(db, nombre, apellidos, entorno.colegios["Andino"], entorno.grados["2.º"],
+                     entorno.programas["Comprensión Lectora"], 1, desde=entorno.anio.fecha_inicio)
+    db.commit()
+    esperado = ["Abel ALVA", "Iris álvarez", "Bea Ávila", "Zoe Ñahui", "Ana Torres"]
+
+    del_grupo = [a["nombre"] for a in consultar(client, doc, db, entorno, LUNES).json()["alumnos"]]
+    assert guardar(client, doc, db, entorno, LUNES, [registro(entorno)]).status_code == 200
+    congelada = [a["nombre"] for a in consultar(client, doc, db, entorno, LUNES).json()["alumnos"]]
+
+    assert (del_grupo, congelada) == (esperado, esperado)
+
+
 def test_get_sin_clase_programada(client, db, entorno, doc):
     clase = consultar(client, doc, db, entorno, MARTES).json()["clase"]
 
@@ -195,7 +210,7 @@ def test_escritura_con_asignacion_y_actividad(client, db, entorno, doc):
     con_actividad = consultar(client, doc, db, entorno, LUNES).json()["escritura"]
 
     assert (sin_actividad["permitida"], sin_actividad["motivo"]) == (
-        False, "Inicia una actividad de trabajo para registrar asistencias.")
+        False, "Debes iniciar una actividad de trabajo para registrar o modificar información.")
     assert con_actividad == {"permitida": True, "motivo": None, "id_permiso": None, "aviso_permiso": None}
 
 
@@ -339,6 +354,39 @@ def test_put_guarda_el_permiso_usado(client, db, entorno, doc, actividad):
     assert auditoria.id_permiso == permiso.id_permiso
 
 
+@pytest.fixture
+def permiso_revocado_9_10(db, entorno, miercoles, actividad):
+    """D69: permiso de Asistencias de 8:00 a 10:00, revocado a las 9:10; el reloj, a las 9:20."""
+    permiso = crear_permiso(db, entorno, entorno.id_docente, "Andino", "2.º", modulo="asistencias",
+                            revocado_por=entorno.supervisor.id_usuario, revocado_en=a_las(HOY, 9, 10),
+                            motivo_revocacion="Ya no corresponde")
+    miercoles.avanzar(minutes=20)
+    return permiso
+
+
+def test_sincronizar_operacion_previa_a_la_revocacion(client, db, entorno, doc, actividad, permiso_revocado_9_10):
+    marca = registro(entorno, realizado_en=iso(a_las(HOY, 9, 5)), id_actividad=actividad["id"])
+
+    [resultado] = guardar(client, doc, db, entorno, LUNES_DEL_PA1, [marca]).json()["resultados"]
+
+    assert resultado["estado"] == "aceptada"
+    auditoria = db.exec(select(Auditoria).where(Auditoria.tabla == "asistencia")).one()
+    assert auditoria.id_permiso == permiso_revocado_9_10.id_permiso
+
+
+@pytest.mark.parametrize("campos", [
+    pytest.param({"realizado_en": iso(a_las(HOY, 9, 15))}, id="sin_conexion_despues"),
+    pytest.param({}, id="en_linea_despues"),
+])
+def test_operacion_posterior_a_la_revocacion(client, db, entorno, doc, actividad, permiso_revocado_9_10, campos):
+    marca = registro(entorno, id_actividad=actividad["id"], **campos)
+
+    [resultado] = guardar(client, doc, db, entorno, LUNES_DEL_PA1, [marca]).json()["resultados"]
+
+    assert (resultado["estado"], resultado["motivo"]) == ("rechazada", "sin_habilitacion")
+    assert filas(db) == []
+
+
 def test_put_observacion_sin_estado_no_completa_la_fila(client, db, entorno, doc, actividad):
     marca = {"id_operacion": str(uuid.uuid4()), "id_alumno": entorno.alumnos["ana"].id_alumno, "observacion": "Llegó"}
 
@@ -365,6 +413,11 @@ def test_put_roles_y_validacion(client, db, entorno, cabeceras, doc):
     assert (sin_clase.status_code, motivo(sin_clase)) == (422, "validacion")
     assert (vacio.status_code, motivo(vacio)) == (422, "validacion")
     assert (ajeno.status_code, motivo(ajeno)) == (403, "aula_fuera_de_alcance")
+    sin_cambios = guardar(client, doc, db, entorno, LUNES, [
+        {"id_operacion": str(uuid.uuid4()), "version": None, "id_alumno": entorno.alumnos["ana"].id_alumno}
+    ])
+    assert (sin_cambios.status_code, motivo(sin_cambios)) == (422, "validacion")
+    assert [e["mensaje"] for e in sin_cambios.json()["errores"]] == ["Debes indicar el estado o la observación."]
 
 
 def test_put_clase_inexistente(client, doc, actividad):
@@ -478,12 +531,37 @@ def test_porcentaje_excluye_listas_incompletas_y_cuenta_una_vez_la_reprogramada(
         "porcentaje": None, "asistidas": 0, "contabilizadas": 0}
 
 
+def test_porcentaje_cuenta_la_clase_adicional_completa(client, db, entorno, cabeceras, doc, actividad):
+    """D100: una adicional creada por PUT /asistencias, con toda su lista marcada, cuenta."""
+    respuesta = guardar(client, doc, db, entorno, MARTES, [registro(entorno)], adicional=True)
+    assert respuesta.json()["clase"]["tipo"] == "adicional"
+    lista = db.exec(select(ClaseAlumno).join(Clase).where(Clase.fecha == MARTES)).all()
+    assert [f.id_alumno for f in lista] == [entorno.alumnos["ana"].id_alumno]
+
+    de_ana = asistencia_de(client, cabeceras["Supervisor"], entorno.alumnos["ana"])
+
+    assert de_ana == {"porcentaje": 100.0, "asistidas": 1, "contabilizadas": 1}
+
+
+def test_porcentaje_no_cuenta_la_adicional_con_un_alumno_sin_marcar(client, db, entorno, cabeceras, doc, actividad):
+    """CU015: una lista incompleta no cuenta para nadie, aunque sea de otro subprograma."""
+    ana = entorno.alumnos["ana"]
+    nora = crear_alumno(db, "Nora", "Zea", entorno.colegios["Andino"], entorno.grados["2.º"],
+                        entorno.programas["Alfabetización"], 1, desde=LUNES_ANTERIOR - timedelta(days=30))
+    db.commit()
+    guardar(client, doc, db, entorno, MARTES, [registro(entorno)], adicional=True)
+
+    sin_clases = {"porcentaje": None, "asistidas": 0, "contabilizadas": 0}
+    assert asistencia_de(client, cabeceras["Supervisor"], ana) == sin_clases
+    assert asistencia_de(client, cabeceras["Supervisor"], nora) == sin_clases
+
+
 # ── Salud del Sistema (CU012) ───────────────────────────────────────────────────────
 
-def test_salud_cuenta_alumno_por_clase_con_estado_del_pa_vigente(db, entorno):
+def test_salud_cuenta_alumno_por_clase_con_estado_u_observacion_del_pa_vigente(db, entorno):
     ana = entorno.alumnos["ana"]
     registrar_asistencia(db, ana, LUNES)
     registrar_asistencia(db, ana, LUNES_ANTERIOR, estado=None)
     registrar_asistencia(db, ana, LUNES_DEL_PA1)
 
-    assert salud_sistema.asistencias_confirmadas(db, pa_actual_de_colegios(db, solo_activos=True)) == 1
+    assert len(salud_sistema.asistencias_guardadas(db, pa_actual_de_colegios(db, solo_activos=True))) == 1

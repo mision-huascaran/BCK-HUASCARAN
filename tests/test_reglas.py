@@ -2,6 +2,7 @@
 cambios por módulo, auditoría, días hábiles, formato de errores y nivel descriptivo."""
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -20,6 +21,7 @@ from app.models.organizacion import DiaNoLectivo, Grado
 from app.services import auditoria, cambios, usuario_service
 from app.services.calendario import anio_de_referencia
 from app.services.nivel_descriptivo import EscalaDescriptiva, escala_del_grado, nivel_descriptivo
+from app.services.reglas_provisionales import regla_mes_a_pa
 
 # ── Política de contraseña (CU006) ──────────────────────────────────────────────────
 
@@ -364,3 +366,40 @@ def test_cu015_sin_letra_o_sin_escala_no_hay_nivel_descriptivo():
     assert EscalaDescriptiva(()).nivel(5) is None
     # Una letra por debajo del primer tramo también es del nivel más bajo.
     assert EscalaDescriptiva(((3, "Inicio"), (5, "Logrado"))).nivel(1) == "Inicio"
+
+
+# ── R1: a qué PA pertenece un mes (CU029) ───────────────────────────────────────────
+
+PA3, PA4 = SimpleNamespace(id_periodo_academico=3), SimpleNamespace(id_periodo_academico=4)
+
+
+def _lectivos_de_octubre(*dias: int) -> list[date]:
+    return [date(2026, 10, d) for d in dias]
+
+
+def _pa_de(fin_pa3: int, inicio_pa4: int):
+    """PA3 hasta `fin_pa3` de octubre, receso, PA4 desde `inicio_pa4`."""
+    def pa_de(dia: date):
+        if dia.day <= fin_pa3:
+            return PA3
+        return PA4 if dia.day >= inicio_pa4 else None
+    return pa_de
+
+
+@pytest.mark.parametrize(("dias", "fin_pa3", "inicio_pa4", "esperado"), [
+    # PA3 hasta el 23 y PA4 desde el 27: más días del PA3.
+    ((1, 2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 19, 20, 21, 22, 23, 27, 28, 29, 30), 23, 27, PA3),
+    # PA3 hasta el 6 y PA4 desde el 12: más días del PA4.
+    ((1, 2, 5, 6, 12, 13, 14, 15, 16, 19), 6, 12, PA4),
+    # Empate (3 y 3): gana el PA del último día lectivo.
+    ((1, 2, 5, 27, 28, 29), 23, 27, PA4),
+    # Los días del receso no cuentan aunque se pasen.
+    ((1, 2, 26, 27), 2, 27, PA3),
+])
+def test_r1_pa_con_mas_dias_lectivos_del_mes(dias, fin_pa3, inicio_pa4, esperado):
+    assert regla_mes_a_pa(_lectivos_de_octubre(*dias), _pa_de(fin_pa3, inicio_pa4)) is esperado
+
+
+def test_r1_mes_sin_dias_lectivos():
+    assert regla_mes_a_pa([], _pa_de(23, 27)) is None
+    assert regla_mes_a_pa(_lectivos_de_octubre(24, 26), _pa_de(23, 27)) is None

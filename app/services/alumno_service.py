@@ -11,19 +11,21 @@
 - Borrado lógico: activar / inactivar; ningún alumno se elimina.
 - Colegio inactivo (CU013): no afecta a sus alumnos. El Supervisor puede corregir sus
   nombres y apellidos; cambiar su ubicación (colegio, grado, subprograma) o activarlo
-  exige un colegio activo. El Docente no los ve: quedan fuera de su alcance.
+  exige un colegio activo. No salen en el listado (tampoco para el Supervisor); el
+  Docente no los ve: quedan fuera de su alcance.
 """
 import uuid
 from datetime import date
 from typing import Any, Optional
 
 from fastapi import status
-from sqlalchemy import and_, func, or_
-from sqlmodel import Session, select
+from sqlalchemy import and_, or_
+from sqlmodel import Session, col, select
 
 from app.core.ciclo import calcular_ciclo, ciclo_sql, programa_permitido_en_grado
 from app.core.errores import ErrorNegocio, error_de_campo
 from app.core.paginacion import Paginado, pagina, paginar
+from app.core.texto import comparable_sql, palabras_buscadas
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.models.organizacion import (
     Alumno,
@@ -52,11 +54,11 @@ CAMPO_PERTENECE_DESDE = "pertenece_desde"
 CAMPO_CAMBIO_GRUPO_DESDE = "cambio_grupo_desde"
 CAMPO_APLICAR_DESDE = "aplicar_desde"
 MENSAJE_FECHA_DE_CAMBIO = "Indica desde qué fecha el alumno pertenece a su nuevo grupo."
-
-# Quien busca escribe "perez", no "Pérez": se comparan ambos lados sin tildes. Se usa
-# translate() en vez de la extensión unaccent porque no requiere instalar nada en la BD.
-CON_TILDES = "áéíóúüñÁÉÍÓÚÜÑ"
-SIN_TILDES = "aeiouunAEIOUUN"
+MENSAJE_CONFIRMA_PERTENENCIA = "Confirma desde qué fecha el alumno forma parte de este grupo."
+MENSAJE_YA_TIENE_PERTENENCIA = "El alumno ya tiene un inicio de pertenencia registrado."
+MENSAJE_USA_PERTENECE_DESDE = (
+    "Este alumno todavía no tiene un inicio de pertenencia: usa 'Pertenece al grupo desde'."
+)
 
 # Campo auditado -> atributo del modelo (el subprograma se guarda en `id_programa_actual`).
 CAMPOS_AUDITADOS = {
@@ -174,7 +176,8 @@ def listar_alumnos(
     page: int,
     id_seccion: Optional[int] = None,
 ) -> Paginado[AlumnoItem]:
-    """Listado paginado, ordenado por apellidos y nombres.
+    """Listado paginado, ordenado por apellidos y nombres sin distinguir mayúsculas ni
+    tildes, y por `id_alumno` si empatan.
 
     `q`: cada palabra debe aparecer en "nombres apellidos", sin distinguir mayúsculas ni
     tildes y en cualquier orden ("juan perez" encuentra a "Juan Carlos Pérez Quispe").
@@ -184,7 +187,9 @@ def listar_alumnos(
     if alcance is not None and not alcance:
         return pagina([], 0, page)
 
-    consulta = _consulta_items().where(Alumno.activo == activo)
+    # CU014: el contexto global del Supervisor es el de los colegios activos (al Docente
+    # ya lo recorta `pares_visibles`). Un `id_colegio` inactivo da una lista vacía.
+    consulta = _consulta_items().where(Alumno.activo == activo, col(Colegio.activo).is_(True))
     if alcance is not None:
         consulta = consulta.where(or_(*(and_(Alumno.id_colegio == c, Alumno.id_grado == g) for c, g in alcance)))
     if id_colegio is not None:
@@ -198,12 +203,10 @@ def listar_alumnos(
     if ciclo is not None:
         consulta = consulta.where(ciclo_sql(Programa.nombre, CicloEbr.nombre) == ciclo)
     if q and q.strip():
-        nombre_completo = func.translate(
-            func.lower(Alumno.nombres + " " + Alumno.apellidos), CON_TILDES, SIN_TILDES
-        )
-        for palabra in q.strip().lower().translate(str.maketrans(CON_TILDES, SIN_TILDES)).split():
+        nombre_completo = comparable_sql(Alumno.nombres + " " + Alumno.apellidos)
+        for palabra in palabras_buscadas(q):
             consulta = consulta.where(nombre_completo.contains(palabra, autoescape=True))
-    consulta = consulta.order_by(Alumno.apellidos, Alumno.nombres, Alumno.id_alumno)
+    consulta = consulta.order_by(comparable_sql(Alumno.apellidos), comparable_sql(Alumno.nombres), Alumno.id_alumno)
 
     filas, total = paginar(db, consulta, page)
     return pagina([_item(f) for f in filas], total, page)
@@ -337,6 +340,35 @@ def _fecha_de_cambio(alumno: Alumno, data: AlumnoEditar) -> Optional[date]:
     return data.cambio_grupo_desde
 
 
+def _pertenencia_inicial(db: Session, alumno: Alumno, data: AlumnoEditar) -> Optional[date]:
+    """`pertenece_desde` de un alumno activo sin intervalos (CU014): obligatoria para él,
+    no futura, y en su lugar no se acepta `cambio_grupo_desde` (no hay intervalo que
+    cerrar). A un alumno con intervalos o inactivo (vuelve con "Activar") se le rechaza."""
+    if not pertenencia.sin_pertenencia(db, alumno):
+        if data.pertenece_desde is not None:
+            raise error_de_campo(CAMPO_PERTENECE_DESDE, MENSAJE_YA_TIENE_PERTENENCIA)
+        return None
+    if data.pertenece_desde is None:
+        raise error_de_campo(CAMPO_PERTENECE_DESDE, MENSAJE_CONFIRMA_PERTENENCIA)
+    if data.cambio_grupo_desde is not None:
+        raise error_de_campo(CAMPO_CAMBIO_GRUPO_DESDE, MENSAJE_USA_PERTENECE_DESDE)
+    pertenencia.validar_fecha_efectiva(data.pertenece_desde, CAMPO_PERTENECE_DESDE)
+    return data.pertenece_desde
+
+
+def _aplicar_pertenencia(
+    db: Session, alumno: Alumno, inicial: Optional[date], cambio: Optional[date], movimiento: Movimiento
+) -> Optional[date]:
+    """Abre el primer intervalo (`inicial`) o cambia de grupo (`cambio`) con la ficha ya
+    actualizada. Devuelve la fecha efectiva aplicada, para la auditoría."""
+    if inicial is not None:
+        pertenencia.abrir(db, alumno, inicial, CAMPO_PERTENECE_DESDE, movimiento, alta=True)
+        return inicial
+    if cambio is not None:
+        pertenencia.cambiar_grupo(db, alumno, cambio, CAMPO_CAMBIO_GRUPO_DESDE, movimiento)
+    return cambio
+
+
 def editar_alumno(db: Session, id_alumno: int, data: AlumnoEditar, actor: Usuario) -> AlumnoItem:
     alumno, alcance, id_actividad = _alumno_para_escribir(db, actor, id_alumno)
     if alcance is not None and "id_colegio" in data.model_fields_set and data.id_colegio != alumno.id_colegio:
@@ -346,15 +378,17 @@ def editar_alumno(db: Session, id_alumno: int, data: AlumnoEditar, actor: Usuari
             motivo="cambio_colegio_no_permitido",
         )
 
+    inicial = _pertenencia_inicial(db, alumno, data)
     final = _valores_finales(db, alumno, data, alcance)
     cambios: dict[str, tuple[Any, Any]] = {
         campo: (getattr(alumno, atributo), final[campo])
         for campo, atributo in CAMPOS_AUDITADOS.items()
         if final[campo] != getattr(alumno, atributo)
     }
-    if not cambios:
+    if not cambios and inicial is None:
         return item_de(db, id_alumno)
-    fecha = _fecha_de_cambio(alumno, data) if any(c in cambios for c in CAMPOS_DE_UBICACION) else None
+    cambia_grupo = inicial is None and any(c in cambios for c in CAMPOS_DE_UBICACION)
+    cambio = _fecha_de_cambio(alumno, data) if cambia_grupo else None
 
     ahora = ahora_utc()
     for campo, (_, nuevo) in cambios.items():
@@ -362,10 +396,8 @@ def editar_alumno(db: Session, id_alumno: int, data: AlumnoEditar, actor: Usuari
     alumno.modificado_por = actor.id_usuario
     alumno.modificado_en = ahora
     db.add(alumno)
+    fecha = _aplicar_pertenencia(db, alumno, inicial, cambio, Movimiento(actor.id_usuario, ahora, id_actividad))
     if fecha is not None:
-        pertenencia.cambiar_grupo(
-            db, alumno, fecha, CAMPO_CAMBIO_GRUPO_DESDE, Movimiento(actor.id_usuario, ahora, id_actividad)
-        )
         cambios.update(_fecha_efectiva(fecha))
     registrar_auditoria(
         db, tabla=TABLA, id_registro=alumno.id_alumno, accion=EDITAR, cambios=cambios,

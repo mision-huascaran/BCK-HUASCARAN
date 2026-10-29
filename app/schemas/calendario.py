@@ -3,7 +3,7 @@ un receso o día no lectivo de un solo día tiene la misma fecha de inicio y fin
 from datetime import date
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.comun import ItemCatalogo, Texto
 
@@ -24,19 +24,31 @@ class PeriodoEntrada(BaseModel):
 
 
 class DiaNoLectivoEntrada(BaseModel):
-    """Feriado o suspensión: dentro de un PA y sin superponerse con otro."""
+    """Feriado o suspensión: dentro de los periodos (PA o PR) y sin superponerse con otro."""
 
     motivo: Texto
     fecha_inicio: date
     fecha_fin: date
 
 
-class CalendarioCrear(BaseModel):
-    """Calendario general de un año: los 8 periodos y sus días no lectivos."""
+ANIO_MINIMO, ANIO_MAXIMO = 2000, 2100
 
-    id_anio_escolar: int
+
+class CalendarioCrear(BaseModel):
+    """Calendario general de un año: los 8 periodos y sus días no lectivos. El año se
+    indica con `anio` (año calendario, p. ej. 2027: si el año escolar no existe, se crea
+    junto con el calendario) o, por compatibilidad, con `id_anio_escolar`; exactamente uno."""
+
+    anio: Optional[int] = Field(default=None, ge=ANIO_MINIMO, le=ANIO_MAXIMO)
+    id_anio_escolar: Optional[int] = None
     periodos: list[PeriodoEntrada]
     dias_no_lectivos: list[DiaNoLectivoEntrada] = []
+
+    @model_validator(mode="after")
+    def _un_solo_anio(self) -> "CalendarioCrear":
+        if (self.anio is None) == (self.id_anio_escolar is None):
+            raise ValueError("Indica el año (`anio`) o el `id_anio_escolar`, uno de los dos.")
+        return self
 
 
 class CalendarioEditar(BaseModel):
@@ -87,6 +99,8 @@ class CalendarioRespuesta(BaseModel):
 
     id_calendario: int
     id_anio_escolar: int
+    # Nombre del año escolar ("2026").
+    anio: Optional[str] = None
     # Colegio consultado; null en el alcance General.
     colegio: Optional[ItemCatalogo] = None
     # 'particular' si el colegio tiene fechas propias; si no, 'general'.

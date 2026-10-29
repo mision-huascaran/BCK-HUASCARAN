@@ -11,6 +11,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio
+from app.core.texto import comparable_sql
 from app.core.paginacion import Paginado, pagina, paginar
 from app.models.organizacion import DocenteColegioGrado, Rol, Usuario
 from app.models.seguridad import Sesion
@@ -99,7 +100,8 @@ def listar_docentes(
     if sincronizacion is not None:
         consulta = consulta.where(estado == sincronizacion)
     consulta = consulta.order_by(
-        prioridad_estado_docente_sql(estado), Usuario.nombres, Usuario.apellidos, Usuario.id_usuario
+        prioridad_estado_docente_sql(estado), comparable_sql(Usuario.nombres), comparable_sql(Usuario.apellidos),
+        Usuario.id_usuario,
     )
     filas, total = paginar(db, consulta, page)
     return pagina(_filas_a_items(db, filas), total, page)

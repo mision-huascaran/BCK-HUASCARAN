@@ -29,7 +29,7 @@ VENTANA_SOLICITUDES_PIN = timedelta(hours=1)
 MAX_INTENTOS_FALLIDOS = 5
 DURACION_BLOQUEO = timedelta(minutes=15)
 MOTIVO_BLOQUEO = "bloqueo_temporal"
-MENSAJE_BLOQUEO = "Demasiados intentos fallidos. Por seguridad, intente nuevamente en 15 minutos."
+MENSAJE_BLOQUEO = "Demasiados intentos fallidos. Por seguridad, inténtalo nuevamente en 15 minutos."
 
 _tabla = ControlAccesoCorreo.__table__
 

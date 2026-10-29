@@ -5,14 +5,14 @@ de referencia de esa semana. Cada fila es un alumno de la lista de esa clase. La
 escrituras son operaciones (`id_operacion`, `version`, `realizado_en`): ver
 app/schemas/sincronizacion.py.
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.asistencia import EstadoAsistencia, Escritura
 from app.schemas.clase import TipoClase
-from app.schemas.comun import ParcheSinNulos
+from app.schemas.comun import ItemCatalogo, ParcheSinNulos
 from app.schemas.sincronizacion import ItemOperacion
 
 EstadoTabla = Literal["normal", "no_realizada"]
@@ -52,6 +52,22 @@ class FilaLectura(BaseModel):
     version: int
 
 
+class DeclaracionNoRealizada(BaseModel):
+    """Una declaración "No realizada" del historial de la tabla (CU026). Si fue revertida
+    con "Habilitar registro de lectura", trae la corrección."""
+
+    id: int
+    motivo: str
+    declarada_por: ItemCatalogo
+    # Momento original de la declaración.
+    fecha_registro: datetime
+    vigente: bool
+    motivo_correccion: Optional[str] = None
+    revertida_por: Optional[ItemCatalogo] = None
+    # Momento original de la reversión.
+    fecha_registro_reversion: Optional[datetime] = None
+
+
 class TablaLectura(BaseModel):
     id: int
     version: int
@@ -69,6 +85,8 @@ class TablaLectura(BaseModel):
     # apellidos y nombres.
     filas: list[FilaLectura]
     escritura: Escritura
+    # Historial de declaraciones "No realizada", la más reciente primero.
+    declaraciones: list[DeclaracionNoRealizada] = []
 
 
 # ── Escrituras ──────────────────────────────────────────────────────────────────────
@@ -132,4 +150,12 @@ class FilaLecturaGuardar(ItemOperacion, ParcheSinNulos):
 
 class NoRealizadaMarcar(ItemOperacion):
     # Obligatorio: el servicio responde el 422 con el mensaje del CU.
+    motivo: Optional[str] = Field(default=None, max_length=1000)
+
+
+class HabilitarRegistro(ItemOperacion):
+    """Revierte la declaración "No realizada" vigente (CU026). `version` es la de la tabla
+    consultada; `motivo` es el "Motivo de la corrección" (obligatorio: el servicio
+    responde el 422)."""
+
     motivo: Optional[str] = Field(default=None, max_length=1000)
