@@ -63,7 +63,82 @@ class FiltrosDisponibles(BaseModel):
     seleccion_inicial: Optional[SeleccionInicial]
 
 
-# ── Contrato provisional (se reemplaza en D2 a D5) ──────────────────────────────────
+# ── Bloques del periodo con corte por colegio (D2) ──────────────────────────────────
+
+class FechaCorte(BaseModel):
+    """Fecha en que se mira la pertenencia de los alumnos de un colegio: el fin del PA en
+    su calendario o, si sigue en curso, hoy."""
+
+    colegio: ItemCatalogo
+    fecha: date
+
+
+class ColegioSinInformacion(BaseModel):
+    """Colegio incluido en la selección que no se suma, con el motivo."""
+
+    colegio: ItemCatalogo
+    motivo: Literal["periodo_no_iniciado"]
+
+
+class SubprogramaAlumnos(BaseModel):
+    subprograma: ItemCatalogo
+    alumnos: int
+    # Sobre el total, con 1 decimal.
+    porcentaje: float
+
+
+class DistribucionSubprograma(BaseModel):
+    """CU033: alumnos por subprograma según su pertenencia a la fecha de corte de su
+    colegio. Sin alumnos: `sin_datos`, `total` null y `subprogramas` vacío."""
+
+    contexto: ContextoDashboard
+    fechas_corte: list[FechaCorte]
+    colegios_sin_informacion: list[ColegioSinInformacion]
+    total: Optional[int]
+    subprogramas: list[SubprogramaAlumnos]
+    sin_datos: bool
+    mensaje: Optional[str] = None
+
+
+class NivelDesempeno(BaseModel):
+    nombre: str
+    alumnos: int
+    # Sobre los evaluados, con 1 decimal; null si no hay evaluados.
+    porcentaje: Optional[float]
+
+
+class DistribucionResultado(BaseModel):
+    """Una distribución de un subprograma: el resultado global (Registro de Vuelo) o una
+    dimensión de la rúbrica. Todos los niveles de la escala, también los que tienen 0."""
+
+    resultado: Literal["global", "fluidez", "comprension"]
+    fuente: Literal["registro_vuelo", "rubrica"]
+    niveles: list[NivelDesempeno]
+    evaluados: int
+    pendientes: int
+    base_porcentaje: Literal["evaluados"] = "evaluados"
+    # "No hay evaluaciones completas para esta selección." cuando no hay evaluados.
+    mensaje: Optional[str] = None
+
+
+class ResultadosSubprograma(BaseModel):
+    subprograma: ItemCatalogo
+    total_a_evaluar: int
+    distribuciones: list[DistribucionResultado]
+
+
+class ResultadosAprendizaje(BaseModel):
+    """CU033 (paso 6) y CU035 (paso 6): resultados del PA por subprograma."""
+
+    contexto: ContextoDashboard
+    fechas_corte: list[FechaCorte]
+    colegios_sin_informacion: list[ColegioSinInformacion]
+    subprogramas: list[ResultadosSubprograma]
+    sin_datos: bool
+    mensaje: Optional[str] = None
+
+
+# ── Contrato provisional (se reemplaza en las tandas siguientes) ─────────────────
 
 class FiltrosDashboard(BaseModel):
     id_colegio: Optional[int] = None  # Compatibilidad con clientes anteriores
@@ -98,25 +173,3 @@ class LecturaDashboard(BaseModel):
     alumnos_con_lecturas: int = 0
     promedio_por_alumno_con_lecturas: Optional[float] = None
     por_mes: dict[int, int] = Field(default_factory=dict)
-
-
-class DistribucionAprendizaje(BaseModel):
-    dimension: str  # Global, Fluidez, Comprensión
-    niveles: dict[str, int]
-    evaluados: int
-    pendientes: int
-    total_alumnos: int
-    porcentajes: Optional[dict[str, float]] = None
-
-
-class AprendizajeSubprograma(BaseModel):
-    id_programa: int
-    nombre_programa: str
-    distribuciones: list[DistribucionAprendizaje]
-
-
-class AprendizajePeriodoDashboard(BaseModel):
-    id_periodo_academico: int
-    id_anio_escolar: int
-    fecha_corte_por_colegio: dict[int, str]
-    resultados: list[AprendizajeSubprograma]

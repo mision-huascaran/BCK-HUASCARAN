@@ -455,19 +455,54 @@ def criterios(db: Session, id_programa: int, id_ciclo: int) -> list[Criterio]:
     ]
 
 
-def ultima_rubrica_completa(db: Session, id_alumno: int, id_periodo_academico: int) -> Optional[RubricaMensual]:
-    """La evaluación completa (las dos dimensiones) de mayor mes del alumno en ese PA, o
-    None. La usa el Registro de Vuelo (T9) para la sugerencia de nivel."""
-    return db.exec(
+# ── Última evaluación completa del PA (CU029) ───────────────────────────────────────
+# Regla única para el Registro de Vuelo y los cortes del Dashboard: por alumno y PA, la
+# evaluación completa (las dos dimensiones, `estado_de` = completada) de mayor mes. Una
+# incompleta más reciente no la reemplaza y nunca se usa la de otro PA. El PA de cada
+# evaluación es el guardado (R1 al guardar), no se recalcula.
+
+def _ultimas_completas(db: Session, *condiciones) -> dict[tuple[int, int], RubricaMensual]:
+    filas = db.exec(
         select(RubricaMensual)
         .where(
-            RubricaMensual.id_alumno == id_alumno,
-            RubricaMensual.id_periodo_academico == id_periodo_academico,
+            *condiciones,
             col(RubricaMensual.id_nivel_fluidez).is_not(None),
             col(RubricaMensual.id_nivel_comprension).is_not(None),
         )
-        .order_by(col(RubricaMensual.mes).desc())
-    ).first()
+        .order_by(RubricaMensual.mes, RubricaMensual.id)
+    ).all()
+    # En orden de mes: la última que queda por (alumno, PA) es la de mayor mes.
+    return {(r.id_alumno, r.id_periodo_academico): r for r in filas}
+
+
+def ultimas_rubricas_completas_del_anio(
+    db: Session, ids_alumno: list[int], id_anio_escolar: int
+) -> dict[tuple[int, int], RubricaMensual]:
+    """{(alumno, PA): última evaluación completa} de esos alumnos en todos los PA del año."""
+    if not ids_alumno:
+        return {}
+    return _ultimas_completas(
+        db, col(RubricaMensual.id_alumno).in_(ids_alumno), RubricaMensual.id_anio_escolar == id_anio_escolar
+    )
+
+
+def ultimas_rubricas_completas(
+    db: Session, ids_alumno: list[int], id_periodo_academico: int
+) -> dict[int, RubricaMensual]:
+    """{alumno: última evaluación completa del PA}; sin ella, el alumno no está."""
+    if not ids_alumno:
+        return {}
+    filas = _ultimas_completas(
+        db,
+        col(RubricaMensual.id_alumno).in_(ids_alumno),
+        RubricaMensual.id_periodo_academico == id_periodo_academico,
+    )
+    return {id_alumno: rubrica for (id_alumno, _), rubrica in filas.items()}
+
+
+def ultima_rubrica_completa(db: Session, id_alumno: int, id_periodo_academico: int) -> Optional[RubricaMensual]:
+    """La última evaluación completa del alumno en ese PA, o None."""
+    return ultimas_rubricas_completas(db, [id_alumno], id_periodo_academico).get(id_alumno)
 
 
 def _completadas_del_pa_vigente(pa_por_colegio: dict) -> tuple:

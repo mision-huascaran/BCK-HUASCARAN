@@ -1,28 +1,20 @@
-"""Endpoints provisionales del Dashboard (Romina). Se reemplazan en D2, D3 y D5.
+"""Endpoints provisionales del Dashboard (Romina). Se reemplazan en las tandas siguientes.
 
 El año de referencia sigue CU015; el PA es opcional en indicadores académicos.
 """
 from collections import Counter, defaultdict
 from typing import Optional
 
-from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.core.errores import error_de_campo
 from app.core.tiempo import hoy_lima
 from app.models.evaluacion import (
-    ESTADOS_ASISTIO, Asistencia, Clase, ClaseAlumno, LECTURA_NORMAL,
-    LecturaSemanal, LecturaSemanalAlumno, NivelRubrica,
-    EscalaNivelDescriptivo, RegistroVuelo, RubricaMensual,
+    ESTADOS_ASISTIO, Asistencia, Clase, ClaseAlumno, LECTURA_NORMAL, LecturaSemanal, LecturaSemanalAlumno,
 )
-from app.models.organizacion import Alumno, AlumnoPertenencia, AnioEscolar, Colegio, Grado, PeriodoAcademico, Programa, Seccion
-from app.schemas.dashboard import (
-    AsistenciaDashboard, FiltrosDashboard, LecturaDashboard,
-    AprendizajePeriodoDashboard, AprendizajeSubprograma, DistribucionAprendizaje,
-)
-from app.services import lectura_service, registro_vuelo
-from app.services.calendario import anio_de_referencia, cargar_calendarios
-from app.services.nivel_descriptivo import EscalaDescriptiva
+from app.models.organizacion import AnioEscolar, Colegio, Grado, PeriodoAcademico, Programa, Seccion
+from app.schemas.dashboard import AsistenciaDashboard, FiltrosDashboard, LecturaDashboard
+from app.services.calendario import anio_de_referencia
 
 
 def validar_filtros(db: Session, f: FiltrosDashboard) -> Optional[AnioEscolar]:
@@ -188,115 +180,4 @@ def libros(db: Session, f: FiltrosDashboard) -> LecturaDashboard:
         alumnos_con_lecturas=n_alumnos,
         promedio_por_alumno_con_lecturas=round(total / n_alumnos, 2) if n_alumnos else None,
         por_mes=dict(sorted(por_mes.items())),
-    )
-
-
-def aprendizaje(db: Session, f: FiltrosDashboard) -> AprendizajePeriodoDashboard:
-    """CU031/CU033: corte por colegio y PA; alumno único según pertenencia histórica.
-
-    Global usa la última decisión válida de Registro de Vuelo y la escala de su grado.
-    Fluidez y Comprensión usan la última rúbrica no nula de cada dimensión en el PA.
-    Los casos sin una decisión o evaluación quedan pendientes y no entran al divisor.
-    """
-    anio = validar_filtros(db, f)
-    if f.id_periodo_academico is None:
-        raise error_de_campo("id_periodo_academico", "Seleccione un PA.")
-    pa = db.get(PeriodoAcademico, f.id_periodo_academico)
-    if anio is None or pa is None:
-        raise error_de_campo("id_periodo_academico", "PA inexistente.")
-
-    # Nunca inferir un PA común: cada colegio tiene un calendario particular o general.
-    ids = list(db.exec(select(Colegio.id_colegio)).all())
-    ids = [c for c in ids if (f.id_colegio is None or c == f.id_colegio)
-           and (f.id_colegios is None or c in f.id_colegios)]
-    calendarios = cargar_calendarios(db, anio.id_anio_escolar, ids_colegio=ids)
-    hoy = hoy_lima()
-    cortes = {}
-    for colegio in ids:
-        calendario = calendarios.aplicable(colegio, anio.id_anio_escolar)
-        rango = calendario.pa_de(pa.id_periodo_academico) if calendario else None
-        if rango is not None and rango.fecha_inicio <= hoy:
-            cortes[colegio] = min(rango.fecha_fin, hoy)
-
-    # Fecha de pertenencia inclusiva desde, exclusiva hasta. Una sola fila por alumno
-    # puede estar vigente al corte: evita duplicados por traslados entre colegios.
-    grupos = {}
-    for pertenencia in db.exec(select(AlumnoPertenencia).where(
-        col(AlumnoPertenencia.id_colegio).in_(list(cortes))
-    )).all() if cortes else []:
-        corte = cortes[pertenencia.id_colegio]
-        if not (pertenencia.desde <= corte and
-                (pertenencia.hasta is None or corte < pertenencia.hasta)):
-            continue
-        if (f.id_grado is not None and pertenencia.id_grado != f.id_grado or
-            f.id_seccion is not None and pertenencia.id_seccion != f.id_seccion or
-            f.id_programa is not None and pertenencia.id_programa != f.id_programa):
-            continue
-        grupos[pertenencia.id_alumno] = pertenencia
-
-    decisiones_por_alumno = defaultdict(list)
-    rubricas_por_alumno = defaultdict(list)
-    if grupos:
-        for registro in db.exec(select(RegistroVuelo).where(
-            RegistroVuelo.id_periodo_academico == pa.id_periodo_academico,
-            col(RegistroVuelo.id_alumno).in_(list(grupos)),
-        )).all():
-            decisiones_por_alumno[registro.id_alumno].append(registro)
-        for rubrica in db.exec(select(RubricaMensual).where(
-            RubricaMensual.id_periodo_academico == pa.id_periodo_academico,
-            col(RubricaMensual.id_alumno).in_(list(grupos)),
-        )).all():
-            rubricas_por_alumno[rubrica.id_alumno].append(rubrica)
-
-    escalas = defaultdict(list)
-    for nivel in db.exec(select(EscalaNivelDescriptivo)).all():
-        escalas[nivel.id_grado].append((nivel.id_nivel_rk_desde, nivel.nivel))
-    escalas = {grado: EscalaDescriptiva(tuple(sorted(valores))) for grado, valores in escalas.items()}
-    catalogo_rubricas = {r.id_nivel_rubrica: r for r in db.exec(select(NivelRubrica)).all()}
-    programas = {p.id_programa: p.nombre for p in db.exec(select(Programa)).all()}
-    # Conteos por subprograma y dimensión. El universo incluye a cada alumno incluso
-    # cuando todavía no tiene ningún Registro de Vuelo ni Rúbrica.
-    totales = Counter()
-    contadores = defaultdict(Counter)
-    for alumno, pertenencia in grupos.items():
-        programa = pertenencia.id_programa
-        totales[programa] += 1
-        decision = registro_vuelo.decision_del_periodo(
-            decisiones_por_alumno[alumno], pa.id_periodo_academico
-        )
-        escala = escalas.get(pertenencia.id_grado)
-        global_nivel = escala.nivel(decision.id_nivel_colocado) if escala and decision else None
-        if global_nivel is not None:
-            contadores[(programa, "Global")][global_nivel] += 1
-
-        filas = sorted(rubricas_por_alumno[alumno],
-                       key=lambda r: (r.mes, r.fecha_registro), reverse=True)
-        for dimension, atributo in (("Fluidez", "id_nivel_fluidez"),
-                                    ("Comprensión", "id_nivel_comprension")):
-            elegido = next((catalogo_rubricas.get(getattr(r, atributo))
-                            for r in filas if getattr(r, atributo) is not None), None)
-            if elegido is not None and elegido.id_programa == programa and elegido.dimension == dimension:
-                contadores[(programa, dimension)][elegido.nombre_nivel] += 1
-
-    resultados = []
-    for programa, total in sorted(totales.items()):
-        distribuciones = []
-        for dimension in ("Global", "Fluidez", "Comprensión"):
-            niveles = dict(contadores[(programa, dimension)])
-            evaluados = sum(niveles.values())
-            distribuciones.append(DistribucionAprendizaje(
-                dimension=dimension, niveles=niveles, evaluados=evaluados,
-                pendientes=total-evaluados, total_alumnos=total,
-                porcentajes={nombre: round(100*cantidad/evaluados, 1)
-                             for nombre, cantidad in niveles.items()} if evaluados else None,
-            ))
-        resultados.append(AprendizajeSubprograma(
-            id_programa=programa, nombre_programa=programas.get(programa, str(programa)),
-            distribuciones=distribuciones,
-        ))
-    return AprendizajePeriodoDashboard(
-        id_periodo_academico=pa.id_periodo_academico,
-        id_anio_escolar=anio.id_anio_escolar,
-        fecha_corte_por_colegio={colegio: corte.isoformat() for colegio, corte in cortes.items()},
-        resultados=resultados,
     )

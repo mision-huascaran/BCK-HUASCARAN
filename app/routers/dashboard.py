@@ -1,7 +1,7 @@
 """Dashboard del Supervisor y del Directivo (CU033, CU034 y CU035).
 
-`/asistencia`, `/lectura` y `/aprendizaje` son los endpoints provisionales de Romina; se
-reemplazan en las tandas D2, D3 y D5.
+`/asistencia` y `/lectura` son los endpoints provisionales de Romina; se reemplazan en
+las tandas siguientes.
 """
 from typing import Annotated, Optional
 
@@ -12,11 +12,14 @@ from app.core.database import get_db
 from app.core.errores import error_de_campo
 from app.models.organizacion import Rol
 from app.schemas.dashboard import (
-    AprendizajePeriodoDashboard, AsistenciaDashboard, FiltrosDashboard, FiltrosDisponibles, LecturaDashboard,
+    AsistenciaDashboard, DistribucionSubprograma, FiltrosDashboard, FiltrosDisponibles, LecturaDashboard,
+    ResultadosAprendizaje,
 )
 from app.services import dashboard_service
+from app.services.dashboard.aprendizaje import distribucion_subprograma, resultados_aprendizaje
 from app.services.dashboard.carga_inicial import filtros_disponibles
-from app.services.dashboard.roles import SupervisorODirectivo
+from app.services.dashboard.filtros import FiltrosDelPeriodo
+from app.services.dashboard.roles import SoloSupervisor, SupervisorODirectivo
 from app.services.usuario_service import DIRECTIVO
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -33,6 +36,28 @@ def filtros(db: Db, usuario: SupervisorODirectivo):
     receso, el PA anterior y su año). Es null si no coinciden o si hoy no cae en ningún PA
     ni PR configurado: el front pide elegir año y periodo."""
     return filtros_disponibles(db, usuario)
+
+
+@router.get("/distribucion-subprograma", response_model=DistribucionSubprograma)
+def distribucion(db: Db, _usuario: SoloSupervisor, filtros: FiltrosDelPeriodo):
+    """CU033: alumnos por subprograma (cantidad y porcentaje sobre el total) según su
+    pertenencia en la fecha de corte de su colegio: el fin del PA en su calendario o, si
+    sigue en curso, hoy (`fechas_corte`). Un colegio con el PA sin iniciar va en
+    `colegios_sin_informacion`. Sin alumnos: `sin_datos` con el mensaje del CU.
+
+    Solo Supervisor. Errores: los de los filtros comunes del Dashboard."""
+    return distribucion_subprograma(db, filtros)
+
+
+@router.get("/resultados-aprendizaje", response_model=ResultadosAprendizaje)
+def resultados(db: Db, _usuario: SupervisorODirectivo, filtros: FiltrosDelPeriodo):
+    """CU033 (paso 6) y CU035 (paso 6): por subprograma configurado, el resultado global
+    (nivel del programa de la decisión vigente del Registro de Vuelo) y las dimensiones
+    Fluidez y Comprensión (última evaluación mensual completa del PA). Todos los niveles de
+    cada escala, también los de 0; porcentajes sobre los evaluados y los pendientes aparte.
+
+    Supervisor y Directivo (solo agregados). Errores: los de los filtros comunes."""
+    return resultados_aprendizaje(db, filtros)
 
 
 def _filtros(id_colegio, id_grado, id_seccion, id_programa, id_periodo_academico,
@@ -66,19 +91,3 @@ def lectura(db: Db, _usuario: Acceso, id_colegio: Optional[int] = None,
             id_colegios: Optional[list[int]] = Query(default=None)):
     return dashboard_service.libros(db, _filtros(id_colegio, id_grado, id_seccion, id_programa,
                                                  id_periodo_academico, id_anio_escolar, id_colegios))
-
-
-@router.get("/aprendizaje", response_model=AprendizajePeriodoDashboard)
-def aprendizaje(db: Db, _usuario: Acceso,
-                id_periodo_academico: int,
-                id_colegio: Optional[int] = None,
-                id_grado: Optional[int] = None,
-                id_seccion: Optional[int] = None,
-                id_programa: Optional[int] = None,
-                id_anio_escolar: Optional[int] = None,
-                id_colegios: Optional[list[int]] = Query(default=None)):
-    """CU033/CU035: niveles globales y dimensiones, con pendientes por PA."""
-    return dashboard_service.aprendizaje(
-        db, _filtros(id_colegio, id_grado, id_seccion, id_programa,
-                     id_periodo_academico, id_anio_escolar, id_colegios)
-    )
