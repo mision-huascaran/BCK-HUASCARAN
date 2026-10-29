@@ -8,6 +8,7 @@ from sqlmodel import select
 
 from app.core.security import create_access_token, decode_access_token
 from app.core.tiempo import ahora_utc
+from app.models.organizacion import Usuario
 from app.models.seguridad import ControlAccesoCorreo, Sesion
 from app.models.trazabilidad import Actividad
 from app.services.sesiones import DURACION_SESION, crear_sesion_y_token
@@ -110,6 +111,64 @@ def test_cu002_un_login_exitoso_reinicia_el_contador(client, db, entorno):
 
     assert releer(db, ControlAccesoCorreo, CORREOS["Docente"]).intentos_fallidos == 0
     assert login(client, CORREOS["Docente"], "Incorrecta-1").status_code == 401
+
+
+# ── Inyección SQL en el correo (alerta 40018 de OWASP ZAP) ──────────────────────────
+#
+# El correo llega a la base solo por el ORM y SQLAlchemy Core, con parámetros enlazados
+# (auth_service._autenticar y control_acceso.bloquear_y_verificar): un payload de
+# inyección es, para la base, un correo más que no existe. Estas pruebas cubren /login,
+# que el escaneo de ZAP deja fuera (ver zap/preparar.py).
+
+INYECCIONES = [
+    "' OR '1'='1' --",
+    "x' AND '1'='1' --",
+    "x' AND '1'='2' --",
+    "admin'--",
+    "'; DROP TABLE usuario; --",
+]
+
+
+@pytest.mark.parametrize("correo", INYECCIONES)
+def test_inyeccion_sql_en_el_correo_es_un_correo_inexistente(client, db, entorno, correo):
+    usuarios_antes = len(db.exec(select(Usuario)).all())
+
+    respuesta = login(client, correo)
+
+    # Nunca abre sesión ni revienta: 401 como cualquier correo inexistente, o 422 si el
+    # formato no pasara la validación del schema.
+    assert respuesta.status_code not in (200, 500)
+    assert (respuesta.status_code, motivo(respuesta)) in {(401, "credenciales_invalidas"), (422, "validacion")}
+    assert "access_token" not in respuesta.json()
+    # La tabla usuario sigue intacta y la cuenta sembrada sigue entrando.
+    assert len(db.exec(select(Usuario)).all()) == usuarios_antes
+    assert login(client, CORREOS["Docente"]).status_code == 200
+
+
+def test_inyeccion_booleana_verdadera_y_falsa_responden_igual(client, entorno):
+    # Con el contador limpio, la condición verdadera y la falsa no cambian nada.
+    verdadera = login(client, "x' AND '1'='1' --")
+    falsa = login(client, "x' AND '1'='2' --")
+
+    assert verdadera.status_code == falsa.status_code == 401
+    assert verdadera.json() == falsa.json()
+
+
+def test_el_falso_positivo_de_zap_lo_produce_el_bloqueo_por_intentos(client, entorno):
+    # Así se vio la alerta 40018 en qa. ZAP manda el valor original y la condición
+    # verdadera varias veces, y la falsa una sola. Cada valor es un correo distinto con
+    # su propio contador (CU002): los dos primeros llegan a 5 fallos y pasan a 429, el
+    # tercero responde 401. Esa diferencia entre la verdadera y la falsa es la que ZAP
+    # lee como inyección booleana ("the page results were successfully manipulated
+    # using the boolean conditions"). Con el contador limpio responden igual (prueba
+    # anterior).
+    original = [login(client, "John Doe", "x").status_code for _ in range(6)]
+    verdadera = [login(client, "John Doe' AND '1'='1' --", "x").status_code for _ in range(6)]
+    falsa = login(client, "John Doe' AND '1'='2' --", "x").status_code
+
+    assert original == [401, 401, 401, 401, 429, 429]
+    assert verdadera == [401, 401, 401, 401, 429, 429]
+    assert falsa == 401
 
 
 # ── Sesión: el token vale mientras su sesión siga abierta y vigente ─────────────────

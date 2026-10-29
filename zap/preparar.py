@@ -15,6 +15,13 @@ recibe ZAP se recorta para que no pueda dañar datos reales de qa ni su propia s
   sesiones), los que cambian el estado de un registro (activar/desactivar: podrían
   inactivar cuentas reales o las del seed E2E), los de contraseña (envían PINs por
   correo y cuentan intentos) y las escrituras del calendario académico.
+- Se quita también POST /login. El escaneo no lo necesita: este script hace su propio
+  login. Atacarlo sí daña: cada valor que ZAP prueba en `correo` suma fallos a ese correo
+  y, a los 5, el bloqueo de CU002 responde 429 en vez de 401. ZAP manda el valor
+  original y la condición verdadera varias veces y la falsa una sola, así que ve 429
+  contra 401 y lo reporta como SQL Injection (40018), un falso positivo. Además, esos
+  ataques bloquean correos en qa. El costo es que ZAP ya no prueba /login con NINGUNA
+  regla (no solo 40018): la inyección en el correo la cubre tests/test_auth.py.
 - Los ids de la ruta y los `id_*` de los cuerpos apuntan a registros que no existen
   (999999), así los PATCH responden 404 y los POST no llegan a crear nada; los demás
   campos siguen recibiendo los ataques de ZAP.
@@ -49,7 +56,7 @@ def _pedir(metodo: str, ruta: str, cuerpo=None, token=None):
 
 def _excluido(metodo: str, ruta: str) -> bool:
     return (
-        ruta == "/logout"
+        ruta in ("/login", "/logout")
         or ruta.startswith("/me/sesiones/")
         or ruta.endswith(("/activar", "/desactivar"))
         or ruta.startswith(("/password/", "/me/password"))
