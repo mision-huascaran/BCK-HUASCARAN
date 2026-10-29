@@ -574,3 +574,15 @@ def test_dp1_el_mes_partido_vence_en_el_pa_siguiente_y_el_mes_integro_anterior_n
     assert f"{MAYO}:{ana}" in el_1_de_junio
     # Abril es íntegro del PA1: no se exige durante el PA2.
     assert not any(r.startswith(f"{ABRIL}:") for r in el_1_de_junio)
+
+
+def test_dp2_durante_el_pr2_la_rubrica_del_ultimo_mes_del_pa2_figura_vencida(db, entorno, miercoles):
+    """S21 (provisional), como septiembre en "QA Sur": julio es del PA2 (hasta el 17/07) y
+    vence el 01/08, ya en el PR2. Antes no figuraba (en un PR no había vencidos)."""
+    fijar_periodo(db, entorno.calendario, "PR2", fin=date(2026, 8, 5))
+    fijar_periodo(db, entorno.calendario, "PA3", inicio=date(2026, 8, 6))
+    ana = entorno.alumnos["ana"].id_alumno
+
+    miercoles.fijar(a_las(date(2026, 8, 1), 9))
+
+    assert f"{JULIO}:{ana}" in _rubricas_vencidas(db)

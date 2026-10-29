@@ -79,6 +79,24 @@ def regla_mes_exigible_en_pa(
     )
 
 
+# REGLA PROVISIONAL DP-2 (Inicio del Supervisor, CU011, S21). Decisión provisional del
+# equipo, pendiente de validar con el analista después de la exposición del 29/10. Durante
+# el PR n, los vencidos e incompletos (y la alerta "Sincronización Olvidada", que los usa)
+# se calculan sobre el PA n, el que se está regularizando con asignaciones retroactivas,
+# con las mismas reglas que cuando era el PA actual (incluida DP-1). Al terminar el PR se
+# pasa al PA siguiente, como antes. "Incumplimiento de Sede", "Colegios operando",
+# "Docentes activos" y la Salud del Sistema no cambian. Para revertirla: que
+# `regla_pa_de_referencia` devuelva el periodo solo si es un PA. Docs:
+# docs/decisiones-provisionales.md.
+def regla_pa_de_referencia(periodo: Optional[T], pa_numero: Callable[[int], Optional[T]]) -> Optional[T]:
+    """El PA sobre el que se calculan los vencidos de un colegio que hoy está en `periodo`:
+    ese mismo si es un PA; si es el PR n, el PA n (`pa_numero` lo busca en su calendario);
+    None fuera de todo periodo."""
+    if periodo is None:
+        return None
+    return periodo if periodo.es_pa else pa_numero(periodo.numero)
+
+
 # REGLA CONFIRMADA R2 (Rúbrica mensual, CU029, CU030): mientras el alumno no tenga una
 # evaluación del mes, le corresponde el grupo de su última pertenencia válida en un día
 # lectivo del mes (si el mes está en curso, solo los días ya transcurridos: los filtra el

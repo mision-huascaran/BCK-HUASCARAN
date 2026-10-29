@@ -34,6 +34,7 @@ from app.models.organizacion import (
     DiaNoLectivo,
     PeriodoAcademico,
 )
+from app.services.reglas_provisionales import regla_pa_de_referencia
 
 VIERNES = 4
 UN_DIA = timedelta(days=1)
@@ -378,12 +379,35 @@ def pa_actual_de_colegios(
 ) -> dict[int, PeriodoCalendario]:
     """{colegio: PA en que está hoy} de los colegios que hoy están en un PA (cada uno según
     su calendario). Los que están en un PR o fuera de todo periodo no aparecen."""
+    ids = _ids_colegios(db, solo_activos)
+    calendarios = calendarios or cargar_calendarios(db, ids_colegio=ids)
+    return calendarios.pa_actual_por_colegio(ids, hoy_lima())
+
+
+def pa_de_referencia_para_vencidos(
+    db: Session, solo_activos: bool = False, calendarios: Optional[Calendarios] = None
+) -> dict[int, PeriodoCalendario]:
+    """{colegio: PA sobre el que se calculan hoy sus vencidos (CU011)}: el PA en curso o,
+    si el colegio está en el PR n, el PA n que se regulariza (DP-2, provisional:
+    `regla_pa_de_referencia`). Solo para los vencidos: lo demás sigue con
+    `pa_actual_de_colegios`."""
+    ids = _ids_colegios(db, solo_activos)
+    calendarios = calendarios or cargar_calendarios(db, ids_colegio=ids)
+    hoy = hoy_lima()
+    referencia = {}
+    for id_colegio in ids:
+        calendario = calendarios.calendario_en(id_colegio, hoy)
+        pa = regla_pa_de_referencia(calendario.periodo_de(hoy), calendario.pa) if calendario else None
+        if pa is not None:
+            referencia[id_colegio] = pa
+    return referencia
+
+
+def _ids_colegios(db: Session, solo_activos: bool) -> list[int]:
     consulta = select(Colegio.id_colegio)
     if solo_activos:
         consulta = consulta.where(col(Colegio.activo).is_(True))
-    ids = db.exec(consulta).all()
-    calendarios = calendarios or cargar_calendarios(db, ids_colegio=ids)
-    return calendarios.pa_actual_por_colegio(ids, hoy_lima())
+    return list(db.exec(consulta).all())
 
 
 def en_pa_de_su_colegio(

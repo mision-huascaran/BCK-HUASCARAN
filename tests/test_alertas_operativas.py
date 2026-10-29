@@ -7,6 +7,7 @@ from sqlmodel import select
 from app.models.organizacion import ColegioGrado, DocenteColegioGrado
 from app.services import registros_vencidos
 from app.services.inicio_service import nombre_de_sede
+from app.services.programacion import fechas_del_dia
 from app.services.registros_vencidos import estado_de_registros
 from tests.conftest import (
     a_las,
@@ -163,13 +164,17 @@ def test_cu011_solo_se_exigen_grados_con_docente_alumnos_y_colegio_activo(client
     assert indicadores(client, sup) == (0, 0)
 
 
-def test_cu011_sin_periodo_vigente_no_hay_vencidos(db, entorno):
+def test_cu011_en_el_receso_siguen_los_vencidos_del_pa_que_se_regulariza(db, entorno):
+    """DP-2 (provisional). Antes, en el PR2 no había vencidos; ahora son los del PA2."""
     dias_de_clase(db, entorno, primero=1)
+    del_pa2 = estado_de_registros(db).vencidas
     terminar_pa_vigente(db, entorno)
 
     estado = estado_de_registros(db)
 
-    assert (estado.vencidas, estado.incompletas, estado.colegios_con_registros) == ([], [], set())
+    assert del_pa2
+    assert (estado.vencidas, estado.incompletas, estado.colegios_con_registros) == (del_pa2, [], set())
+    assert estado.colegios_en_receso == {c.id_colegio for c in entorno.colegios.values()}
 
 
 def rotar(db, entorno, alumno, colegio="Andino", grado="2.º") -> None:
@@ -339,9 +344,10 @@ def test_cu011_cada_colegio_vence_segun_su_calendario(client, db, entorno, sup):
     assert indicadores(client, sup) == (1, 0)
 
 
-def test_cu011_colegio_en_receso_no_vence_y_su_docente_no_cuenta(client, db, entorno, sup):
-    """Andino usa el general (PA2); Lejano, un particular en el PR2: solo cuentan Rosa
-    (Andino) como docente activa y las clases de Andino."""
+def test_cu011_colegio_en_receso_conserva_sus_vencidos_y_su_docente_no_cuenta(client, db, entorno, sup):
+    """Andino usa el general (PA2); Lejano, un particular en el PR2: solo Rosa (Andino)
+    cuenta como docente activa. DP-2 (provisional): las clases del PA2 de Lejano siguen
+    vencidas durante su PR2 (antes, 5 vencidos, solo los de Andino; ahora, 10)."""
     otro = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
     asignar(db, otro.id_docente, entorno.colegios["Lejano"], [entorno.grados["3.º"]], entorno.periodos["vigente"], 1)
     dias_de_clase(db, entorno, colegio="Lejano", tercero=1)
@@ -350,4 +356,46 @@ def test_cu011_colegio_en_receso_no_vence_y_su_docente_no_cuenta(client, db, ent
 
     cuerpo = inicio(client, sup)
 
-    assert (cuerpo["docentes_activos"], cuerpo["registros_vencidos"]) == (1, 5)
+    assert (cuerpo["docentes_activos"], cuerpo["registros_vencidos"]) == (1, 10)
+    assert not any("Colegio Lejano" in a["mensaje"] for a in cuerpo["alertas"])
+
+
+# ── DP-2 (S21, provisional): los vencidos durante el receso ─────────────────────────
+
+def _vencidas(db) -> list[str]:
+    return sorted(r.referencia for r in estado_de_registros(db).vencidas)
+
+
+def test_dp2_en_el_pr4_siguen_los_vencidos_del_pa4(db, entorno, miercoles):
+    dias_de_clase(db, entorno, primero=1)
+    asignar(db, entorno.id_docente, entorno.colegios["Andino"], [entorno.grados["1.º"]], entorno.periodos["cuarto"], 1)
+    db.commit()
+    inicio_pa4, fin_pa4 = entorno.rangos["PA4"]
+
+    miercoles.fijar(a_las(entorno.rangos["PR4"][0], 9))
+
+    assert _vencidas(db) == [d.isoformat() for d in fechas_del_dia(1, inicio_pa4, fin_pa4)]
+
+
+def test_dp2_al_empezar_el_pa_siguiente_los_del_anterior_ya_no_cuentan(db, entorno, miercoles):
+    dias_de_clase(db, entorno, primero=1)
+    asignar(db, entorno.id_docente, entorno.colegios["Andino"], [entorno.grados["1.º"]], entorno.periodos["futuro"], 1)
+    db.commit()
+
+    miercoles.fijar(a_las(entorno.rangos["PR2"][0], 9))
+    en_el_pr2 = _vencidas(db)
+    miercoles.fijar(a_las(entorno.rangos["PA3"][0], 9))
+    en_el_pa3 = _vencidas(db)
+
+    fin_pa2 = entorno.rangos["PA2"][1].isoformat()
+    assert en_el_pr2 and all(r <= fin_pa2 for r in en_el_pr2)
+    assert en_el_pa3 == []
+
+
+def test_dp2_en_el_receso_hay_sincronizacion_olvidada_pero_no_incumplimiento_de_sede(client, db, entorno, sup):
+    """Antes, en el PR no había ninguna alerta; ahora, la de sincronización (los vencidos
+    son del PA2 que se regulariza). La sede sigue mirando el PA en curso, y no hay."""
+    dias_de_clase(db, entorno, primero=1)
+    terminar_pa_vigente(db, entorno)
+
+    assert alertas(client, sup) == [{"tipo": "sincronizacion_olvidada", "mensaje": SINCRONIZACION, "critica": False}]
