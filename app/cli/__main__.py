@@ -15,6 +15,7 @@ from app.cli.colegios import ARCHIVO_COLEGIOS, cargar_colegios_iniciales
 from app.cli.comun import log
 from app.cli.feriados import cargar_feriados
 from app.cli.inicializar import ErrorInfraestructura, ejecutar_paso, inicializar
+from app.cli.seed_demo import sembrar_demo
 from app.cli.seed_e2e import sembrar_e2e
 from app.cli.supervisor import inicializar_supervisor_original
 
@@ -30,6 +31,7 @@ def crear_parser() -> argparse.ArgumentParser:
     colegios = sub.add_parser("cargar-colegios-iniciales", help="solo con CARGAR_COLEGIOS_INICIALES=true")
     colegios.add_argument("--archivo", type=Path, default=ARCHIVO_COLEGIOS)
     sub.add_parser("sembrar-e2e", help="solo con SEED_E2E=true y ENTORNO qa o dev")
+    sub.add_parser("sembrar-demo", help="solo con SEED_DEMO=true y ENTORNO dev, qa o uat (en segundo plano)")
     sub.add_parser("inicializar", help="todo lo anterior en orden (arranque del contenedor)")
     return parser
 
@@ -42,6 +44,7 @@ def _paso_unico(args: argparse.Namespace):
         "cargar-feriados": cargar_feriados,
         "cargar-colegios-iniciales": lambda db: cargar_colegios_iniciales(db, args.archivo),
         "sembrar-e2e": sembrar_e2e,
+        "sembrar-demo": sembrar_demo,
     }
     return pasos[args.comando]
 

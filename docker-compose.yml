@@ -19,8 +19,12 @@ services:
     #      no detiene el arranque; solo un fallo de infraestructura (sin BD) lo detiene.
     #   3. Seed de usuarios de prueba, solo si CARGAR_DATOS_PRUEBA=true en el .env (no
     #      duplica si ya existen). En producción debe ir en false.
-    #   4. uvicorn.
-    command: sh -c 'alembic upgrade head && python -m app.cli inicializar && if [ "$${CARGAR_DATOS_PRUEBA:-false}" = "true" ]; then python -m app.seed_data; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000'
+    #   4. python -m app.cli sembrar-demo EN SEGUNDO PLANO: colegio de demostración con
+    #      alumnos e historial, solo con SEED_DEMO=true (dev, qa o uat). Son miles de
+    #      operaciones: no espera a que termine para levantar la API, y si el contenedor
+    #      se reinicia a medias, retoma donde quedó.
+    #   5. uvicorn.
+    command: sh -c 'alembic upgrade head && python -m app.cli inicializar && if [ "$${CARGAR_DATOS_PRUEBA:-false}" = "true" ]; then python -m app.seed_data; fi && { python -m app.cli sembrar-demo & } && uvicorn app.main:app --host 0.0.0.0 --port 8000'
     networks:
       - proxy_net
     restart: unless-stopped
