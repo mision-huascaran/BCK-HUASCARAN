@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 from sqlmodel import col, func, select
 
+from app.cli import seed_demo
 from app.cli.seed_demo import (
     ALUMNOS_POR_GRADO,
     COLEGIO,
@@ -82,7 +83,8 @@ def test_cierres_de_mes_y_de_pa():
     # La segunda del mes pasado cierra el mes y el PA1; la de hoy no cierra nada.
     assert cierres[(7, clases[0].fecha)].mes is (clases[1].fecha.month != clases[0].fecha.month)
     assert cierres[(7, clases[1].fecha)].numero_pa == 1
-    assert cierres[(7, hoy)].mes is False and cierres[(7, hoy)].numero_pa is None
+    assert cierres[(7, hoy)].mes is False
+    assert cierres[(7, hoy)].numero_pa is None
 
 
 # ── Con la BD ───────────────────────────────────────────────────────────────────────
@@ -139,7 +141,14 @@ def test_una_cuenta_que_no_es_docente_se_rechaza(db, semanas):
     assert any("no es una cuenta de Docente activa" in e for e in resumen.errores)
 
 
-def test_historial_por_los_servicios_sin_rechazos_e_idempotente(db, semanas):
+@pytest.fixture
+def aulas_chicas(monkeypatch):
+    """El historial recorre todo el año: con 72 alumnos son miles de operaciones y la
+    prueba tarda minutos. Con 4 y 3 se ejercitan los mismos caminos."""
+    monkeypatch.setattr(seed_demo, "ALUMNOS_POR_GRADO", {"3.º": 4, "4.º": 3})
+
+
+def test_historial_por_los_servicios_sin_rechazos_e_idempotente(db, semanas, aulas_chicas):
     primera = sembrar_demo(db, VARIABLES)
 
     assert not primera.errores, primera.errores
@@ -153,7 +162,9 @@ def test_historial_por_los_servicios_sin_rechazos_e_idempotente(db, semanas):
     assert contar(db, RegistroVuelo) > 0
     # Las actividades del historial quedan cerradas y "sincronizadas" al terminar.
     actividades = db.exec(select(Actividad)).all()
-    assert actividades and all(a.fin is not None and a.sincronizado_en == a.fin for a in actividades)
+    assert actividades
+    assert all(a.fin is not None for a in actividades)
+    assert all(a.sincronizado_en == a.fin for a in actividades)
 
     totales = {m: contar(db, m) for m in (Alumno, Asistencia, LecturaSemanal, RubricaMensual, RegistroVuelo,
                                           Actividad, OperacionSincronizacion)}
@@ -163,8 +174,6 @@ def test_historial_por_los_servicios_sin_rechazos_e_idempotente(db, semanas):
     assert not segunda.creados
     assert {m: contar(db, m) for m in totales} == totales
 
-
-def test_hoy_queda_libre(db, semanas):
-    sembrar_demo(db, VARIABLES)
+    # Hoy queda libre para registrarlo en vivo.
     hoy = tiempo.hoy_lima()
     assert db.exec(select(Actividad).where(Actividad.inicio >= tiempo.limites_lima(hoy, hoy)[0])).first() is None
