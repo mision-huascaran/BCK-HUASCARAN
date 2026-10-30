@@ -89,6 +89,8 @@ GRADOS = tuple(ALUMNOS_POR_GRADO)
 # Martes y jueves: cada grado en su día.
 DIAS_DE_CLASE = {"3.º": 2, "4.º": 4}
 
+# Apellido de las cuentas que crea el seed (no el de una cuenta existente).
+APELLIDO_CUENTAS = "Demostración"
 CORREO_DOCENTE = "juan.paredes+demo.docente@utec.edu.pe"
 CORREO_SUPERVISOR = "juan.paredes+demo.supervisor@utec.edu.pe"
 CORREO_DIRECTIVO = "juan.paredes+demo.directivo@utec.edu.pe"
@@ -157,7 +159,7 @@ def _docente(
     correo = normalizar_correo(entorno.get("DEMO_DOCENTE_CORREO", "").strip() or CORREO_DOCENTE)
     existente = db.exec(select(Usuario).where(Usuario.correo == correo)).first()
     if existente is None:
-        cuenta = CuentaE2E("DEMO_DOCENTE_PASS", DOCENTE, "Docente", "Demostración", "88000001", correo, True)
+        cuenta = CuentaE2E("DEMO_DOCENTE_PASS", DOCENTE, "Docente", APELLIDO_CUENTAS, "88000001", correo, True)
         return _asegurar_cuenta(db, cuenta, entorno, roles, id_autor, resumen, etiqueta="demo")
     if existente.id_rol != roles[DOCENTE].id_rol or existente.id_docente is None or not existente.activo:
         resumen.error(f"No se siembran los datos demo: {correo} no es una cuenta de Docente activa")
@@ -168,9 +170,9 @@ def _docente(
 def _cuentas_opcionales(db: Session, entorno: Mapping[str, str], roles: dict, id_autor: int, resumen: Resumen) -> None:
     """Supervisor y Directivo de demostración, solo si llegan sus contraseñas."""
     cuentas = (
-        CuentaE2E("DEMO_SUPERVISOR_PASS", "Supervisor", "Supervisora", "Demostración", "88000002",
+        CuentaE2E("DEMO_SUPERVISOR_PASS", "Supervisor", "Supervisora", APELLIDO_CUENTAS, "88000002",
                   entorno.get("DEMO_SUPERVISOR_CORREO", "").strip() or CORREO_SUPERVISOR, True),
-        CuentaE2E("DEMO_DIRECTIVO_PASS", "Directivo", "Directivo", "Demostración", "88000003",
+        CuentaE2E("DEMO_DIRECTIVO_PASS", "Directivo", "Directivo", APELLIDO_CUENTAS, "88000003",
                   entorno.get("DEMO_DIRECTIVO_CORREO", "").strip() or CORREO_DIRECTIVO, True),
     )
     presentes = [c for c in cuentas if entorno.get(c.variable, "").strip()]
