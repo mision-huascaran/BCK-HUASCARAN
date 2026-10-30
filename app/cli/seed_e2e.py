@@ -98,25 +98,27 @@ CUENTAS = (
 )
 
 
-def motivo_de_rechazo(entorno: Mapping[str, str]) -> Optional[str]:
+def motivo_de_rechazo(entorno: Mapping[str, str], permitidos: frozenset[str] = ENTORNOS_PERMITIDOS) -> Optional[str]:
     """Por qué no se siembra en este entorno, o None si se puede. Sin la BD."""
     nombre = entorno.get("ENTORNO", "").strip().lower()
-    if nombre not in ENTORNOS_PERMITIDOS:
-        permitidos = ", ".join(sorted(ENTORNOS_PERMITIDOS))
-        return f"ENTORNO={nombre or '(vacío)'} no está permitido (solo {permitidos})"
+    if nombre not in permitidos:
+        lista = ", ".join(sorted(permitidos))
+        return f"ENTORNO={nombre or '(vacío)'} no está permitido (solo {lista})"
     return None
 
 
 # ── Colegio ─────────────────────────────────────────────────────────────────────────
 
-def _asegurar_dias_de_clase(db: Session, colegio: Colegio, grados: list[Grado], id_autor: int, ahora) -> bool:
-    """Deja cada grado del colegio E2E con su día de DIAS_DE_CLASE. True si cambió alguno."""
+def _asegurar_dias_de_clase(
+    db: Session, colegio: Colegio, grados: list[Grado], id_autor: int, ahora, dias: Mapping[str, int] = DIAS_DE_CLASE
+) -> bool:
+    """Deja cada grado del colegio con su día de `dias`. True si cambió alguno."""
     db.flush()
     cambiado = False
     for grado in grados:
         fila = db.get(ColegioGrado, (colegio.id_colegio, grado.id_grado))
-        if fila.dia_clase != DIAS_DE_CLASE[grado.nombre]:
-            fila.dia_clase = DIAS_DE_CLASE[grado.nombre]
+        if fila.dia_clase != dias[grado.nombre]:
+            fila.dia_clase = dias[grado.nombre]
             fila.modificado_por, fila.modificado_en = id_autor, ahora
             db.add(fila)
             cambiado = True
@@ -124,34 +126,37 @@ def _asegurar_dias_de_clase(db: Session, colegio: Colegio, grados: list[Grado], 
 
 
 def _asegurar_colegio(
-    db: Session, grados: list[Grado], programas: list[Programa], id_autor: int, resumen: Resumen
+    db: Session, grados: list[Grado], programas: list[Programa], id_autor: int, resumen: Resumen,
+    datos: Mapping[str, str] = COLEGIO, dias: Mapping[str, int] = DIAS_DE_CLASE, etiqueta: str = "E2E",
 ) -> Colegio:
+    """Crea o corrige el colegio `datos` con sus grados, programas y días de clase. Lo
+    reutiliza el seed de demostración con otro colegio (`etiqueta` va en el resumen)."""
     ahora = ahora_utc()
     auditoria = {"creado_por": id_autor, "creado_en": ahora}
-    buscado = nombre_comparable(COLEGIO["nombre"])
+    buscado = nombre_comparable(datos["nombre"])
     colegio = next(
         (c for c in db.exec(select(Colegio)).all() if nombre_comparable(c.nombre) == buscado), None
     )
     if colegio is None:
-        colegio = Colegio(**COLEGIO, activo=True, **auditoria)
+        colegio = Colegio(**datos, activo=True, **auditoria)
         db.add(colegio)
         db.flush()
         completar_oferta(db, colegio, grados, programas, auditoria)
-        _asegurar_dias_de_clase(db, colegio, grados, id_autor, ahora)
+        _asegurar_dias_de_clase(db, colegio, grados, id_autor, ahora, dias)
         db.commit()
         db.refresh(colegio)
-        resumen.creados["colegio E2E"] += 1
+        resumen.creados[f"colegio {etiqueta}"] += 1
         return colegio
 
-    deseado = {**COLEGIO, "activo": True}
+    deseado = {**datos, "activo": True}
     cambiado = any(getattr(colegio, campo) != valor for campo, valor in deseado.items())
     for campo, valor in deseado.items():
         setattr(colegio, campo, valor)
     nuevos_grados, nuevos_programas = completar_oferta(db, colegio, grados, programas, auditoria)
-    dias_cambiados = _asegurar_dias_de_clase(db, colegio, grados, id_autor, ahora)
+    dias_cambiados = _asegurar_dias_de_clase(db, colegio, grados, id_autor, ahora, dias)
     if cambiado or nuevos_grados or nuevos_programas or dias_cambiados:
         colegio.modificado_por, colegio.modificado_en = id_autor, ahora
-        resumen.actualizados["colegio E2E"] += 1
+        resumen.actualizados[f"colegio {etiqueta}"] += 1
     db.add(colegio)
     db.commit()
     db.refresh(colegio)
@@ -236,23 +241,26 @@ def _limpiar_pendientes(usuario: Usuario) -> bool:
 
 
 def _asegurar_cuenta(
-    db: Session, cuenta: CuentaE2E, entorno: Mapping[str, str], roles: dict, id_autor: int, resumen: Resumen
+    db: Session, cuenta: CuentaE2E, entorno: Mapping[str, str], roles: dict, id_autor: int, resumen: Resumen,
+    etiqueta: str = "E2E",
 ) -> Optional[Usuario]:
+    """Crea o corrige la cuenta con la contraseña de su variable. Lo reutiliza el seed de
+    demostración (`etiqueta` va en los mensajes y el resumen)."""
     correo = normalizar_correo(cuenta.correo)
     password = entorno.get(cuenta.variable, "")
     if not password.strip():
-        resumen.advertir(f"No se siembra la cuenta E2E {correo}: falta la variable {cuenta.variable}")
+        resumen.advertir(f"No se siembra la cuenta {etiqueta} {correo}: falta la variable {cuenta.variable}")
         return None
     rol = roles.get(cuenta.rol)
     if rol is None:
-        resumen.error(f"No se siembra la cuenta E2E {correo}: no existe el rol {cuenta.rol}")
+        resumen.error(f"No se siembra la cuenta {etiqueta} {correo}: no existe el rol {cuenta.rol}")
         return None
 
     existente = db.exec(select(Usuario).where(Usuario.correo == correo)).first()
     errores = _errores_de_cuenta(db, cuenta, password, existente)
     if errores:
         for mensaje in errores:
-            resumen.error(f"No se siembra la cuenta E2E {correo}: {mensaje}")
+            resumen.error(f"No se siembra la cuenta {etiqueta} {correo}: {mensaje}")
         return None
 
     ahora = ahora_utc()
@@ -277,20 +285,22 @@ def _asegurar_cuenta(
         db.commit()
     except IntegrityError as e:
         db.rollback()
-        resumen.error(f"No se siembra la cuenta E2E {correo}: la BD rechazó la fila ({e.orig.__class__.__name__})")
+        resumen.error(
+            f"No se siembra la cuenta {etiqueta} {correo}: la BD rechazó la fila ({e.orig.__class__.__name__})"
+        )
         return None
     db.refresh(usuario)
 
     if existente is None:
-        resumen.creados["usuario E2E"] += 1
+        resumen.creados[f"usuario {etiqueta}"] += 1
     elif cambiado:
-        resumen.actualizados["usuario E2E"] += 1
+        resumen.actualizados[f"usuario {etiqueta}"] += 1
     return usuario
 
 
-def _limpiar_control_acceso(db: Session) -> None:
-    """Quita el bloqueo por intentos fallidos y el límite de PIN de los correos E2E."""
-    correos = [normalizar_correo(c.correo) for c in CUENTAS]
+def _limpiar_control_acceso(db: Session, cuentas=CUENTAS) -> None:
+    """Quita el bloqueo por intentos fallidos y el límite de PIN de los correos de `cuentas`."""
+    correos = [normalizar_correo(c.correo) for c in cuentas]
     db.execute(delete(ControlAccesoCorreo).where(col(ControlAccesoCorreo.correo).in_(correos)))
     db.commit()
 
@@ -300,12 +310,13 @@ def _limpiar_control_acceso(db: Session) -> None:
 def _asegurar_asignaciones(
     db: Session, id_docente: int, colegio: Colegio, grados: dict[str, Grado],
     periodos: list[PeriodoAcademico], id_autor: int, resumen: Resumen,
+    nombres_grados: tuple[str, ...] = GRADOS_DEL_DOCENTE, etiqueta: str = "E2E",
 ) -> None:
-    """1.º–3.º del colegio E2E para el Docente E2E en todos los periodos del año; si otro
-    docente tiene alguno, se le reasigna al Docente E2E."""
+    """`nombres_grados` del colegio para el Docente en todos los periodos del año; si otro
+    docente tiene alguno, se le reasigna a este."""
     ahora = ahora_utc()
     for periodo in periodos:
-        for nombre in GRADOS_DEL_DOCENTE:
+        for nombre in nombres_grados:
             fila = db.exec(
                 select(DocenteColegioGrado).where(
                     DocenteColegioGrado.id_colegio == colegio.id_colegio,
@@ -318,12 +329,12 @@ def _asegurar_asignaciones(
                     id_docente=id_docente, id_colegio=colegio.id_colegio, id_grado=grados[nombre].id_grado,
                     id_periodo_academico=periodo.id_periodo_academico, creado_por=id_autor, creado_en=ahora,
                 ))
-                resumen.creados["asignación E2E"] += 1
+                resumen.creados[f"asignación {etiqueta}"] += 1
             elif fila.id_docente != id_docente:
                 fila.id_docente = id_docente
                 fila.modificado_por, fila.modificado_en = id_autor, ahora
                 db.add(fila)
-                resumen.actualizados["asignación E2E (reasignada)"] += 1
+                resumen.actualizados[f"asignación {etiqueta} (reasignada)"] += 1
     db.commit()
 
 
