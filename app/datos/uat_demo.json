@@ -1,0 +1,87 @@
+{
+  "_nota": "Datos ficticios para pruebas UAT de SICEDU.",
+  "anio": 2026,
+  "colegios": [
+    {
+      "nombre": "I.E. Nueva Esperanza - Demo UAT",
+      "departamento": "Áncash",
+      "provincia": "Huaraz",
+      "distrito": "Independencia",
+      "nivel_educativo": "Primaria",
+      "grados": [
+        {
+          "nombre": "1.º",
+          "seccion": "Única",
+          "alumnos": 20,
+          "subprogramas": {
+            "Alfabetización": 14,
+            "Comprensión Lectora": 6
+          }
+        },
+        {
+          "nombre": "2.º",
+          "seccion": "Única",
+          "alumnos": 20,
+          "subprogramas": {
+            "Alfabetización": 12,
+            "Comprensión Lectora": 8
+          }
+        }
+      ]
+    },
+    {
+      "nombre": "I.E. Los Andes - Demo UAT",
+      "departamento": "Áncash",
+      "provincia": "Carhuaz",
+      "distrito": "Carhuaz",
+      "nivel_educativo": "Primaria",
+      "grados": [
+        {
+          "nombre": "3.º",
+          "seccion": "Única",
+          "alumnos": 25,
+          "subprogramas": {
+            "Alfabetización": 10,
+            "Comprensión Lectora": 15
+          }
+        },
+        {
+          "nombre": "4.º",
+          "seccion": "Única",
+          "alumnos": 25,
+          "subprogramas": {
+            "Alfabetización": 8,
+            "Comprensión Lectora": 17
+          }
+        }
+      ]
+    },
+    {
+      "nombre": "I.E. Valle del Sol - Demo UAT",
+      "departamento": "Áncash",
+      "provincia": "Yungay",
+      "distrito": "Yungay",
+      "nivel_educativo": "Primaria",
+      "grados": [
+        {
+          "nombre": "5.º",
+          "seccion": "Única",
+          "alumnos": 25,
+          "subprogramas": {
+            "Alfabetización": 5,
+            "Comprensión Lectora": 20
+          }
+        },
+        {
+          "nombre": "6.º",
+          "seccion": "Única",
+          "alumnos": 25,
+          "subprogramas": {
+            "Alfabetización": 4,
+            "Comprensión Lectora": 21
+          }
+        }
+      ]
+    }
+  ]
+}

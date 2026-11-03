@@ -18,6 +18,7 @@ from app.cli.inicializar import ErrorInfraestructura, ejecutar_paso, inicializar
 from app.cli.seed_demo import sembrar_demo
 from app.cli.seed_e2e import sembrar_e2e
 from app.cli.supervisor import inicializar_supervisor_original
+from app.cli.seed_uat import sembrar_uat
 
 
 def crear_parser() -> argparse.ArgumentParser:
@@ -33,6 +34,7 @@ def crear_parser() -> argparse.ArgumentParser:
     sub.add_parser("sembrar-e2e", help="solo con SEED_E2E=true y ENTORNO qa o dev")
     sub.add_parser("sembrar-demo", help="solo con SEED_DEMO=true y ENTORNO dev, qa o uat (en segundo plano)")
     sub.add_parser("inicializar", help="todo lo anterior en orden (arranque del contenedor)")
+    sub.add_parser("sembrar-uat", help="carga datos ficticios para UAT")
     return parser
 
 
@@ -45,6 +47,7 @@ def _paso_unico(args: argparse.Namespace):
         "cargar-colegios-iniciales": lambda db: cargar_colegios_iniciales(db, args.archivo),
         "sembrar-e2e": sembrar_e2e,
         "sembrar-demo": sembrar_demo,
+        "sembrar-uat": sembrar_uat,
     }
     return pasos[args.comando]
 
