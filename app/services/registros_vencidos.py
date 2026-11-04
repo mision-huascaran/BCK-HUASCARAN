@@ -51,6 +51,7 @@ from app.services.calendario import (
     pa_de_referencia_para_vencidos,
 )
 from app.services.lectura_service import colegios_con_filas_confirmadas, tablas_con_pendientes
+from app.services.pertenencia import solapa
 from app.services.programacion import ClaseProgramada, FiltroGrupos, clases_programadas
 from app.services.registro_vuelo import colegios_con_decisiones
 from app.services.reglas_provisionales import regla_mes_exigible_en_pa
@@ -399,10 +400,12 @@ def _pas_terminados(contexto: ContextoVencidos, id_colegio: int) -> list[Periodo
 
 
 def _ultimo_grupo(intervalos: list[AlumnoPertenencia], pa: PeriodoCalendario) -> dict[int, AlumnoPertenencia]:
-    """{alumno: su último intervalo dentro del PA} (el grupo en que se le exige)."""
+    """{alumno: su último intervalo dentro del PA} (el grupo en que se le exige). Con la
+    misma regla de pertenencia por PA que el Registro de Vuelo (`pertenencia.solapa`): no
+    se exige en un grupo al que el alumno no pertenecía en el PA."""
     ultimo: dict[int, AlumnoPertenencia] = {}
     for i in intervalos:
-        if i.desde <= pa.fecha_fin and (i.hasta is None or i.hasta > pa.fecha_inicio):
+        if solapa(i, pa.fecha_inicio, pa.fecha_fin):
             if i.id_alumno not in ultimo or i.desde > ultimo[i.id_alumno].desde:
                 ultimo[i.id_alumno] = i
     return ultimo

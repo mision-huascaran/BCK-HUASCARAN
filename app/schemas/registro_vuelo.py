@@ -73,7 +73,10 @@ class PeriodoAlumno(BaseModel):
     observacion: Optional[str] = None
     aviso_entrada_cambio: bool = False
     aviso: Optional[str] = None
-    # Falta el nivel colocado (CU011).
+    # Si el alumno pertenecía al grupo algún día de este PA (la misma regla con la que se
+    # valida el guardado). false: la celda es de solo lectura y no se puede registrar.
+    pertenece: bool
+    # Falta el nivel colocado (CU011). Siempre false si `pertenece` es false.
     incompleto: bool
 
 

@@ -15,6 +15,10 @@ pertenecía:
   referencia y su versión, el resultado y la entrada vigente; si después la entrada
   cambia (se corrigió el PA anterior) se avisa.
 
+Un PA en que el alumno no pertenecía al grupo (ningún día del PA, con las fechas del
+calendario del colegio) es de solo lectura: `pertenece` en false. Es la misma regla con la
+que se rechaza el guardado (`alumno_fuera_del_grupo`): `pertenencia.pertenecio_en_rango`.
+
 Los cálculos trabajan sobre datos cargados en lote (`cargar_datos`): un número fijo de
 consultas por página, no por alumno ni por PA.
 """
@@ -57,6 +61,7 @@ from app.services import claves_registro
 from app.services.asistencia_service import exigir_seccion
 from app.services.auditoria import CREAR, EDITAR, registrar_auditoria
 from app.services.calendario import (
+    CalendarioResuelto,
     PeriodoCalendario,
     cargar_calendarios,
     en_pa_de_su_colegio,
@@ -67,7 +72,7 @@ from app.services.escritura import Destino, MensajesEscritura, escritura
 from app.services.habilitacion import habilitacion_escritura
 from app.services.motor_sugerencias import BAJAR, SUBIR, TEXTO_PENDIENTE, sugerencia
 from app.services.nivel_descriptivo import EscalaDescriptiva
-from app.services.pertenencia import alumnos_del_grupo_en_rango
+from app.services.pertenencia import alumnos_del_grupo_en_rango, intervalos_en_grupo, pertenecio_en_rango
 from app.services.programacion import FiltroGrupos
 from app.services.reglas_provisionales import regla_decision_vigente
 from app.services.rubrica_service import ultimas_rubricas_completas_del_anio
@@ -131,10 +136,12 @@ class Contexto:
     def grupo(self) -> FiltroGrupos:
         return FiltroGrupos(self.id_colegio, self.id_grado, self.id_seccion)
 
+    @property
+    def clave(self) -> tuple[int, int, int, int]:
+        return self.id_colegio, self.id_grado, self.id_seccion, self.id_programa
+
     def de_la_fila(self, fila: RegistroVuelo) -> bool:
-        return (fila.id_colegio, fila.id_grado, fila.id_seccion, fila.id_programa) == (
-            self.id_colegio, self.id_grado, self.id_seccion, self.id_programa,
-        )
+        return (fila.id_colegio, fila.id_grado, fila.id_seccion, fila.id_programa) == self.clave
 
     @classmethod
     def de(cls, origen) -> "Contexto":
@@ -155,12 +162,26 @@ class DatosVuelo:
     registros: dict[int, list[RegistroVuelo]] = field(default_factory=dict)
     # (alumno, PA) -> su última rúbrica completa.
     rubricas: dict[tuple[int, int], RubricaMensual] = field(default_factory=dict)
+    # Solo con un grupo (`cargar_datos(..., contexto)`): el calendario aplicable a su
+    # colegio y los intervalos de cada alumno en el grupo dentro del año.
+    calendario: Optional[CalendarioResuelto] = None
+    intervalos: dict[int, list[AlumnoPertenencia]] = field(default_factory=dict)
 
     def anterior(self, periodo: PeriodoAcademico) -> Optional[PeriodoAcademico]:
         return next((p for p in self.periodos if p.numero == periodo.numero - 1), None)
 
     def letra(self, id_nivel: Optional[int]) -> Optional[Letra]:
         return Letra(id=id_nivel, letra=self.letras[id_nivel]) if id_nivel in self.letras else None
+
+    def pa(self, periodo: PeriodoAcademico) -> Optional[PeriodoCalendario]:
+        """Las fechas del PA en el calendario del colegio del grupo; None sin ellas."""
+        return self.calendario.pa(periodo.numero) if self.calendario is not None else None
+
+    def pertenece(self, id_alumno: int, periodo: PeriodoAcademico) -> bool:
+        """Si el alumno pertenecía al grupo algún día del PA; false si el PA no tiene
+        fechas en el calendario del colegio."""
+        pa = self.pa(periodo)
+        return pa is not None and pertenecio_en_rango(self.intervalos.get(id_alumno, []), pa.fecha_inicio, pa.fecha_fin)
 
 
 def escalas_por_grado(db: Session) -> dict[int, EscalaDescriptiva]:
@@ -171,8 +192,17 @@ def escalas_por_grado(db: Session) -> dict[int, EscalaDescriptiva]:
     return {grado: EscalaDescriptiva(tuple(t)) for grado, t in tramos.items()}
 
 
-def cargar_datos(db: Session, anio: AnioEscolar, ids_alumno: list[int]) -> DatosVuelo:
-    """Catálogos, PA del año, decisiones y rúbricas completas de esos alumnos."""
+def calendario_del_colegio(db: Session, id_colegio: int, id_anio_escolar: int) -> Optional[CalendarioResuelto]:
+    """El calendario aplicable al colegio en el año (particular o general)."""
+    return cargar_calendarios(db, id_anio_escolar, ids_colegio=[id_colegio]).aplicable(id_colegio, id_anio_escolar)
+
+
+def cargar_datos(
+    db: Session, anio: AnioEscolar, ids_alumno: list[int], contexto: Optional[Contexto] = None
+) -> DatosVuelo:
+    """Catálogos, PA del año, decisiones y rúbricas completas de esos alumnos. Con
+    `contexto`, también el calendario de su colegio y los intervalos de los alumnos en ese
+    grupo dentro del año (una consulta para todos)."""
     registros: dict[int, list[RegistroVuelo]] = defaultdict(list)
     for fila in db.exec(select(RegistroVuelo).where(
         col(RegistroVuelo.id_alumno).in_(ids_alumno), RegistroVuelo.id_anio_escolar == anio.id_anio_escolar,
@@ -190,6 +220,9 @@ def cargar_datos(db: Session, anio: AnioEscolar, ids_alumno: list[int]) -> Datos
         programas=dict(db.exec(select(Programa.id_programa, Programa.nombre)).all()),
         registros=registros,
         rubricas=ultimas_rubricas_completas_del_anio(db, ids_alumno, anio.id_anio_escolar),
+        calendario=calendario_del_colegio(db, contexto.id_colegio, anio.id_anio_escolar) if contexto else None,
+        intervalos=intervalos_en_grupo(db, ids_alumno, contexto.clave, anio.fecha_inicio, anio.fecha_fin)
+        if contexto else {},
     )
 
 
@@ -307,8 +340,11 @@ def _fila_del_contexto(datos: DatosVuelo, contexto: Contexto, id_alumno: int, id
 
 
 def resolver_periodo(datos: DatosVuelo, contexto: Contexto, id_alumno: int, periodo: PeriodoAcademico) -> PeriodoAlumno:
-    """La fila del alumno en el PA y el grupo, con lo calculado."""
+    """La fila del alumno en el PA y el grupo, con lo calculado. Si no pertenecía al grupo
+    en el PA, la celda es de solo lectura: no se le exige el nivel colocado y se avisa
+    (salvo que ya haya otro aviso)."""
     fila = _fila_del_contexto(datos, contexto, id_alumno, periodo.id_periodo_academico)
+    pertenece = datos.pertenece(id_alumno, periodo)
     id_entrada, origen = entrada_de(datos, id_alumno, periodo, contexto.id_grado)
     origen_entrada = decision_de_entrada(datos, id_alumno, periodo)
     de_otro_colegio = origen_entrada is not None and origen_entrada.id_colegio != contexto.id_colegio
@@ -322,8 +358,17 @@ def resolver_periodo(datos: DatosVuelo, contexto: Contexto, id_alumno: int, peri
         nivel_colocado=datos.letra(colocado), nivel_programa=nivel_programa(datos.escalas, contexto.id_grado, colocado),
         proyeccion=datos.letra(fila.id_nivel_proyeccion if fila else None),
         observacion=fila.observacion if fila else None,
-        aviso_entrada_cambio=cambio, aviso=AVISO_ENTRADA_CAMBIADA if cambio else None, incompleto=colocado is None,
+        aviso_entrada_cambio=cambio, aviso=_aviso(cambio, fuera_del_grupo=datos.pa(periodo) is not None and not pertenece),
+        pertenece=pertenece, incompleto=pertenece and colocado is None,
     )
+
+
+def _aviso(entrada_cambiada: bool, fuera_del_grupo: bool) -> Optional[str]:
+    """El aviso de la celda. "No pertenecía" solo si el PA tiene fechas y el alumno no estuvo
+    en el grupo: el motivo de un PA sin fechas ya lo da `periodos[].escritura`."""
+    if entrada_cambiada:
+        return AVISO_ENTRADA_CAMBIADA
+    return MENSAJE_FUERA_DEL_GRUPO if fuera_del_grupo else None
 
 
 # ── Consulta (CU031) ────────────────────────────────────────────────────────────────
@@ -370,13 +415,10 @@ def _escritura_del_periodo(
 def _periodos_del_anio(db: Session, usuario: Usuario, contexto: Contexto, datos: DatosVuelo) -> list[PeriodoDelAnio]:
     """Los PA con las fechas del calendario del colegio, su estado y si se puede escribir
     en cada uno (la autorización de un PA no habilita los demás)."""
-    calendario = cargar_calendarios(db, datos.anio.id_anio_escolar, ids_colegio=[contexto.id_colegio]).aplicable(
-        contexto.id_colegio, datos.anio.id_anio_escolar
-    )
     hoy = hoy_lima()
     salida = []
     for periodo in datos.periodos:
-        pa = calendario.pa(periodo.numero) if calendario is not None else None
+        pa = datos.pa(periodo)
         estado = estado_del_periodo(pa, hoy)
         salida.append(PeriodoDelAnio(
             numero=periodo.numero, id_periodo_academico=periodo.id_periodo_academico, nombre=f"PA{periodo.numero}",
@@ -404,7 +446,7 @@ def listar(db: Session, usuario: Usuario, contexto: Contexto, id_anio_escolar: i
         contexto.id_programa,
     )
     en_pagina = alumnos[(page - 1) * TAMANO_PAGINA: page * TAMANO_PAGINA]
-    datos = cargar_datos(db, anio, [a.id_alumno for a in en_pagina])
+    datos = cargar_datos(db, anio, [a.id_alumno for a in en_pagina], contexto)
     base = pagina([_alumno_vuelo(datos, contexto, a) for a in en_pagina], len(alumnos), page)
     return RegistrosVueloDelGrupo(
         **base.model_dump(), periodos=_periodos_del_anio(db, usuario, contexto, datos),
@@ -439,9 +481,7 @@ def _pa_del_item(db: Session, item: RegistroVueloGuardar, en: datetime) -> tuple
     periodo = db.get(PeriodoAcademico, item.id_periodo_academico)
     if periodo is None:
         raise RechazoOperacion("periodo_inexistente", MENSAJE_PERIODO_INEXISTENTE)
-    calendario = cargar_calendarios(db, periodo.id_anio_escolar, ids_colegio=[item.id_colegio]).aplicable(
-        item.id_colegio, periodo.id_anio_escolar
-    )
+    calendario = calendario_del_colegio(db, item.id_colegio, periodo.id_anio_escolar)
     pa = calendario.pa(periodo.numero) if calendario is not None else None
     if pa is None or pa.fecha_inicio > fecha_lima(en):
         raise RechazoOperacion("periodo_futuro", MENSAJE_PERIODO_FUTURO)
@@ -449,18 +489,10 @@ def _pa_del_item(db: Session, item: RegistroVueloGuardar, en: datetime) -> tuple
 
 
 def _pertenecia(db: Session, id_alumno: int, contexto: Contexto, pa: PeriodoCalendario) -> bool:
-    """Si el alumno perteneció al grupo algún día del PA."""
-    return db.exec(
-        select(func.count()).select_from(AlumnoPertenencia).where(
-            AlumnoPertenencia.id_alumno == id_alumno,
-            AlumnoPertenencia.id_colegio == contexto.id_colegio,
-            AlumnoPertenencia.id_grado == contexto.id_grado,
-            AlumnoPertenencia.id_seccion == contexto.id_seccion,
-            AlumnoPertenencia.id_programa == contexto.id_programa,
-            AlumnoPertenencia.desde <= pa.fecha_fin,
-            (col(AlumnoPertenencia.hasta).is_(None)) | (col(AlumnoPertenencia.hasta) > pa.fecha_inicio),
-        )
-    ).one() > 0
+    """Si el alumno perteneció al grupo algún día del PA: la misma regla que
+    `DatosVuelo.pertenece` en la lectura."""
+    intervalos = intervalos_en_grupo(db, [id_alumno], contexto.clave, pa.fecha_inicio, pa.fecha_fin)
+    return pertenecio_en_rango(intervalos.get(id_alumno, []), pa.fecha_inicio, pa.fecha_fin)
 
 
 def _validar_niveles(db: Session, item: RegistroVueloGuardar) -> None:
@@ -542,8 +574,9 @@ def _actualizar(db: Session, fila: RegistroVuelo, cambios: dict, valores: dict, 
 
 
 def _resuelto(db: Session, anio: AnioEscolar, item: RegistroVueloGuardar, periodo: PeriodoAcademico) -> dict[str, Any]:
-    datos = cargar_datos(db, anio, [item.id_alumno])
-    return resolver_periodo(datos, Contexto.de(item), item.id_alumno, periodo).model_dump(mode="json")
+    contexto = Contexto.de(item)
+    datos = cargar_datos(db, anio, [item.id_alumno], contexto)
+    return resolver_periodo(datos, contexto, item.id_alumno, periodo).model_dump(mode="json")
 
 
 def _guardar(db: Session, item: RegistroVueloGuardar, periodo: PeriodoAcademico, captura: _Captura) -> None:

@@ -1126,7 +1126,7 @@ Una fila por alumno que perteneció al grupo en el año (incluidos los hoy inact
       "sugerencia": { "accion": "subir", "nivel": { "id": 6, "letra": "F" }, "texto": "…", "resultado_decimas": 31,
                       "excepcion": null, "rubrica": { "id": 8, "mes": "Junio", "fluidez": "…", "comprension": "…", "resultado_decimas": 31 } },
       "nivel_colocado": { "id": 6, "letra": "F" }, "nivel_programa": "…", "proyeccion": null,
-      "observacion": null, "aviso_entrada_cambio": false, "aviso": null, "incompleto": false
+      "observacion": null, "aviso_entrada_cambio": false, "aviso": null, "pertenece": true, "incompleto": false
     }]
   }],
   "total": 1, "page": 1, "page_size": 40, "total_pages": 1,
@@ -1138,6 +1138,15 @@ Una fila por alumno que perteneció al grupo en el año (incluidos los hoy inact
 
 `entrada.de_otro_colegio`: la entrada viene de un PA anterior en otro grupo ("Registrado antes del
 traslado."). Sin alumnos: `items` vacío y `aviso`.
+
+`periodos[].pertenece`: si el alumno pertenecía al grupo algún día de ese PA, con las fechas del PA en el
+calendario del colegio (un PA sin fechas da `false`). Es la misma regla con la que `PUT` rechaza con
+`alumno_fuera_del_grupo`. Con `false` la celda es de solo lectura (nivel colocado, proyección y observación):
+`incompleto` es `false` y, si ya había un registro de ese PA en el grupo, se sigue mostrando. `aviso` trae "El
+estudiante no pertenecía a este grupo en el periodo seleccionado." solo si el PA tiene fechas y el alumno no
+estuvo en el grupo (salvo que ya haya otro aviso, como el de entrada cambiada). En un PA sin fechas `aviso` queda
+`null` (o el aviso que ya tuviera): el motivo lo da `periodos[].escritura`. Por eso un alumno que entró al grupo en el PA2 trae el PA1 con `pertenece: false`. Los
+vencidos e incompletos del Inicio (CU011) tampoco se lo exigen en un PA en que no pertenecía al grupo.
 
 **Errores:** `403 aula_fuera_de_alcance`; `404 colegio_no_encontrado`, `404 anio_no_encontrado`;
 `422 seccion_inexistente`, `422 programa_inexistente`.
