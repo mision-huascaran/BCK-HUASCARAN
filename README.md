@@ -2,7 +2,7 @@
 
 Backend de SICEDU (Sistema de Centralización de Datos Educativos) para Misión Huascarán.
 FastAPI + SQLModel + PostgreSQL + Alembic. La API está documentada en [API.md](API.md) y el
-diseño de base de datos en el documento de diseño v3.
+diseño de la base de datos en [docs/base-de-datos.md](docs/base-de-datos.md).
 
 ## Levantar bakend en local
 
