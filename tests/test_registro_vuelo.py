@@ -20,6 +20,7 @@ from tests.conftest import (
     decision_de_vuelo,
     motivo,
     rangos_relativos,
+    retroactiva_tras_el_receso,
     seccion_de,
 )
 from tests.test_calendario_api import editar
@@ -285,6 +286,23 @@ def test_sin_alumnos(client, entorno, cabeceras):
     cuerpo = listar(client, cabeceras["Supervisor"], entorno, id_programa=entorno.programas[ALFA]).json()
 
     assert (cuerpo["items"], cuerpo["aviso"]) == ([], "No hay alumnos que correspondan a este grupo en el año seleccionado.")
+
+
+def test_d69_retroactiva_sincronizada_despues_del_receso(client, db, entorno, miercoles):
+    """La decisión del PA2 tomada sin conexión en el PR2 se acepta aunque la
+    sincronización llegue ya en el PA3; con hora posterior al PR2, no (fuera de alcance)."""
+    sincronizacion = retroactiva_tras_el_receso(client, db, entorno, miercoles, "Andino", "2.º")
+
+    resultados = guardar(
+        client, sincronizacion.cabecera,
+        item(entorno, id_nivel_colocado=C, **sincronizacion.hora(sincronizacion.en_el_receso)),
+        item(entorno, version=1, id_nivel_colocado=E, **sincronizacion.hora(sincronizacion.tras_el_receso)),
+    ).json()
+
+    # El alcance se revisa en cada operación: sin alcance ni ahora ni a su hora, el motivo
+    # sigue siendo el de siempre.
+    assert [(r["estado"], r["motivo"]) for r in resultados] == [
+        ("aceptada", None), ("rechazada", "aula_fuera_de_alcance")]
 
 
 def test_roles_y_alcance(client, entorno, cabeceras):

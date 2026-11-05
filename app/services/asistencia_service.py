@@ -60,6 +60,7 @@ from app.services.sincronizacion import (
     Operacion,
     OperacionDescartada,
     RechazoOperacion,
+    horas_reales,
     procesar_operacion,
 )
 
@@ -381,7 +382,7 @@ def guardar_asistencia(db: Session, usuario: Usuario, data: AsistenciaGuardar) -
     `clase_no_encontrada` y `colegio_no_encontrado`, 422 `seccion_inexistente` y `validacion`."""
     destino = _destino(db, data)
     colegio_existente(db, destino.filtro.id_colegio)
-    grados_visibles(db, usuario, destino.filtro.id_colegio, destino.filtro.id_grado)
+    grados_visibles(db, usuario, destino.filtro.id_colegio, destino.filtro.id_grado, horas_reales(data.registros))
     exigir_seccion(db, destino.filtro)
     resultados = [
         procesar_operacion(

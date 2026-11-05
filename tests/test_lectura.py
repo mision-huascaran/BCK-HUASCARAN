@@ -33,6 +33,7 @@ from tests.conftest import (
     motivo,
     rangos_en_receso,
     registrar_asistencia,
+    retroactiva_tras_el_receso,
     seccion_de,
     semana_de,
 )
@@ -47,7 +48,7 @@ LUNES_DEL_PA1 = date(2026, 4, 13)
 COMPRENSION, ALFABETIZACION = "Comprensión Lectora", "Alfabetización"
 
 MENSAJE_SIN_ASISTENCIA = (
-    "El estudiante debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
+    "El alumno debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
 )
 MENSAJE_LSN_INCOMPLETO = "Para registrar un LSN, completa el título, la nota obtenida y el puntaje máximo."
 MENSAJE_LSN_INVALIDO = "Selecciona un máximo de 5 o 10 e ingresa una nota entre 0 y ese máximo."
@@ -143,12 +144,12 @@ def test_get_semana_sin_clase_y_semana_futura(client, db, entorno, doc, activida
 
     assert (sin_clase.status_code, motivo(sin_clase)) == (422, "semana_sin_clase")
     assert futura.json()["escritura"] == {
-        "permitida": False, "motivo": "No es posible adelantar registros. Seleccione la semana actual o una anterior.",
+        "permitida": False, "motivo": "No es posible adelantar registros. Selecciona la semana actual o una anterior.",
         "id_permiso": None, "aviso_permiso": None,
     }
 
 
-MENSAJE_SIN_ALUMNOS = "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."
+MENSAJE_SIN_ALUMNOS = "No hay alumnos que pertenecieran a este grupo en la fecha de la clase seleccionada."
 
 
 def test_grupo_sin_alumnos_con_dia_de_clase_es_sin_alumnos_y_sin_dia_es_semana_sin_clase(
@@ -312,9 +313,9 @@ def test_crear_sin_habitual_exige_elegir_la_adicional(client, db, entorno, doc, 
 
 @pytest.mark.parametrize(("kwargs", "codigo", "mensaje"), [
     ({"fecha": LUNES_SIGUIENTE}, "semana_futura",
-     "No es posible adelantar registros. Seleccione la semana actual o una anterior."),
+     "No es posible adelantar registros. Selecciona la semana actual o una anterior."),
     ({"grado": "1.º"}, "sin_alumnos",
-     "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."),
+     "No hay alumnos que pertenecieran a este grupo en la fecha de la clase seleccionada."),
 ])
 def test_crear_rechazos_con_mensaje(client, db, entorno, doc, actividad, kwargs, codigo, mensaje):
     respuesta = crear(client, doc, db, entorno, **kwargs)
@@ -375,6 +376,25 @@ def test_crear_con_la_asignacion_retroactiva_en_el_receso(client, db, entorno, d
     db.commit()
 
     assert crear(client, doc, db, entorno).status_code == 201
+
+
+def test_d69_retroactiva_sincronizada_despues_del_receso(client, db, entorno, miercoles):
+    """La tabla y sus filas hechas sin conexión en el PR2 se aceptan aunque la
+    sincronización llegue ya en el PA3; una fila con hora posterior al PR2, no."""
+    sincronizacion = retroactiva_tras_el_receso(client, db, entorno, miercoles, "Andino", "2.º")
+    en_el_receso, tras_el_receso = sincronizacion.en_el_receso, sincronizacion.tras_el_receso
+    creada = crear(client, sincronizacion.cabecera, db, entorno, clase=sincronizacion.hora(en_el_receso))
+    assert creada.status_code == 201, creada.text
+    registrar_asistencia(db, entorno.alumnos["ana"], LUNES, "presente")
+    db.commit()
+
+    resultados = guardar(
+        client, sincronizacion.cabecera, creada.json()["id"],
+        fila(entorno, cantidad_lsl=2, **sincronizacion.hora(en_el_receso)),
+        fila(entorno, version=2, cantidad_lsl=3, **sincronizacion.hora(tras_el_receso)),
+    ).json()
+
+    assert [(r["estado"], r["motivo"]) for r in resultados] == [("aceptada", None), ("rechazada", "sin_habilitacion")]
 
 
 # ── Filas (CU024, CU025) ────────────────────────────────────────────────────────────
@@ -467,7 +487,7 @@ def test_fila_alumno_fuera_de_la_tabla(client, db, entorno, doc, tabla):
     [beto] = guardar(client, doc, tabla["id"], fila(entorno, alumno="beto", cantidad_lsl=1)).json()
 
     assert (beto["motivo"], beto["detail"]) == (
-        "alumno_fuera_de_la_tabla", "El estudiante no corresponde a la clase de referencia de esta tabla semanal.",
+        "alumno_fuera_de_la_tabla", "El alumno no corresponde a la clase de referencia de esta tabla semanal.",
     )
 
 

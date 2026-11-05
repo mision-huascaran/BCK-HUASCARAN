@@ -5,9 +5,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session
 
 from app.core.database import get_db
+from app.core.paginacion import Pagina
 from app.schemas.dashboard import (
     AsistenciaDelPeriodo, AsistenciaPorClase, ComparacionColegios, ComparacionResultados, DesgloseLibros,
-    DistribucionSubprograma, EvolucionAnual, FiltrosDisponibles, IndicadorColegios, LibrosDelAnio, LibrosDelColegio,
+    DistribucionSubprograma, EvolucionAnual, FiltrosDisponibles, IndicadorColegios, LecturasIncompletas, LibrosDelAnio,
+    LibrosDelColegio,
     ResultadosAprendizaje, TipoResultado, VistaComparacion,
 )
 from app.services.dashboard.aprendizaje import distribucion_subprograma, resultados_aprendizaje
@@ -17,7 +19,9 @@ from app.services.dashboard.cobertura import evolucion_anual
 from app.services.dashboard.comparacion import ConsultaComparacion, comparacion_resultados
 from app.services.dashboard.comparacion_colegios import comparacion_colegios, requiere_periodo
 from app.services.dashboard.filtros import FiltrosAnuales, FiltrosDelPeriodo, ParametrosDashboard, resolver_filtros
-from app.services.dashboard.libros import desglose_libros, libros_del_anio, libros_del_colegio
+from app.services.dashboard.libros import (
+    FiltroIncompletas, desglose_libros, lecturas_incompletas, libros_del_anio, libros_del_colegio,
+)
 from app.services.dashboard.roles import SoloSupervisor, SupervisorODirectivo
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -158,6 +162,36 @@ def libros_desglose(
     no perteneció en el año a ningún colegio seleccionado, 403 `colegio_fuera_de_alcance` si
     solo perteneció a colegios fuera del alcance."""
     return desglose_libros(db, usuario, filtros, id_alumno, anio, mes)
+
+
+@router.get("/libros/incompletos", response_model=LecturasIncompletas)
+def libros_incompletos(
+    db: Db,
+    usuario: SoloSupervisor,
+    filtros: FiltrosAnuales,
+    id_colegio: Optional[int] = None,
+    id_grado: Optional[int] = None,
+    id_alumno: Optional[int] = None,
+    anio: Optional[int] = None,
+    mes: Annotated[Optional[int], Query(ge=1, le=12)] = None,
+    page: Pagina = 1,
+):
+    """CU034: detalle del aviso "Información incompleta". Las tablas esperadas de
+    Seguimiento de Lectura que dejan incompleto el consolidado, con la misma regla que
+    marca `incompleto` en `/dashboard/libros` y sus detalles: `sin_tabla` (la semana
+    esperada no tiene tabla; la clase es la habitual o reprogramada de esa semana) o
+    `filas_pendientes` (la tabla tiene filas "Pendiente": cuántas y su `id_lectura_semanal`).
+    Por colegio, grado, sección y fecha de la clase; páginas de 40.
+
+    Filtros opcionales para acotar: `id_colegio`, `id_grado`, `id_alumno` (las tablas o
+    semanas que lo afectan) y `anio` con `mes` (los dos juntos, por la fecha de la clase).
+
+    Solo Supervisor. Errores: los de los filtros comunes; 422 en `id_colegio` si no existe o
+    no está en la selección (403 `colegio_fuera_de_alcance` si está fuera del alcance), en
+    `id_grado` si no es del colegio, en `id_alumno` como en el desglose y en `anio` o `mes`
+    si llega uno solo."""
+    filtro = FiltroIncompletas(id_colegio, id_grado, id_alumno, anio, mes)
+    return lecturas_incompletas(db, usuario, filtros, filtro, page)
 
 
 @router.get("/evolucion-anual", response_model=EvolucionAnual)

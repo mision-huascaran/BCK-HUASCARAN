@@ -21,7 +21,7 @@ Comprensión en códigos 0-4 (null = "Sin evaluar"). Se puede guardar incompleta
 """
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import status
 from sqlalchemy import and_, func
@@ -76,7 +76,7 @@ MENSAJE_SIN_ACTIVIDAD = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_CONCURRENTE = (
     "Esta evaluación fue modificada desde que la consultaste. Revisa la versión actual antes de guardar nuevamente."
 )
-MENSAJE_FUERA_DEL_GRUPO = "El estudiante no pertenecía a este grupo en el mes seleccionado."
+MENSAJE_FUERA_DEL_GRUPO = "El alumno no pertenecía a este grupo en el mes seleccionado."
 MENSAJE_EN_OTRO_GRUPO = (
     "Este alumno ya tiene una evaluación registrada para este mes. Para corregirla, contacta al "
     "Docente que la registró o a tu Supervisor."
@@ -167,9 +167,10 @@ def habilitacion_del_mes(
     ), mes.periodo
 
 
-def _validar_grupo(db: Session, usuario: Usuario, grupo: GrupoMes) -> Programa:
+def _validar_grupo(db: Session, usuario: Usuario, grupo: GrupoMes, instantes: Iterable[datetime] = ()) -> Programa:
+    """`instantes`: la hora real de una escritura (`grados_visibles`)."""
     colegio_existente(db, grupo.id_colegio)
-    grados_visibles(db, usuario, grupo.id_colegio, grupo.id_grado)
+    grados_visibles(db, usuario, grupo.id_colegio, grupo.id_grado, instantes)
     exigir_seccion(db, grupo.grupo)
     programa = db.get(Programa, grupo.id_programa)
     if programa is None:
@@ -419,7 +420,7 @@ def _exigir_nueva_en_su_grupo(db: Session, alumno: Optional[Alumno], grupo: Grup
 def _aplicador(db: Session, usuario: Usuario, item: RubricaGuardar):
     def aplicar(contexto: ContextoOperacion) -> dict[str, Any]:
         grupo = GrupoMes.de(item)
-        _validar_grupo(db, usuario, grupo)
+        _validar_grupo(db, usuario, grupo, [contexto.en])
         mes = mes_evaluado(db, grupo)
         periodo = mes.periodo.id_periodo_academico
         habilitacion, _ = habilitacion_del_mes(db, usuario, grupo, mes, en=contexto.en)

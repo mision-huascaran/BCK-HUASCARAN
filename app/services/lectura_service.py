@@ -29,7 +29,7 @@ rechaza (`modificacion_concurrente`) sin sobrescribir.
 """
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import status
 from sqlalchemy import and_, case, delete, func, insert, or_
@@ -94,6 +94,7 @@ from app.services.sincronizacion import (
     ContextoOperacion,
     Operacion,
     RechazoOperacion,
+    horas_reales,
     procesar_operacion,
 )
 
@@ -140,8 +141,8 @@ MENSAJE_ANIO_NO_ENCONTRADO = "El año escolar no existe."
 MENSAJE_PROGRAMA_INEXISTENTE = "El subprograma no existe."
 MENSAJE_SEMANA_SIN_CLASE = "El grupo no tiene clases en la semana seleccionada: no hay lectura que registrar."
 MENSAJE_TABLA_EXISTENTE = "Ya existe una tabla de lectura semanal para los filtros seleccionados."
-MENSAJE_SIN_ALUMNOS = "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."
-MENSAJE_SEMANA_FUTURA = "No es posible adelantar registros. Seleccione la semana actual o una anterior."
+MENSAJE_SIN_ALUMNOS = "No hay alumnos que pertenecieran a este grupo en la fecha de la clase seleccionada."
+MENSAJE_SEMANA_FUTURA = "No es posible adelantar registros. Selecciona la semana actual o una anterior."
 MENSAJE_CLASE_NO_REALIZADA = "La clase de referencia todavía no se ha realizado."
 MENSAJE_CLASE_FUERA = "La clase seleccionada no es de este grupo o de esta semana."
 MENSAJE_CLASE_REQUERIDA = "La semana no tiene una clase programada: selecciona la clase de referencia."
@@ -160,11 +161,11 @@ MENSAJE_FILA_CONCURRENTE = (
 MENSAJE_SIN_HABILITACION_CREAR = "No tienes una habilitación vigente para crear la tabla de lectura de esta semana."
 MENSAJE_SIN_ACTIVIDAD_CREAR = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SIN_ASISTENCIA = (
-    "El estudiante debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
+    "El alumno debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
 )
 MENSAJE_LSN_INCOMPLETO = "Para registrar un LSN, completa el título, la nota obtenida y el puntaje máximo."
 MENSAJE_LSN_INVALIDO = "Selecciona un máximo de 5 o 10 e ingresa una nota entre 0 y ese máximo."
-MENSAJE_ALUMNO_FUERA = "El estudiante no corresponde a la clase de referencia de esta tabla semanal."
+MENSAJE_ALUMNO_FUERA = "El alumno no corresponde a la clase de referencia de esta tabla semanal."
 MENSAJE_SIN_HABILITACION_FILAS = (
     "No tienes una habilitación vigente para registrar o corregir la lectura de esta semana."
 )
@@ -330,16 +331,19 @@ def _no_encontrado(detail: str, motivo: str) -> ErrorNegocio:
     return ErrorNegocio(status.HTTP_404_NOT_FOUND, detail, motivo=motivo)
 
 
-def _validar_grupo(db: Session, usuario: Usuario, grupo: FiltroGrupos) -> None:
+def _validar_grupo(db: Session, usuario: Usuario, grupo: FiltroGrupos, instantes: Iterable[datetime] = ()) -> None:
+    """`instantes`: las horas reales de una escritura (`grados_visibles`)."""
     colegio_existente(db, grupo.id_colegio)
-    grados_visibles(db, usuario, grupo.id_colegio, grupo.id_grado)
+    grados_visibles(db, usuario, grupo.id_colegio, grupo.id_grado, instantes)
     exigir_seccion(db, grupo)
 
 
-def _validar_filtro(db: Session, usuario: Usuario, filtro: FiltroLectura) -> SemanaReporte:
+def _validar_filtro(
+    db: Session, usuario: Usuario, filtro: FiltroLectura, instantes: Iterable[datetime] = ()
+) -> SemanaReporte:
     """403 `aula_fuera_de_alcance`, 404 `colegio_no_encontrado` y `semana_no_encontrada`,
     422 `seccion_inexistente` y `programa_inexistente`. Devuelve la semana."""
-    _validar_grupo(db, usuario, filtro.grupo)
+    _validar_grupo(db, usuario, filtro.grupo, instantes)
     if db.get(Programa, filtro.id_programa) is None:
         raise _no_procesable(MENSAJE_PROGRAMA_INEXISTENTE, "programa_inexistente")
     semana = db.get(SemanaReporte, filtro.id_semana)
@@ -719,12 +723,13 @@ def _ejecutar(
     return _respuesta(db, usuario, db.get(LecturaSemanal, resultado.registro["id"]))
 
 
-def _tabla_visible(db: Session, usuario: Usuario, id_tabla: int) -> LecturaSemanal:
-    """404 `tabla_no_encontrada`; 403 `aula_fuera_de_alcance` fuera del alcance del Docente."""
+def _tabla_visible(db: Session, usuario: Usuario, id_tabla: int, instantes: Iterable[datetime]) -> LecturaSemanal:
+    """404 `tabla_no_encontrada`; 403 `aula_fuera_de_alcance` fuera del alcance del Docente
+    (ahora o en las horas reales `instantes` de la escritura: `grados_visibles`)."""
     tabla = db.get(LecturaSemanal, id_tabla)
     if tabla is None:
         raise _no_encontrado(MENSAJE_TABLA_NO_ENCONTRADA, "tabla_no_encontrada")
-    grados_visibles(db, usuario, tabla.id_colegio, tabla.id_grado)
+    grados_visibles(db, usuario, tabla.id_colegio, tabla.id_grado, instantes)
     return tabla
 
 
@@ -783,7 +788,7 @@ def crear_tabla(db: Session, usuario: Usuario, data: TablaLecturaCrear) -> Tabla
     """Crea la tabla de los filtros (CU023). Idempotente por `id_operacion`; una tabla ya
     existente con otro `id_operacion` es 409 `tabla_existente` (con su `id`)."""
     filtro = FiltroLectura.de(data)
-    semana = _validar_filtro(db, usuario, filtro)
+    semana = _validar_filtro(db, usuario, filtro, horas_reales([data]))
     operacion = Operacion(MODULO, TABLA, filtro.clave(), MENSAJE_SIN_ACTIVIDAD_CREAR, _clave_tabla(filtro))
     return _ejecutar(db, usuario, data, _creador(db, usuario, filtro, semana, data), operacion)
 
@@ -856,7 +861,7 @@ def cambiar_clase_referencia(
     cualquier mes, con alumnos del subprograma de la tabla en su lista histórica; solo sin
     datos de lectura y si la tabla no está "No realizada". Si la clase es de otro mes, la
     tabla pasa a ese mes (no se crea otra)."""
-    tabla = _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla, horas_reales([data]))
     operacion = Operacion(MODULO, TABLA, str(id_tabla), MENSAJE_SIN_ACTIVIDAD_FILAS, _clave_tabla(_filtro_de(tabla)))
     return _ejecutar(db, usuario, data, _cambiador(db, usuario, id_tabla, data), operacion)
 
@@ -909,7 +914,7 @@ def _registrar_declaracion(db: Session, tabla: LecturaSemanal, motivo: str, capt
 def marcar_no_realizada(db: Session, usuario: Usuario, id_tabla: int, data: NoRealizadaMarcar) -> TablaLectura:
     """Marca toda la tabla como "No realizada" con su motivo (CU026). 422 si falta el
     motivo; 409 `tabla_con_datos` si alguna fila tiene datos de lectura."""
-    tabla = _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla, horas_reales([data]))
     motivo = (data.motivo or "").strip()
     if not motivo:
         raise error_de_campo("motivo", MENSAJE_MOTIVO_OBLIGATORIO)
@@ -962,7 +967,7 @@ def habilitar_registro(db: Session, usuario: Usuario, id_tabla: int, data: Habil
     declaración, la corrección, quién, con qué actividad y autorización y cuándo. 422 si
     falta el motivo; 409 `declaracion_no_vigente` si ya no está "No realizada" y
     `modificacion_concurrente` si cambió la versión."""
-    tabla = _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla, horas_reales([data]))
     motivo = (data.motivo or "").strip()
     if not motivo:
         raise error_de_campo("motivo", MENSAJE_MOTIVO_CORRECCION)
@@ -1058,7 +1063,7 @@ def guardar_filas(
     """Registra o corrige filas de la tabla (CU024, CU025). Cada ítem es una operación con
     su resultado; un lote puede tener aceptadas y rechazadas. Un ítem sin cambios no
     escribe ni audita."""
-    tabla = _tabla_visible(db, usuario, id_tabla)
+    tabla = _tabla_visible(db, usuario, id_tabla, horas_reales(items))
     resultados = [
         procesar_operacion(
             db, usuario, item, _editor(db, usuario, id_tabla, item),

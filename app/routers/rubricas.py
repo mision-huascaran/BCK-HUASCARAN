@@ -38,7 +38,7 @@ def listar_rubricas(
     mes: Annotated[int, Query(ge=1, le=12)],
     page: Pagina = 1,
 ):
-    """Los alumnos que corresponde evaluar en el grupo y mes (REGLA PROVISIONAL R2),
+    """Los alumnos que corresponde evaluar en el grupo y mes (regla confirmada R2),
     incluidos los hoy inactivos, con su evaluación (`fluidez`, `comprension` en códigos
     0-4, `estado`, `resultado_decimas`), en páginas de 40; además el `ciclo`, el PA del
     mes (R1) y si el usuario puede escribir. Sin alumnos: `items` vacío y `detail`.

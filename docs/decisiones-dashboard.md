@@ -83,6 +83,7 @@ Convenciones que se repiten en todo el Dashboard:
 | CU034 | Un colegio sin calendario va aparte con el motivo `sin_calendario` (además de `sin_alumnos` y `sin_informacion`). | No tiene año escolar donde medir. |
 | CU034 | En `/libros`, todos los colegios usan los meses de la unión de sus calendarios; en el detalle, los del colegio. | Columnas comunes en la tabla. |
 | CU034 | Desglose: un alumno que no perteneció a los colegios seleccionados en el año da 422; si solo perteneció a colegios fuera del alcance, 403. | Igual que el detalle de D3. |
+| CU034 | Detalle de "Información incompleta" (`GET /dashboard/libros/incompletos`, solo Supervisor): lista las tablas esperadas ya vencidas que faltan (`sin_tabla`) o tienen filas "Pendiente" (`filas_pendientes`), con su clase de referencia. `lecturas_del_anio` calcula en una sola pasada los aportes del consolidado y esas tablas, así que un mes, grado, alumno o colegio tiene ítems si y solo si alguno de sus aportes está pendiente. Un mes `sin_informacion` también puede tener ítems (solo semanas sin tabla); `completo` y `futuro`, nunca. | "El Supervisor puede consultar el detalle del aviso para identificar las clases de referencia con información faltante o incompleta". Una sola regla para el aviso y su detalle. |
 
 ## D6 · Evolución anual y comparación entre colegios
 

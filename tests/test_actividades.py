@@ -304,7 +304,7 @@ def test_cu017_listado_con_productividad(client, entorno, doc, actividad):
     fila = cuerpo["items"][0]
     assert (fila["estado"], fila["sincronizacion"], fila["cambios"]) == ("en_curso", "sincronizada", 2)
     assert fila["productividad"] == [{"modulo": "alumnos", "cantidad": 2}]
-    assert fila["productividad_texto"] == "2 Alumnos"
+    assert fila["productividad_texto"] == "2 en Alumnos"
     assert fila["fecha"] == entorno.hoy.isoformat()
 
 

@@ -9,7 +9,7 @@ from app.main import app
 
 SOLO_SUPERVISOR = {
     "distribucion-subprograma", "asistencia/clases", "comparacion-resultados", "libros/colegios/{id_colegio}",
-    "libros/desglose",
+    "libros/desglose", "libros/incompletos",
 }
 SUPERVISOR_O_DIRECTIVO = {
     "filtros", "resultados-aprendizaje", "asistencia", "libros", "evolucion-anual", "comparacion-colegios",

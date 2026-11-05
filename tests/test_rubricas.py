@@ -27,6 +27,7 @@ from tests.conftest import (
     iniciar_actividad,
     motivo,
     rangos_relativos,
+    retroactiva_tras_el_receso,
     seccion_de,
 )
 from tests.test_calendario_api import editar
@@ -289,8 +290,35 @@ def test_alumno_que_no_pertenecia_al_grupo_ese_mes(client, entorno, doc, activid
     resultados = guardar(client, doc, item(entorno, "carlos", fluidez=2), item(entorno, "luis", fluidez=2)).json()
 
     assert [(r["motivo"], r["detail"]) for r in resultados] == [
-        ("alumno_fuera_del_grupo", "El estudiante no pertenecía a este grupo en el mes seleccionado."),
+        ("alumno_fuera_del_grupo", "El alumno no pertenecía a este grupo en el mes seleccionado."),
     ] * 2
+
+
+def test_el_listado_ofrece_lo_mismo_que_acepta_la_escritura(client, entorno, doc, actividad):
+    """Lectura y escritura aplican la misma regla (R2): cada alumno que lista un grupo y mes
+    sin evaluación puede guardar una nueva, y uno que no aparece recibe
+    `alumno_fuera_del_grupo`. Se lee todo antes de guardar: una evaluación guardada fija
+    el grupo del alumno en ese mes."""
+    grupos = [(mes, programa) for mes in (MAYO, JUNIO) for programa in (CL, ALFA)]
+    listados = {
+        (mes, programa): {i["id_alumno"] for i in listar(client, doc, entorno, mes=mes, programa=programa).json()["items"]}
+        for mes, programa in grupos
+    }
+    claves = ("ana", "carlos", "inés", "luis")
+
+    for (mes, programa), listados_del_grupo in listados.items():
+        resultados = guardar(client, doc, *(
+            item(entorno, clave, grupo_=grupo(entorno, mes=mes, programa=programa), fluidez=2) for clave in claves
+        )).json()
+        for clave, resultado in zip(claves, resultados):
+            if entorno.alumnos[clave].id_alumno in listados_del_grupo:
+                assert resultado["estado"] == "aceptada", (mes, programa, clave, resultado)
+            else:
+                assert resultado["motivo"] == "alumno_fuera_del_grupo", (mes, programa, clave, resultado)
+
+    # Mayo CL: Carlos, Inés y Ana; mayo Alfabetización: nadie; junio CL: Inés y Ana; junio
+    # Alfabetización: Carlos.
+    assert [len(listados[g]) for g in grupos] == [3, 0, 2, 1]
 
 
 def _ana_pasa_a_alfabetizacion(db, entorno, desde=date(2026, 6, 15)):
@@ -341,6 +369,24 @@ def test_r2_no_se_crea_una_segunda_evaluacion_en_otro_grupo(client, db, entorno,
         "rechazada", "evaluacion_en_otro_grupo", MENSAJE_EN_OTRO_GRUPO,
     )
     assert len(db.exec(select(RubricaMensual)).all()) == 1
+
+
+def test_d69_retroactiva_sincronizada_despues_del_receso(client, entorno, miercoles, db):
+    """Mayo (del PA2) evaluado sin conexión en el PR2 se acepta aunque la sincronización
+    llegue ya en el PA3; con hora posterior al PR2, no (fuera de alcance)."""
+    sincronizacion = retroactiva_tras_el_receso(client, db, entorno, miercoles, "Andino", "2.º")
+
+    resultados = guardar(
+        client, sincronizacion.cabecera,
+        item(entorno, grupo_=grupo(entorno, mes=MAYO), fluidez=2, **sincronizacion.hora(sincronizacion.en_el_receso)),
+        item(entorno, "carlos", grupo_=grupo(entorno, mes=MAYO), fluidez=2,
+             **sincronizacion.hora(sincronizacion.tras_el_receso)),
+    ).json()
+
+    # El alcance se revisa en cada operación: sin alcance ni ahora ni a su hora, el motivo
+    # sigue siendo el de siempre.
+    assert [(r["estado"], r["motivo"]) for r in resultados] == [
+        ("aceptada", None), ("rechazada", "aula_fuera_de_alcance")]
 
 
 def test_sin_habilitacion_y_con_permiso(client, db, entorno, doc, actividad):

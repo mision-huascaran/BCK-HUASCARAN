@@ -181,10 +181,11 @@ def habilitacion_escritura(
     return Habilitacion(False, MENSAJE_SIN_HABILITACION)
 
 
-def pares_visibles(db: Session, usuario: Usuario) -> set[tuple[int, int]]:
-    """(colegio, grado) que el Docente puede consultar hoy: los de sus asignaciones
-    habilitadas y los cubiertos por un permiso vigente (CU028)."""
-    return {(h.id_colegio, h.id_grado) for h in habilitaciones_vigentes(db, usuario)}
+def pares_visibles(db: Session, usuario: Usuario, en: Optional[datetime] = None) -> set[tuple[int, int]]:
+    """(colegio, grado) que el Docente puede consultar en el instante `en` (ahora por
+    defecto): los de sus asignaciones habilitadas y los cubiertos por un permiso vigente
+    (CU028)."""
+    return {(h.id_colegio, h.id_grado) for h in habilitaciones_vigentes(db, usuario, en)}
 
 
 def pares_a_cargo(db: Session, usuario: Usuario) -> set[tuple[int, int]]:

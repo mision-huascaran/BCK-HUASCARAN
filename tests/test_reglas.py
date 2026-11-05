@@ -131,13 +131,15 @@ def test_pin_hmac_depende_del_usuario():
     "conteos, texto",
     [
         ({}, "Sin registros"),
-        ({"rubrica": 1}, "1 Rúbrica"),
-        ({"asistencia": 15, "rubrica": 5}, "15 Asistencias, 5 Rúbricas"),
-        ({"asistencia": 1, "rubrica": 0, "alumnos": 0}, "1 Asistencia"),
-        ({"registro_vuelo": 2, "rubrica": 15}, "15 Rúbricas, 2 Registros de Vuelo"),
-        ({"alumnos": 1, "asistencia": 3, "otros": 0}, "3 Asistencias, 1 Alumno"),
+        ({"rubrica": 1}, "1 en Rúbrica"),
+        # Ejemplo literal de CU021.
+        ({"asistencia": 15, "rubrica": 5}, "15 en Asistencias, 5 en Rúbrica"),
+        # El nombre del módulo no cambia con la cantidad.
+        ({"asistencia": 1, "rubrica": 0, "alumnos": 0}, "1 en Asistencias"),
+        ({"registro_vuelo": 2, "rubrica": 15}, "15 en Rúbrica, 2 en Registro de Vuelo"),
+        ({"alumnos": 1, "asistencia": 3, "otros": 0}, "3 en Asistencias, 1 en Alumnos"),
         ({"seguimiento_lectura": 1, "registro_vuelo": 1, "otros": 2},
-         "1 Registro de Vuelo, 1 Seguimiento de Lectura, 2 Otros registros"),
+         "1 en Registro de Vuelo, 1 en Seguimiento de Lectura, 2 en Otros registros"),
     ],
 )
 def test_cu021_productividad_texto(conteos, texto):
