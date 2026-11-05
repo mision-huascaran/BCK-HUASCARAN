@@ -16,7 +16,7 @@ from app.services.registros_vencidos import REGISTRO_VUELO, estado_de_registros
 from tests.conftest import a_las, crear_alumno, crear_permiso, decision_de_vuelo, seccion_de
 from tests.test_registro_vuelo import C, HOY, contexto, guardar, item, listar
 
-FUERA_DEL_GRUPO = "El estudiante no pertenecía a este grupo en el periodo seleccionado."
+FUERA_DEL_GRUPO = "El alumno no pertenecía a este grupo en el periodo seleccionado."
 DIA = timedelta(days=1)
 
 

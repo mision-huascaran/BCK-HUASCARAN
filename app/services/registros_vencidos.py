@@ -231,8 +231,8 @@ def asistencias(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
 @dataclass(frozen=True)
 class ObligacionLectura:
     """Una tabla de Lectura esperada: grupo, subprograma y semana (su lunes), con la fecha
-    de la clase que la genera, su tabla si existe y si está pendiente (sin tabla, o tabla
-    `normal` con alguna fila "Pendiente")."""
+    de la clase que la genera (y su fila, si ya existe), su tabla si existe y si está
+    pendiente (sin tabla, o tabla `normal` con alguna fila "Pendiente")."""
 
     id_grado: int
     id_seccion: int
@@ -241,14 +241,15 @@ class ObligacionLectura:
     fecha_clase: date
     tabla: Optional[LecturaSemanal]
     pendiente: bool
+    id_clase: Optional[int] = None
 
 
 def _semanas_vencidas(
     db: Session, id_colegio: int, desde: date, hasta: date, calendarios: Calendarios, hoy: date,
     id_periodo: Optional[int],
-) -> dict[tuple, date]:
-    """{(grado, sección, lunes): fecha de la clase} de las semanas con clase habitual o
-    reprogramada con fecha en [desde, min(hasta, hoy)] cuyo sábado ya llegó."""
+) -> dict[tuple, ClaseProgramada]:
+    """{(grado, sección, lunes): la clase} de las semanas con clase habitual o reprogramada
+    con fecha en [desde, min(hasta, hoy)] cuyo sábado ya llegó."""
     fin = min(hasta, hoy)
     if fin < desde:
         return {}
@@ -258,7 +259,7 @@ def _semanas_vencidas(
         vencida = lunes + timedelta(days=DIAS_HASTA_EL_SABADO) <= hoy
         del_periodo = id_periodo is None or clase.id_periodo_academico == id_periodo
         if clase.tipo == TIPO_HABITUAL and vencida and del_periodo:
-            semanas.setdefault((clase.id_grado, clase.id_seccion, lunes), clase.fecha)
+            semanas.setdefault((clase.id_grado, clase.id_seccion, lunes), clase)
     return semanas
 
 
@@ -295,14 +296,17 @@ def obligaciones_lectura(
     tablas = _tablas_del_colegio(db, id_colegio, {lunes for _, _, lunes in semanas})
     pendientes = tablas_con_pendientes(db, [t.id for t in tablas.values() if t.estado == "normal"])
     obligaciones = []
-    for (grado, seccion, lunes), fecha in sorted(semanas.items()):
+    for (grado, seccion, lunes), clase in sorted(semanas.items(), key=lambda par: par[0]):
+        fecha = clase.fecha
         programas = {
             i.id_programa for i in intervalos if (i.id_grado, i.id_seccion) == (grado, seccion) and _contiene(i, fecha)
         }
         for id_programa in sorted(programas):
             tabla = tablas.get((grado, seccion, id_programa, lunes))
             pendiente = tabla is None or tabla.id in pendientes
-            obligaciones.append(ObligacionLectura(grado, seccion, id_programa, lunes, fecha, tabla, pendiente))
+            obligaciones.append(
+                ObligacionLectura(grado, seccion, id_programa, lunes, fecha, tabla, pendiente, clase.id_clase)
+            )
     return obligaciones
 
 

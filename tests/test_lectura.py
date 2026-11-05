@@ -47,7 +47,7 @@ LUNES_DEL_PA1 = date(2026, 4, 13)
 COMPRENSION, ALFABETIZACION = "Comprensión Lectora", "Alfabetización"
 
 MENSAJE_SIN_ASISTENCIA = (
-    "El estudiante debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
+    "El alumno debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
 )
 MENSAJE_LSN_INCOMPLETO = "Para registrar un LSN, completa el título, la nota obtenida y el puntaje máximo."
 MENSAJE_LSN_INVALIDO = "Selecciona un máximo de 5 o 10 e ingresa una nota entre 0 y ese máximo."
@@ -143,12 +143,12 @@ def test_get_semana_sin_clase_y_semana_futura(client, db, entorno, doc, activida
 
     assert (sin_clase.status_code, motivo(sin_clase)) == (422, "semana_sin_clase")
     assert futura.json()["escritura"] == {
-        "permitida": False, "motivo": "No es posible adelantar registros. Seleccione la semana actual o una anterior.",
+        "permitida": False, "motivo": "No es posible adelantar registros. Selecciona la semana actual o una anterior.",
         "id_permiso": None, "aviso_permiso": None,
     }
 
 
-MENSAJE_SIN_ALUMNOS = "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."
+MENSAJE_SIN_ALUMNOS = "No hay alumnos que pertenecieran a este grupo en la fecha de la clase seleccionada."
 
 
 def test_grupo_sin_alumnos_con_dia_de_clase_es_sin_alumnos_y_sin_dia_es_semana_sin_clase(
@@ -312,9 +312,9 @@ def test_crear_sin_habitual_exige_elegir_la_adicional(client, db, entorno, doc, 
 
 @pytest.mark.parametrize(("kwargs", "codigo", "mensaje"), [
     ({"fecha": LUNES_SIGUIENTE}, "semana_futura",
-     "No es posible adelantar registros. Seleccione la semana actual o una anterior."),
+     "No es posible adelantar registros. Selecciona la semana actual o una anterior."),
     ({"grado": "1.º"}, "sin_alumnos",
-     "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."),
+     "No hay alumnos que pertenecieran a este grupo en la fecha de la clase seleccionada."),
 ])
 def test_crear_rechazos_con_mensaje(client, db, entorno, doc, actividad, kwargs, codigo, mensaje):
     respuesta = crear(client, doc, db, entorno, **kwargs)
@@ -467,7 +467,7 @@ def test_fila_alumno_fuera_de_la_tabla(client, db, entorno, doc, tabla):
     [beto] = guardar(client, doc, tabla["id"], fila(entorno, alumno="beto", cantidad_lsl=1)).json()
 
     assert (beto["motivo"], beto["detail"]) == (
-        "alumno_fuera_de_la_tabla", "El estudiante no corresponde a la clase de referencia de esta tabla semanal.",
+        "alumno_fuera_de_la_tabla", "El alumno no corresponde a la clase de referencia de esta tabla semanal.",
     )
 
 

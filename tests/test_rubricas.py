@@ -289,7 +289,7 @@ def test_alumno_que_no_pertenecia_al_grupo_ese_mes(client, entorno, doc, activid
     resultados = guardar(client, doc, item(entorno, "carlos", fluidez=2), item(entorno, "luis", fluidez=2)).json()
 
     assert [(r["motivo"], r["detail"]) for r in resultados] == [
-        ("alumno_fuera_del_grupo", "El estudiante no pertenecía a este grupo en el mes seleccionado."),
+        ("alumno_fuera_del_grupo", "El alumno no pertenecía a este grupo en el mes seleccionado."),
     ] * 2
 
 

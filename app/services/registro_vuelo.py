@@ -110,7 +110,7 @@ MENSAJE_CONCURRENTE = (
 )
 MENSAJE_NIVEL_INVALIDO = "Selecciona un nivel válido entre aa y Z."
 MENSAJE_COLOCADO_OBLIGATORIO = "El nivel colocado ya registrado no se puede quitar; selecciona otro nivel."
-MENSAJE_FUERA_DEL_GRUPO = "El estudiante no pertenecía a este grupo en el periodo seleccionado."
+MENSAJE_FUERA_DEL_GRUPO = "El alumno no pertenecía a este grupo en el periodo seleccionado."
 MENSAJE_SIN_ALUMNOS = "No hay alumnos que correspondan a este grupo en el año seleccionado."
 MENSAJE_PERIODO_INEXISTENTE = "El periodo académico no existe."
 MENSAJE_PROGRAMA_INEXISTENTE = "El subprograma no existe."

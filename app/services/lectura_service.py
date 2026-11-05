@@ -140,8 +140,8 @@ MENSAJE_ANIO_NO_ENCONTRADO = "El año escolar no existe."
 MENSAJE_PROGRAMA_INEXISTENTE = "El subprograma no existe."
 MENSAJE_SEMANA_SIN_CLASE = "El grupo no tiene clases en la semana seleccionada: no hay lectura que registrar."
 MENSAJE_TABLA_EXISTENTE = "Ya existe una tabla de lectura semanal para los filtros seleccionados."
-MENSAJE_SIN_ALUMNOS = "No hay estudiantes que pertenecieran a este grupo en la fecha de la clase seleccionada."
-MENSAJE_SEMANA_FUTURA = "No es posible adelantar registros. Seleccione la semana actual o una anterior."
+MENSAJE_SIN_ALUMNOS = "No hay alumnos que pertenecieran a este grupo en la fecha de la clase seleccionada."
+MENSAJE_SEMANA_FUTURA = "No es posible adelantar registros. Selecciona la semana actual o una anterior."
 MENSAJE_CLASE_NO_REALIZADA = "La clase de referencia todavía no se ha realizado."
 MENSAJE_CLASE_FUERA = "La clase seleccionada no es de este grupo o de esta semana."
 MENSAJE_CLASE_REQUERIDA = "La semana no tiene una clase programada: selecciona la clase de referencia."
@@ -160,11 +160,11 @@ MENSAJE_FILA_CONCURRENTE = (
 MENSAJE_SIN_HABILITACION_CREAR = "No tienes una habilitación vigente para crear la tabla de lectura de esta semana."
 MENSAJE_SIN_ACTIVIDAD_CREAR = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_SIN_ASISTENCIA = (
-    "El estudiante debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
+    "El alumno debe tener asistencia Presente o Tardanza en la clase de referencia para registrar su lectura."
 )
 MENSAJE_LSN_INCOMPLETO = "Para registrar un LSN, completa el título, la nota obtenida y el puntaje máximo."
 MENSAJE_LSN_INVALIDO = "Selecciona un máximo de 5 o 10 e ingresa una nota entre 0 y ese máximo."
-MENSAJE_ALUMNO_FUERA = "El estudiante no corresponde a la clase de referencia de esta tabla semanal."
+MENSAJE_ALUMNO_FUERA = "El alumno no corresponde a la clase de referencia de esta tabla semanal."
 MENSAJE_SIN_HABILITACION_FILAS = (
     "No tienes una habilitación vigente para registrar o corregir la lectura de esta semana."
 )
