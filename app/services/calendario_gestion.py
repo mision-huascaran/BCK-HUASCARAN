@@ -10,9 +10,9 @@ Reglas (todas validadas aquí, además de lo que impone la BD):
 - Año escolar (decisión del equipo): sus fechas son las del calendario general, del
   inicio del PA1 al fin del PR4 (`anio_escolar.sincronizar_anio`, que también ajusta sus
   semanas). Al crear el general con `anio`, el año escolar se crea en la misma
-  transacción si no existe. Como los meses se identifican solo por número, el general
-  no puede abarcar dos veces el mismo mes: el PR4 termina antes del día 1 del mismo mes
-  del año siguiente al inicio del PA1.
+  transacción si no existe. Como los meses se identifican solo por número, ningún
+  calendario (general o particular) puede abarcar dos veces el mismo mes: el PR4
+  termina antes del día 1 del mismo mes del año siguiente al inicio del PA1.
 - Días no lectivos: motivo no vacío, con todas sus fechas dentro de los periodos (PA o
   PR, incluido el PR4 aunque pase al año calendario siguiente) y sin superponerse entre
   sí. No dividen periodos ni cambian fechas; uno dentro de un PA no lo vuelve receso, y
@@ -234,7 +234,7 @@ def _superposiciones(dias: list[DiaNoLectivoEntrada]) -> Errores:
 
 
 def errores_de_duracion(periodos: list[PeriodoEntrada]) -> Errores:
-    """Calendario general: el PR4 termina antes del día 1 del mismo mes del año siguiente
+    """Calendario general o particular: el PR4 termina antes del día 1 del mismo mes del año siguiente
     al inicio del PA1 (p. ej. PA1 desde el 15/03/2026 -> PR4 hasta el 28/02/2027)."""
     inicio, fin = rango_del_calendario(periodos)
     if fin >= date(inicio.year + 1, inicio.month, 1):
@@ -268,11 +268,14 @@ def errores_de_no_lectivos(dias: list[DiaNoLectivoEntrada], periodos: list[Perio
 
 
 def _validar_propuesta(periodos: list[PeriodoEntrada], dias: list[DiaNoLectivoEntrada]) -> None:
+    """Las validaciones de un calendario general o particular: periodos, días no
+    lectivos y, después, los 12 meses (D116: también en los particulares)."""
     errores = errores_de_periodos(periodos)
     if not errores:
         errores = errores_de_no_lectivos(dias, periodos)
     if errores:
         raise _error_validacion(errores)
+    _exigir_sin_errores(errores_de_duracion(periodos))
 
 
 def derivar_recesos(pas: list[tuple[date, date]], fin_del_anio: date) -> list[PeriodoEntrada]:
@@ -874,12 +877,6 @@ def _anio_del_pedido(db: Session, data: CalendarioCrear) -> AnioEscolar:
     return AnioEscolar(nombre=str(data.anio), fecha_inicio=inicio, fecha_fin=fin)
 
 
-def _validar_general(periodos: list[PeriodoEntrada], dias: list[DiaNoLectivoEntrada]) -> None:
-    """Las validaciones de la propuesta y, solo para el general, la de los 12 meses."""
-    _validar_propuesta(periodos, dias)
-    _exigir_sin_errores(errores_de_duracion(periodos))
-
-
 def crear_general(db: Session, data: CalendarioCrear, actor: Usuario) -> CalendarioRespuesta:
     """Crea el general y, con `anio`, el año escolar si no existe, en una sola
     transacción: todo se valida antes de escribir. Deja el año con las fechas del
@@ -888,7 +885,7 @@ def crear_general(db: Session, data: CalendarioCrear, actor: Usuario) -> Calenda
     calendarios = cargar_calendarios(db)
     if anio.id_anio_escolar in calendarios.generales:
         raise _general_existente()
-    _validar_general(data.periodos, data.dias_no_lectivos)
+    _validar_propuesta(data.periodos, data.dias_no_lectivos)
     _exigir_sin_errores(errores_del_anio(anio, data.periodos))
     _exigir_sin_errores(_errores_con_vecinos(db, calendarios, anio, None, data.periodos))
     ahora = ahora_utc()
@@ -921,10 +918,7 @@ def editar(db: Session, id_calendario: int, data: CalendarioEditar, actor: Usuar
     if calendario.version != data.version:
         raise _modificacion_concurrente()
     es_general = calendario.id_colegio is None
-    if es_general:
-        _validar_general(data.periodos, data.dias_no_lectivos)
-    else:
-        _validar_propuesta(data.periodos, data.dias_no_lectivos)
+    _validar_propuesta(data.periodos, data.dias_no_lectivos)
     anio = db.get(AnioEscolar, calendario.id_anio_escolar)
     calendarios = cargar_calendarios(db)
     antes = calendarios.aplicable(calendario.id_colegio, anio.id_anio_escolar)

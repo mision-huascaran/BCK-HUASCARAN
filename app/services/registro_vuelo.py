@@ -5,7 +5,7 @@ pertenecía:
 
 - Entrada (calculada): en PA1, la letra esperada del grado (`nivel_esperado_por_grado`);
   en PA2-PA4, el nivel colocado del PA anterior del mismo alumno y año en cualquier
-  grupo (REGLA PROVISIONAL V1). Sin él, "Pendiente del periodo anterior": nunca se
+  grupo (regla confirmada V1). Sin él, "Pendiente del periodo anterior": nunca se
   rellena con la letra del grado.
 - Sugerencia (calculada): el motor sobre la última rúbrica completa del alumno en ese PA,
   con las excepciones aa/Z sobre la entrada.
@@ -25,7 +25,7 @@ consultas por página, no por alumno ni por PA.
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import status
 from sqlalchemy import func
@@ -377,9 +377,10 @@ def _no_procesable(detail: str, motivo: str) -> ErrorNegocio:
     return ErrorNegocio(status.HTTP_422_UNPROCESSABLE_CONTENT, detail, motivo=motivo)
 
 
-def _validar_contexto(db: Session, usuario: Usuario, contexto: Contexto) -> None:
+def _validar_contexto(db: Session, usuario: Usuario, contexto: Contexto, instantes: Iterable[datetime] = ()) -> None:
+    """`instantes`: la hora real de una escritura (`grados_visibles`)."""
     colegio_existente(db, contexto.id_colegio)
-    grados_visibles(db, usuario, contexto.id_colegio, contexto.id_grado)
+    grados_visibles(db, usuario, contexto.id_colegio, contexto.id_grado, instantes)
     exigir_seccion(db, contexto.grupo)
     if db.get(Programa, contexto.id_programa) is None:
         raise _no_procesable(MENSAJE_PROGRAMA_INEXISTENTE, "programa_inexistente")
@@ -600,7 +601,7 @@ def _guardar(db: Session, item: RegistroVueloGuardar, periodo: PeriodoAcademico,
 def _aplicador(db: Session, usuario: Usuario, item: RegistroVueloGuardar):
     def aplicar(contexto_op: ContextoOperacion) -> dict[str, Any]:
         contexto = Contexto.de(item)
-        _validar_contexto(db, usuario, contexto)
+        _validar_contexto(db, usuario, contexto, [contexto_op.en])
         periodo, pa = _pa_del_item(db, item, contexto_op.en)
         habilitacion = habilitacion_escritura(
             db, usuario, item.id_colegio, item.id_grado, periodo.id_periodo_academico, MODULO, en=contexto_op.en

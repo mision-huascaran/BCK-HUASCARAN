@@ -33,6 +33,7 @@ from tests.conftest import (
     motivo,
     rangos_en_receso,
     registrar_asistencia,
+    retroactiva_tras_el_receso,
     seccion_de,
     semana_de,
 )
@@ -375,6 +376,25 @@ def test_crear_con_la_asignacion_retroactiva_en_el_receso(client, db, entorno, d
     db.commit()
 
     assert crear(client, doc, db, entorno).status_code == 201
+
+
+def test_d69_retroactiva_sincronizada_despues_del_receso(client, db, entorno, miercoles):
+    """La tabla y sus filas hechas sin conexión en el PR2 se aceptan aunque la
+    sincronización llegue ya en el PA3; una fila con hora posterior al PR2, no."""
+    sincronizacion = retroactiva_tras_el_receso(client, db, entorno, miercoles, "Andino", "2.º")
+    en_el_receso, tras_el_receso = sincronizacion.en_el_receso, sincronizacion.tras_el_receso
+    creada = crear(client, sincronizacion.cabecera, db, entorno, clase=sincronizacion.hora(en_el_receso))
+    assert creada.status_code == 201, creada.text
+    registrar_asistencia(db, entorno.alumnos["ana"], LUNES, "presente")
+    db.commit()
+
+    resultados = guardar(
+        client, sincronizacion.cabecera, creada.json()["id"],
+        fila(entorno, cantidad_lsl=2, **sincronizacion.hora(en_el_receso)),
+        fila(entorno, version=2, cantidad_lsl=3, **sincronizacion.hora(tras_el_receso)),
+    ).json()
+
+    assert [(r["estado"], r["motivo"]) for r in resultados] == [("aceptada", None), ("rechazada", "sin_habilitacion")]
 
 
 # ── Filas (CU024, CU025) ────────────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ from tests.conftest import (
     iniciar_actividad,
     motivo,
     rangos_relativos,
+    retroactiva_tras_el_receso,
     seccion_de,
 )
 from tests.test_calendario_api import editar
@@ -368,6 +369,24 @@ def test_r2_no_se_crea_una_segunda_evaluacion_en_otro_grupo(client, db, entorno,
         "rechazada", "evaluacion_en_otro_grupo", MENSAJE_EN_OTRO_GRUPO,
     )
     assert len(db.exec(select(RubricaMensual)).all()) == 1
+
+
+def test_d69_retroactiva_sincronizada_despues_del_receso(client, entorno, miercoles, db):
+    """Mayo (del PA2) evaluado sin conexión en el PR2 se acepta aunque la sincronización
+    llegue ya en el PA3; con hora posterior al PR2, no (fuera de alcance)."""
+    sincronizacion = retroactiva_tras_el_receso(client, db, entorno, miercoles, "Andino", "2.º")
+
+    resultados = guardar(
+        client, sincronizacion.cabecera,
+        item(entorno, grupo_=grupo(entorno, mes=MAYO), fluidez=2, **sincronizacion.hora(sincronizacion.en_el_receso)),
+        item(entorno, "carlos", grupo_=grupo(entorno, mes=MAYO), fluidez=2,
+             **sincronizacion.hora(sincronizacion.tras_el_receso)),
+    ).json()
+
+    # El alcance se revisa en cada operación: sin alcance ni ahora ni a su hora, el motivo
+    # sigue siendo el de siempre.
+    assert [(r["estado"], r["motivo"]) for r in resultados] == [
+        ("aceptada", None), ("rechazada", "aula_fuera_de_alcance")]
 
 
 def test_sin_habilitacion_y_con_permiso(client, db, entorno, doc, actividad):

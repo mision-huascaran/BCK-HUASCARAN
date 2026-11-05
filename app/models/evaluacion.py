@@ -1,7 +1,7 @@
 """Grupos 2, 3 y 4 del diseño v4: catálogo de evaluación, clases, asistencia, lectura
 semanal, rúbrica mensual y Registro de Vuelo.
 
-Los catálogos del Grupo 2 (salvo `evaluacion_diagnostica`) no llevan auditoría
+Los catálogos del Grupo 2 no llevan auditoría
 (diseño v3, §1.2). Las tablas de captura guardan en `fecha_registro` el momento real de
 captura enviado por el cliente, y en `creado_en` cuándo la guardó el servidor (§1.3).
 """

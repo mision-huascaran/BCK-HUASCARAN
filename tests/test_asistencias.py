@@ -28,6 +28,7 @@ from tests.conftest import (
     motivo,
     rangos_en_receso,
     registrar_asistencia,
+    retroactiva_tras_el_receso,
 )
 
 # Miércoles. El PA2 del general va del lunes 18 de mayo al viernes 17 de julio; el PA1,
@@ -384,6 +385,50 @@ def test_operacion_posterior_a_la_revocacion(client, db, entorno, doc, actividad
     [resultado] = guardar(client, doc, db, entorno, LUNES_DEL_PA1, [marca]).json()["resultados"]
 
     assert (resultado["estado"], resultado["motivo"]) == ("rechazada", "sin_habilitacion")
+    assert filas(db) == []
+
+
+@pytest.fixture
+def tras_el_receso(client, db, entorno, miercoles):
+    """D69: retroactiva del PA2 en 3.º del Lejano; la sincronización llega tras su PR2."""
+    return retroactiva_tras_el_receso(client, db, entorno, miercoles, "Lejano", "3.º")
+
+
+def guardar_en_lejano(client, db, entorno, sincronizacion, *horas):
+    """Un lote con una marca de Mario por cada hora real."""
+    marcas = [registro(entorno, "mario", **sincronizacion.hora(hora)) for hora in horas]
+    return guardar(client, sincronizacion.cabecera, db, entorno, LUNES, marcas,
+                   grupo_={"colegio": "Lejano", "grado": "3.º"})
+
+
+def test_d69_retroactiva_sincronizada_despues_del_receso(client, db, entorno, tras_el_receso):
+    """La habilitación y el alcance del lote se evalúan con la hora real de la operación,
+    no con la de la sincronización."""
+    respuesta = guardar_en_lejano(client, db, entorno, tras_el_receso, tras_el_receso.en_el_receso)
+
+    assert respuesta.status_code == 200, respuesta.text
+    [resultado] = respuesta.json()["resultados"]
+    assert (resultado["estado"], resultado["registro"]["estado"]) == ("aceptada", "presente")
+    assert [f.fecha_registro for f in filas(db)] == [tras_el_receso.en_el_receso]
+
+
+def test_d69_en_el_mismo_lote_la_operacion_posterior_al_receso_se_rechaza(client, db, entorno, tras_el_receso):
+    respuesta = guardar_en_lejano(
+        client, db, entorno, tras_el_receso, tras_el_receso.en_el_receso, tras_el_receso.tras_el_receso
+    )
+
+    assert [(r["estado"], r["motivo"]) for r in respuesta.json()["resultados"]] == [
+        ("aceptada", None), ("rechazada", "sin_habilitacion")]
+
+
+def test_d69_lote_todo_posterior_al_receso_sigue_fuera_de_alcance(client, db, entorno, tras_el_receso):
+    """Si ninguna operación cae en el PR (ni ahora hay alcance), el lote es 403 como antes;
+    la consulta usa el alcance de ahora."""
+    respuesta = guardar_en_lejano(client, db, entorno, tras_el_receso, tras_el_receso.tras_el_receso)
+    consulta = consultar(client, tras_el_receso.cabecera, db, entorno, LUNES, colegio="Lejano", grado="3.º")
+
+    assert (respuesta.status_code, motivo(respuesta)) == (403, "aula_fuera_de_alcance")
+    assert (consulta.status_code, motivo(consulta)) == (403, "aula_fuera_de_alcance")
     assert filas(db) == []
 
 

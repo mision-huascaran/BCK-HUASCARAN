@@ -682,6 +682,27 @@ def test_el_general_no_abarca_mas_de_12_meses(client, db, entorno, sup):
     assert client.post(URL, json={"anio": 2027, "periodos": periodos(justo)}, headers=sup).status_code == 201
 
 
+def test_d116_el_particular_tampoco_abarca_mas_de_12_meses(client, db, entorno, sup):
+    """CP-CAL-03, paso 8: la regla del general vale igual al crear y al editar un
+    particular, con el mismo mensaje junto al fin del PR4; hasta el último día del mes
+    anterior al del PA1 del año siguiente, se acepta."""
+    pa1 = rangos_relativos(HOY)["PA1"][0]
+    limite = date(pa1.year + 1, pa1.month, 1)
+    largo = con_cambio("PR4", fin=limite + timedelta(days=9))
+    justo = con_cambio("PR4", fin=limite - timedelta(days=1))
+
+    al_crear = particular(client, entorno, sup, largo)
+    creado = particular(client, entorno, sup, justo)
+    al_editar = editar(client, sup, creado.json()["id_calendario"], largo)
+
+    for respuesta in (al_crear, al_editar):
+        assert (respuesta.status_code, motivo(respuesta)) == (422, "validacion")
+        assert respuesta.json()["errores"] == [{"campo": "periodos.7.fecha_fin", "mensaje": MAS_DE_DOCE_MESES}]
+    assert creado.status_code == 201, creado.text
+    assert creado.json()["periodos"][7]["fecha_fin"] == (limite - timedelta(days=1)).isoformat()
+    assert releer(db, Calendario, creado.json()["id_calendario"]).version == 1
+
+
 def test_el_pa1_empieza_en_el_anio_seleccionado(client, db, entorno, sup):
     existente = AnioEscolar(nombre="2028", fecha_inicio=date(2028, 1, 1), fecha_fin=date(2028, 12, 31),
                             creado_por=1, creado_en=ahora_utc())
