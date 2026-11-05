@@ -630,6 +630,52 @@ def iniciar_actividad(client, cabecera, **cuerpo) -> dict:
     return respuesta.json()["actividad"]
 
 
+@dataclass(frozen=True)
+class SincronizacionTrasElReceso:
+    """D69: lo que arma `retroactiva_tras_el_receso`."""
+
+    cabecera: dict[str, str]
+    id_actividad: str
+    # Dentro del PR (se acepta) y ya en el PA siguiente (sin habilitación).
+    en_el_receso: datetime
+    tras_el_receso: datetime
+
+    def hora(self, instante: datetime) -> dict[str, str]:
+        """Los campos de una operación hecha sin conexión en ese instante."""
+        return {"realizado_en": iso(instante), "id_actividad": self.id_actividad}
+
+
+def retroactiva_tras_el_receso(client, db, entorno: Entorno, reloj: Reloj, colegio: str, grado: str):
+    """D69: el colegio (calendario particular) terminó su PA2 ayer y hoy es el único día
+    de su PR2. El Docente de la asignación del PA2 en ese grado (uno nuevo si no la tiene
+    nadie) la tiene retroactiva e inicia una actividad hoy a las 20:00; la sincronización
+    llega mañana a las 00:30, ya en el PA3 (el reloj queda ahí)."""
+    rangos = rangos_en_receso(entorno.hoy)
+    rangos["PR2"] = (entorno.hoy, entorno.hoy)
+    rangos["PA3"] = (entorno.hoy + timedelta(days=1), rangos["PA3"][1])
+    crear_particular(db, entorno, rangos, colegio=colegio)
+    id_colegio, id_grado = entorno.colegios[colegio].id_colegio, entorno.grados[grado]
+    del_grupo = (
+        DocenteColegioGrado.id_colegio == id_colegio, DocenteColegioGrado.id_grado == id_grado,
+        DocenteColegioGrado.id_periodo_academico == entorno.periodos["vigente"].id_periodo_academico,
+    )
+    fila = db.exec(select(DocenteColegioGrado).where(*del_grupo)).first()
+    if fila is None:
+        docente = crear_docente(db, entorno, "Otro", "otro@sicedu.test", "70000001")
+        asignar(db, docente.id_docente, entorno.colegios[colegio], [id_grado], entorno.periodos["vigente"], 1)
+        fila = db.exec(select(DocenteColegioGrado).where(*del_grupo)).one()
+    else:
+        docente = db.exec(select(Usuario).where(Usuario.id_docente == fila.id_docente)).one()
+    fila.retroactiva = True
+    db.commit()
+    reloj.fijar(a_las(entorno.hoy, 20))
+    cabecera = cabecera_de(db, docente)
+    id_actividad = iniciar_actividad(client, cabecera)["id"]
+    manana = entorno.hoy + timedelta(days=1)
+    reloj.fijar(a_las(manana, 0, 30))
+    return SincronizacionTrasElReceso(cabecera, id_actividad, a_las(entorno.hoy, 22), a_las(manana, 0, 10))
+
+
 @pytest.fixture
 def actividad(client, cabeceras) -> dict:
     """Actividad en curso del Docente (habilita sus escrituras)."""

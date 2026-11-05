@@ -7,8 +7,8 @@
   clase todavía no tenía fila, se crea. Queda en el historial y en la auditoría.
 """
 from dataclasses import dataclass
-from datetime import date
-from typing import Optional
+from datetime import date, datetime
+from typing import Iterable, Optional
 
 from fastapi import status
 from sqlalchemy.exc import IntegrityError
@@ -127,20 +127,29 @@ def colegio_existente(db: Session, id_colegio: int) -> Colegio:
     return colegio
 
 
-def grados_visibles(db: Session, usuario: Usuario, id_colegio: int, id_grado: Optional[int]) -> Optional[set[int]]:
+def grados_visibles(
+    db: Session, usuario: Usuario, id_colegio: int, id_grado: Optional[int], instantes: Iterable[datetime] = ()
+) -> Optional[set[int]]:
     """Grados del colegio que el usuario puede leer: None = todos (Supervisor). 403 si el
-    Docente pide un colegio o grado fuera de su alcance de lectura."""
-    alcance = alcance_de(db, usuario, lectura=True)
-    if alcance is None:
-        return None
-    grados = {g for c, g in alcance if c == id_colegio}
-    if not grados or (id_grado is not None and id_grado not in grados):
-        raise ErrorNegocio(
-            status.HTTP_403_FORBIDDEN,
-            "El colegio y grado indicados no están entre los que tiene asignados.",
-            motivo="aula_fuera_de_alcance",
-        )
-    return grados
+    Docente pide un colegio o grado fuera de su alcance de lectura.
+
+    Las consultas no pasan `instantes`: su alcance es el de ahora. Una escritura pasa las
+    horas reales (`realizado_en`) de sus operaciones (D69): basta con que el grupo esté en
+    el alcance ahora o en alguna de ellas, porque una operación hecha sin conexión se
+    juzga con su hora real (p. ej. una retroactiva sincronizada después de su PR). La
+    habilitación fina la decide cada operación (`habilitacion_escritura`)."""
+    for en in (None, *sorted(set(instantes))):
+        alcance = alcance_de(db, usuario, lectura=True, en=en)
+        if alcance is None:
+            return None
+        grados = {g for c, g in alcance if c == id_colegio}
+        if grados and (id_grado is None or id_grado in grados):
+            return grados
+    raise ErrorNegocio(
+        status.HTTP_403_FORBIDDEN,
+        "El colegio y grado indicados no están entre los que tiene asignados.",
+        motivo="aula_fuera_de_alcance",
+    )
 
 
 def _rango_por_defecto(calendarios: Calendarios, id_colegio: int) -> Optional[tuple[date, date]]:

@@ -26,7 +26,7 @@ la BD:
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Iterable, Literal, Optional
 
 from fastapi import status
 from sqlalchemy import Integer, String, case, cast, delete, exists, func, null, select as sa_select
@@ -192,6 +192,12 @@ class ContextoOperacion:
     en: datetime
     id_actividad: Optional[uuid.UUID]
     version: Optional[int]
+
+
+def horas_reales(items: Iterable[ItemOperacion]) -> list[datetime]:
+    """Las horas reales (`realizado_en`) enviadas en las operaciones de un lote: con ellas
+    se evalúa el alcance de la escritura (`grados_visibles`, D69)."""
+    return [item.realizado_en for item in items if item.realizado_en is not None]
 
 
 def _limite_de(db: Session, actividad: Actividad) -> datetime:

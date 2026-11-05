@@ -121,7 +121,10 @@ Un rol fuera de la lista responde `403 sin_permiso` ("No tienes permisos para re
 | `GET /dashboard/distribucion-subprograma`, `/comparacion-resultados`, `/asistencia/clases`, `/libros/colegios/{id}`, `/libros/desglose`, `/libros/incompletos` | ❌ | ✅ | ❌ |
 
 \* Solo su alcance: los colegios y grados de sus asignaciones (y de sus permisos vigentes, para consultar).
-Fuera de él: `403 aula_fuera_de_alcance`, `alumno_fuera_de_alcance` o `colegio_fuera_de_alcance`.
+Fuera de él: `403 aula_fuera_de_alcance`, `alumno_fuera_de_alcance` o `colegio_fuera_de_alcance`. En las
+escrituras de los módulos de registro el alcance se evalúa ahora **o** a la hora real (`realizado_en`) de
+alguna de sus operaciones (D69): una operación hecha sin conexión con una asignación retroactiva durante su PR
+se acepta aunque se sincronice después del PR. Las consultas usan siempre el alcance de ahora.
 
 ---
 
@@ -729,7 +732,9 @@ copian los del general. Responde `201`.
 
 **Errores:** `409 calendario_general_requerido`, `409 calendario_particular_existente`,
 `409 calendario_incompatible` (con la lista `incompatibilidades`: registros que quedarían fuera),
-`422 anio_inexistente`, `422 colegio_inexistente`, `422 validacion`.
+`422 anio_inexistente`, `422 colegio_inexistente`, `422 validacion` con el campo afectado (las mismas reglas
+que el general, incluidos los 12 meses: el PR4 debe terminar antes del día 1 del mismo mes del año siguiente al
+inicio del PA1; el error va en `periodos.7.fecha_fin`, el fin del PR4).
 
 ### `PUT /calendarios/{id_calendario}` — Supervisor
 
@@ -739,7 +744,8 @@ año pasa a las fechas del nuevo PA1 y PR4 y se ajustan sus semanas.
 
 **Errores:** `404 calendario_no_encontrado`, `409 modificacion_concurrente`, `409 calendario_inactivo`,
 `409 calendario_incompatible` ("No se puede guardar el calendario: el cambio afecta registros existentes.", con
-`incompatibilidades`), `422 validacion`.
+`incompatibilidades`), `422 validacion` (las mismas reglas al editar el general o un particular, incluidos los
+12 meses en `periodos.7.fecha_fin`).
 
 ### `POST /calendarios/{id_calendario}/usar-general` — Supervisor
 

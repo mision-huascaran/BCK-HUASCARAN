@@ -39,7 +39,7 @@ class RubricasDelMes(Paginado[RubricaAlumno]):
     ciclo: str
     # El ciclo como `ciclo_ebr.id_ciclo`, para `GET /rubricas/criterios`.
     id_ciclo: int
-    # PA del mes (REGLA PROVISIONAL R1: el de su último día lectivo).
+    # PA del mes (regla confirmada R1: el de su último día lectivo).
     id_periodo_academico: int
     escritura: Escritura
     # "No hay alumnos que corresponda evaluar en este grupo y mes." si no hay ninguno.

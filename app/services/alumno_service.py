@@ -15,7 +15,7 @@
   Docente no los ve: quedan fuera de su alcance.
 """
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 from fastapi import status
@@ -92,20 +92,21 @@ def _fuera_de_alcance() -> ErrorNegocio:
 
 # ── Alcance ─────────────────────────────────────────────────────────────────────────
 
-def alcance_de(db: Session, usuario: Usuario, lectura: bool = False) -> Alcance:
+def alcance_de(db: Session, usuario: Usuario, lectura: bool = False, en: Optional[datetime] = None) -> Alcance:
     """Pares (colegio, grado) del Docente; None (sin recorte) para el Supervisor.
 
     Escritura: sus asignaciones del PA vigente de cada colegio. Lectura (`lectura`):
     además, los grupos de sus asignaciones retroactivas en su PR y de sus permisos de
-    corrección vigentes (CU028). Un conjunto vacío significa "no tiene nada a cargo", que
-    no es lo mismo que None.
+    corrección vigentes (CU028), en el instante `en` (ahora por defecto; solo se usa en
+    lectura). Un conjunto vacío significa "no tiene nada a cargo", que no es lo mismo que
+    None.
     """
     if nombre_rol(db, usuario.id_rol) != DOCENTE:
         return None
     if usuario.id_docente is None:
         return set()
     if lectura:
-        return pares_visibles(db, usuario)
+        return pares_visibles(db, usuario, en)
     return alcance_docente(db, usuario.id_docente)
 
 
