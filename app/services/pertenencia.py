@@ -12,6 +12,8 @@ intervalos de un alumno no se superponen y como mucho uno está vigente.
 Las fechas efectivas nunca son futuras y respetan el orden del historial.
 """
 import uuid
+from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
@@ -54,6 +56,14 @@ def _vigente_en(fecha: date) -> tuple:
     return (
         AlumnoPertenencia.desde <= fecha,
         or_(col(AlumnoPertenencia.hasta).is_(None), col(AlumnoPertenencia.hasta) > fecha),
+    )
+
+
+def _solapa_sql(desde: date, hasta: date) -> tuple:
+    """`solapa` en SQL: el intervalo tiene algún día entre `desde` y `hasta` (inclusivos)."""
+    return (
+        AlumnoPertenencia.desde <= hasta,
+        or_(col(AlumnoPertenencia.hasta).is_(None), col(AlumnoPertenencia.hasta) > desde),
     )
 
 
@@ -126,10 +136,47 @@ def alumnos_del_grupo_en_rango(
         db,
         [
             *_del_grupo(id_colegio, id_grado, id_seccion, id_programa),
-            AlumnoPertenencia.desde <= hasta,
-            or_(col(AlumnoPertenencia.hasta).is_(None), col(AlumnoPertenencia.hasta) > desde),
+            *_solapa_sql(desde, hasta),
         ],
     )
+
+
+def solapa(intervalo: AlumnoPertenencia, inicio: date, fin: date) -> bool:
+    """Si el intervalo tiene algún día entre `inicio` y `fin` (ambos inclusivos, como un
+    PA): empieza a más tardar en `fin` y sigue vigente después de `inicio`."""
+    return intervalo.desde <= fin and (intervalo.hasta is None or intervalo.hasta > inicio)
+
+
+def pertenecio_en_rango(intervalos: Iterable[AlumnoPertenencia], inicio: date, fin: date) -> bool:
+    """Si alguno de los intervalos (de un alumno en un grupo) tiene algún día entre
+    `inicio` y `fin`. Es la regla con la que el Registro de Vuelo decide si el alumno
+    pertenecía al grupo en un PA, al leer y al guardar."""
+    return any(solapa(i, inicio, fin) for i in intervalos)
+
+
+def intervalos_en_grupo(
+    db: Session,
+    ids_alumno: list[int],
+    grupo: tuple[int, int, int, int],
+    desde: date,
+    hasta: date,
+) -> dict[int, list[AlumnoPertenencia]]:
+    """{alumno: sus intervalos en el grupo (colegio, grado, sección, subprograma) con algún
+    día entre `desde` y `hasta`}, en una consulta para todos los alumnos. Un alumno sin
+    intervalos no está."""
+    if not ids_alumno:
+        return {}
+    id_colegio, id_grado, id_seccion, id_programa = grupo
+    salida: dict[int, list[AlumnoPertenencia]] = defaultdict(list)
+    for fila in db.exec(
+        select(AlumnoPertenencia).where(
+            col(AlumnoPertenencia.id_alumno).in_(ids_alumno),
+            *_del_grupo(id_colegio, id_grado, id_seccion, id_programa),
+            *_solapa_sql(desde, hasta),
+        )
+    ).all():
+        salida[fila.id_alumno].append(fila)
+    return dict(salida)
 
 
 def vigente(db: Session, id_alumno: int) -> Optional[AlumnoPertenencia]:

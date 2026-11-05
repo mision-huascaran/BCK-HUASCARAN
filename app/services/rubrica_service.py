@@ -76,7 +76,7 @@ MENSAJE_SIN_ACTIVIDAD = MENSAJE_ACTIVIDAD_REQUERIDA
 MENSAJE_CONCURRENTE = (
     "Esta evaluación fue modificada desde que la consultaste. Revisa la versión actual antes de guardar nuevamente."
 )
-MENSAJE_FUERA_DEL_GRUPO = "El estudiante no pertenecía a este grupo en el mes seleccionado."
+MENSAJE_FUERA_DEL_GRUPO = "El alumno no pertenecía a este grupo en el mes seleccionado."
 MENSAJE_EN_OTRO_GRUPO = (
     "Este alumno ya tiene una evaluación registrada para este mes. Para corregirla, contacta al "
     "Docente que la registró o a tu Supervisor."

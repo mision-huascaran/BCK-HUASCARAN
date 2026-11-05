@@ -12,7 +12,9 @@ cantidad de selección libre (LSL). LSL null no suma ni es un 0 confirmado. Una 
 Completitud: con los registros esperados de Seguimiento de Lectura
 (`registros_vencidos.obligaciones_lectura`, la misma regla de CU011). Falta información si
 una tabla esperada no existe o tiene filas "Pendiente". Una tabla que todavía no vence no
-falta.
+falta. `lecturas_del_anio` calcula en una sola pasada los aportes y esas tablas faltantes,
+así que `/dashboard/libros/incompletos` lista exactamente lo que deja `pendiente` un mes,
+grado, alumno o colegio.
 
 Alumnos incluidos (A4): los de las filas de las tablas consideradas (la lista de la clase
 de referencia, también "No aplica" y ausentes) y, por cada tabla esperada que no existe, los
@@ -24,7 +26,7 @@ Estados: `completo`, `incompleto` (hay cantidades y faltan registros esperados),
 `sin_informacion` (ninguna cantidad ni declaración: total null, nunca 0) y `futuro`.
 """
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Container, Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from fractions import Fraction
@@ -34,6 +36,7 @@ from sqlalchemy import and_, or_
 from sqlmodel import Session, col, select
 
 from app.core.errores import error_de_campo
+from app.core.paginacion import TAMANO_PAGINA, pagina
 from app.core.texto import comparable
 from app.core.tiempo import hoy_lima
 from app.models.evaluacion import (
@@ -49,15 +52,19 @@ from app.schemas.comun import ItemCatalogo
 from app.schemas.dashboard import (
     AlumnoLibros,
     ClaseReferencia,
+    ClaseReferenciaEsperada,
     ColegioLibros,
     ColegioLibrosSinPromedio,
     DesgloseLibros,
     GradoLibros,
     LibrosDelAnio,
     LibrosDelColegio,
+    LecturaIncompleta,
+    LecturasIncompletas,
     MesLibros,
     RegistroLibros,
     ResumenLibros,
+    SemanaLectura,
 )
 from app.services.calendario import CalendarioResuelto, Calendarios
 from app.services.dashboard.filtros import (
@@ -66,13 +73,16 @@ from app.services.dashboard.filtros import (
     fuera_de_alcance,
     item_colegio,
     validar_colegio_seleccionado,
+    validar_grupo,
 )
 from app.services.dashboard.numeros import dos_decimales, meses_entre, ranking
 from app.services.registros_vencidos import ObligacionLectura, obligaciones_lectura
 
 COMPLETO, INCOMPLETO, SIN_INFORMACION, FUTURO = "completo", "incompleto", "sin_informacion", "futuro"
+SIN_TABLA, FILAS_PENDIENTES = "sin_tabla", "filas_pendientes"
 AUSENTE = "ausente"
 ETIQUETA_PARCIAL = "Total registrado hasta el momento"
+DIAS_HASTA_EL_VIERNES = 4
 
 
 # ── Aportes y acumulados ────────────────────────────────────────────────────────────
@@ -166,13 +176,17 @@ class FilaLectura:
             return True
         return self.asistencia in ESTADOS_ASISTIO and self.fila.cantidad_lsl is not None
 
-    def aporte(self, esperadas: set[int]) -> Aporte:
+    def pendiente(self, esperadas: Container[int]) -> bool:
+        """Falta este registro: la fila no está confirmada y su tabla era esperada."""
+        return not self.confirmada and self.tabla.id in esperadas
+
+    def aporte(self, esperadas: Container[int]) -> Aporte:
         cantidad = self.cantidad
         return Aporte(
             self.tabla.id_colegio, self.tabla.id_grado, self.fila.id_alumno, self.fecha.year, self.fecha.month,
             libros=cantidad or 0,
             con_dato=cantidad is not None or self.confirmada,
-            pendiente=not self.confirmada and self.tabla.id in esperadas,
+            pendiente=self.pendiente(esperadas),
         )
 
 
@@ -210,11 +224,39 @@ def _rangos(
     return rangos
 
 
-def _aportes_sin_tabla(
+@dataclass(frozen=True)
+class LecturaFaltante:
+    """Una tabla esperada que deja el consolidado incompleto (`pendiente` en sus aportes):
+    no existe (`sin_tabla`) o tiene filas "Pendiente" (`filas_pendientes`). `alumnos`: los
+    afectados (los del grupo y subprograma en la fecha de la clase, o los de esas filas)."""
+
+    id_colegio: int
+    obligacion: ObligacionLectura
+    fecha: date
+    id_clase: Optional[int]
+    tabla: Optional[LecturaSemanal]
+    alumnos: frozenset[int]
+    filas_pendientes: Optional[int]
+
+    @property
+    def motivo(self) -> str:
+        return SIN_TABLA if self.tabla is None else FILAS_PENDIENTES
+
+
+@dataclass
+class LecturasDelAnio:
+    """Los aportes del consolidado y las tablas esperadas que lo dejan incompleto, de la
+    misma pasada: una tabla falta si y solo si sus aportes son `pendiente`."""
+
+    aportes: list[Aporte] = field(default_factory=list)
+    faltantes: list[LecturaFaltante] = field(default_factory=list)
+
+
+def _alumnos_sin_tabla(
     db: Session, faltantes: list[tuple[int, ObligacionLectura]], rangos: dict[int, tuple[date, date]]
-) -> list[Aporte]:
-    """Por cada tabla esperada que no existe, sus alumnos (grupo y subprograma en la fecha
-    de su clase), pendientes y sin libros."""
+) -> list[frozenset[int]]:
+    """Por cada tabla esperada que no existe, los alumnos del grupo y subprograma en la
+    fecha de su clase (en el mismo orden)."""
     if not faltantes:
         return []
     ids = list({id_colegio for id_colegio, _ in faltantes})
@@ -225,37 +267,83 @@ def _aportes_sin_tabla(
         or_(col(AlumnoPertenencia.hasta).is_(None), col(AlumnoPertenencia.hasta) > min(rangos[c][0] for c in ids)),
     )).all():
         intervalos[(fila.id_colegio, fila.id_grado, fila.id_seccion, fila.id_programa)].append(fila)
-    aportes = []
-    for id_colegio, o in faltantes:
+    return [
+        frozenset(
+            p.id_alumno for p in intervalos[(id_colegio, o.id_grado, o.id_seccion, o.id_programa)]
+            if p.desde <= o.fecha_clase and (p.hasta is None or o.fecha_clase < p.hasta)
+        )
+        for id_colegio, o in faltantes
+    ]
+
+
+def _con_filas_pendientes(
+    filas: list[FilaLectura], esperadas: dict[int, tuple[int, ObligacionLectura]]
+) -> list[LecturaFaltante]:
+    """Las tablas esperadas con filas "Pendiente", con la fecha de su clase de referencia."""
+    por_tabla: dict[int, list[FilaLectura]] = defaultdict(list)
+    for fila in filas:
+        if fila.pendiente(esperadas):
+            por_tabla[fila.tabla.id].append(fila)
+    return [
+        LecturaFaltante(
+            id_colegio=esperadas[id_tabla][0], obligacion=esperadas[id_tabla][1], fecha=pendientes[0].fecha,
+            id_clase=pendientes[0].tabla.id_clase_referencia, tabla=pendientes[0].tabla,
+            alumnos=frozenset(f.fila.id_alumno for f in pendientes), filas_pendientes=len(pendientes),
+        )
+        for id_tabla, pendientes in por_tabla.items()
+    ]
+
+
+def _sin_tabla(
+    db: Session, obligaciones: list[tuple[int, ObligacionLectura]], rangos: dict[int, tuple[date, date]]
+) -> LecturasDelAnio:
+    """Por cada tabla esperada que no existe, sus alumnos pendientes y sin libros. Sin
+    alumnos no hay aportes y tampoco falta."""
+    faltantes = [(c, o) for c, o in obligaciones if o.tabla is None]
+    resultado = LecturasDelAnio()
+    for (id_colegio, o), alumnos in zip(faltantes, _alumnos_sin_tabla(db, faltantes, rangos)):
         fecha = o.fecha_clase
-        for p in intervalos[(id_colegio, o.id_grado, o.id_seccion, o.id_programa)]:
-            if p.desde <= fecha and (p.hasta is None or fecha < p.hasta):
-                aportes.append(Aporte(id_colegio, o.id_grado, p.id_alumno, fecha.year, fecha.month, 0, False, True))
-    return aportes
+        resultado.aportes.extend(
+            Aporte(id_colegio, o.id_grado, a, fecha.year, fecha.month, 0, False, True) for a in alumnos
+        )
+        if alumnos:
+            resultado.faltantes.append(LecturaFaltante(id_colegio, o, fecha, o.id_clase, None, alumnos, None))
+    return resultado
 
 
-def aportes_del_anio(
+def lecturas_del_anio(
     db: Session, calendarios: dict[int, CalendarioResuelto], cargados: Calendarios, ids_colegio: list[int]
-) -> list[Aporte]:
-    """Aportes de esos colegios en el año escolar de `calendarios` ({colegio: su calendario
-    aplicable de ese año}) hasta hoy. `cargados` debe incluir esos calendarios. Consultas
-    fijas por colegio (las obligaciones de Lectura) más un número fijo en total."""
+) -> LecturasDelAnio:
+    """Aportes y tablas faltantes de esos colegios en el año escolar de `calendarios`
+    ({colegio: su calendario aplicable de ese año}) hasta hoy. `cargados` debe incluir esos
+    calendarios. Consultas fijas por colegio (las obligaciones de Lectura) más un número
+    fijo en total. Es la única regla de completitud del consolidado de libros."""
     hoy = hoy_lima()
     rangos = _rangos(calendarios, ids_colegio, hoy)
     if not rangos:
-        return []
+        return LecturasDelAnio()
     obligaciones = [
         (id_colegio, obligacion)
         for id_colegio, (desde, hasta) in rangos.items()
         for obligacion in obligaciones_lectura(db, id_colegio, desde, hasta, cargados, hoy)
     ]
-    esperadas = {o.tabla.id for _, o in obligaciones if o.tabla is not None}
-    filas = _filas(db, list(rangos), min(r[0] for r in rangos.values()), max(r[1] for r in rangos.values()))
-    aportes = [
-        f.aporte(esperadas) for f in filas
+    esperadas = {o.tabla.id: (c, o) for c, o in obligaciones if o.tabla is not None}
+    filas = [
+        f for f in _filas(db, list(rangos), min(r[0] for r in rangos.values()), max(r[1] for r in rangos.values()))
         if rangos[f.tabla.id_colegio][0] <= f.fecha <= rangos[f.tabla.id_colegio][1]
     ]
-    return aportes + _aportes_sin_tabla(db, [(c, o) for c, o in obligaciones if o.tabla is None], rangos)
+    sin_tabla = _sin_tabla(db, obligaciones, rangos)
+    return LecturasDelAnio(
+        aportes=[f.aporte(esperadas) for f in filas] + sin_tabla.aportes,
+        faltantes=_con_filas_pendientes(filas, esperadas) + sin_tabla.faltantes,
+    )
+
+
+def aportes_del_anio(
+    db: Session, calendarios: dict[int, CalendarioResuelto], cargados: Calendarios, ids_colegio: list[int]
+) -> list[Aporte]:
+    """Los aportes de `lecturas_del_anio`."""
+    return lecturas_del_anio(db, calendarios, cargados, ids_colegio).aportes
 
 
 # ── Presentación ────────────────────────────────────────────────────────────────────
@@ -495,3 +583,85 @@ def desglose_libros(
         contexto=filtros.contexto(), alumno=nombre_de_alumno(alumno), anio=anio, mes=mes, total=total,
         registros=[_registro(f, catalogos) for f in filas],
     )
+
+
+# ── GET /dashboard/libros/incompletos ───────────────────────────────────────────────
+
+MENSAJE_MES_SIN_ANIO = "Elige el año y el mes juntos."
+
+
+@dataclass(frozen=True)
+class FiltroIncompletas:
+    """Acotan el detalle a lo que el Supervisor está mirando (todos opcionales)."""
+
+    id_colegio: Optional[int] = None
+    id_grado: Optional[int] = None
+    id_alumno: Optional[int] = None
+    anio: Optional[int] = None
+    mes: Optional[int] = None
+
+    def incluye(self, faltante: LecturaFaltante) -> bool:
+        return (
+            self.id_grado in (None, faltante.obligacion.id_grado)
+            and (self.id_alumno is None or self.id_alumno in faltante.alumnos)
+            and (self.mes is None or (faltante.fecha.year, faltante.fecha.month) == (self.anio, self.mes))
+        )
+
+
+def _validar_incompletas(db: Session, usuario: Usuario, filtros: FiltrosResueltos, filtro: FiltroIncompletas) -> None:
+    if (filtro.anio is None) != (filtro.mes is None):
+        raise error_de_campo("anio" if filtro.anio is None else "mes", MENSAJE_MES_SIN_ANIO)
+    if filtro.id_colegio is not None:
+        validar_colegio_seleccionado(db, usuario, filtros.ids_colegio, filtro.id_colegio)
+    validar_grupo(db, filtro.id_colegio, filtro.id_grado)
+    if filtro.id_alumno is not None:
+        _validar_alumno(db, usuario, filtros, filtro.id_alumno)
+
+
+def _nombres(db: Session, clave, texto, ids: set[int]) -> dict[int, str]:
+    return dict(db.exec(select(clave, texto).where(col(clave).in_(ids))).all()) if ids else {}
+
+
+def _lectura_incompleta(
+    faltante: LecturaFaltante, colegios: dict[int, Colegio], nombres: dict[str, dict[int, str]]
+) -> LecturaIncompleta:
+    o = faltante.obligacion
+    return LecturaIncompleta(
+        colegio=item_colegio(colegios[faltante.id_colegio]),
+        grado=ItemCatalogo(id=o.id_grado, nombre=nombres["grado"][o.id_grado]),
+        seccion=ItemCatalogo(id=o.id_seccion, nombre=nombres["seccion"][o.id_seccion]),
+        subprograma=ItemCatalogo(id=o.id_programa, nombre=nombres["programa"][o.id_programa]),
+        semana=SemanaLectura(lunes=o.lunes, viernes=o.lunes + timedelta(days=DIAS_HASTA_EL_VIERNES)),
+        anio=faltante.fecha.year, mes=faltante.fecha.month,
+        clase_referencia=ClaseReferenciaEsperada(id_clase=faltante.id_clase, fecha=faltante.fecha),
+        motivo=faltante.motivo,
+        id_lectura_semanal=faltante.tabla.id if faltante.tabla is not None else None,
+        filas_pendientes=faltante.filas_pendientes,
+    )
+
+
+def lecturas_incompletas(
+    db: Session, usuario: Usuario, filtros: FiltrosResueltos, filtro: FiltroIncompletas, page: int
+) -> LecturasIncompletas:
+    """CU034: las tablas esperadas que dejan incompleto el consolidado (la misma pasada que
+    marca `incompleto`), por colegio, grado, sección y fecha de la clase."""
+    _validar_incompletas(db, usuario, filtros, filtro)
+    ids_colegio = [filtro.id_colegio] if filtro.id_colegio is not None else filtros.ids_colegio
+    faltantes = [
+        f for f in lecturas_del_anio(db, filtros.calendarios, filtros.cargados, ids_colegio).faltantes
+        if filtro.incluye(f)
+    ]
+    colegios = {c.id_colegio: c for c in filtros.colegios}
+    secciones = _nombres(db, Seccion.id_seccion, Seccion.nombre, {f.obligacion.id_seccion for f in faltantes})
+    faltantes.sort(key=lambda f: (
+        comparable(colegios[f.id_colegio].nombre), f.id_colegio, f.obligacion.id_grado,
+        comparable(secciones[f.obligacion.id_seccion]), f.obligacion.id_seccion, f.fecha, f.obligacion.id_programa,
+    ))
+    en_pagina = faltantes[(page - 1) * TAMANO_PAGINA: page * TAMANO_PAGINA]
+    nombres = {
+        "seccion": secciones,
+        "grado": _nombres(db, Grado.id_grado, Grado.nombre, {f.obligacion.id_grado for f in en_pagina}),
+        "programa": _nombres(db, Programa.id_programa, Programa.nombre, {f.obligacion.id_programa for f in en_pagina}),
+    }
+    base = pagina([_lectura_incompleta(f, colegios, nombres) for f in en_pagina], len(faltantes), page)
+    return LecturasIncompletas(**base.model_dump(), contexto=filtros.contexto())

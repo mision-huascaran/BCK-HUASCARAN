@@ -118,7 +118,7 @@ Un rol fuera de la lista responde `403 sin_permiso` ("No tienes permisos para re
 | `GET /inicio/docente` · `/inicio/supervisor` · `/inicio/directivo` | solo el suyo | solo el suyo | solo el suyo |
 | `/seguimiento/docentes…` | ❌ | ✅ | ❌ |
 | `GET /dashboard/filtros`, `/resultados-aprendizaje`, `/asistencia`, `/libros`, `/evolucion-anual`, `/comparacion-colegios` | ❌ | ✅ | ✅ |
-| `GET /dashboard/distribucion-subprograma`, `/comparacion-resultados`, `/asistencia/clases`, `/libros/colegios/{id}`, `/libros/desglose` | ❌ | ✅ | ❌ |
+| `GET /dashboard/distribucion-subprograma`, `/comparacion-resultados`, `/asistencia/clases`, `/libros/colegios/{id}`, `/libros/desglose`, `/libros/incompletos` | ❌ | ✅ | ❌ |
 
 \* Solo su alcance: los colegios y grados de sus asignaciones (y de sus permisos vigentes, para consultar).
 Fuera de él: `403 aula_fuera_de_alcance`, `alumno_fuera_de_alcance` o `colegio_fuera_de_alcance`.
@@ -1002,7 +1002,7 @@ suyo (la respuesta trae su `mes`). `declaraciones`: el historial de "No realizad
 
 **Errores:** `404 tabla_no_existe` ("No existe una tabla de lectura semanal para los filtros seleccionados.",
 con `clase_referencia_sugerida` y `escritura` para crearla), `422 semana_sin_clase` (la semana no tiene clase
-del grupo), `422 sin_alumnos` ("No hay estudiantes que pertenecieran a este grupo en la fecha de la clase
+del grupo), `422 sin_alumnos` ("No hay alumnos que pertenecieran a este grupo en la fecha de la clase
 seleccionada.": la semana sí tiene clase o la tendría por el día de clase del grado, pero el grupo no tenía
 alumnos de ese subprograma en su fecha; D101), `403 aula_fuera_de_alcance`, `404 colegio_no_encontrado`, `404 semana_no_encontrada`,
 `422 seccion_inexistente`, `422 programa_inexistente`.
@@ -1014,7 +1014,7 @@ clase de referencia (`id_clase_referencia` o `fecha_clase_referencia`; por defec
 de la semana). Crea una fila vacía por alumno de esa clase con el subprograma. Responde `201` con la tabla.
 
 **Errores:** `409 tabla_existente` (con su `id`); `422 semana_futura` ("No es posible adelantar registros.
-Seleccione la semana actual o una anterior.", texto de CU023), `422 clase_no_realizada`,
+Selecciona la semana actual o una anterior.", texto de CU023), `422 clase_no_realizada`,
 `422 semana_sin_clase`, `422 clase_fuera_de_la_semana`, `422 clase_referencia_requerida`, `422 sin_alumnos`,
 `422 sin_habilitacion`, `422 actividad_requerida`, `422 fuera_de_actividad`; además los de la consulta.
 `sin_alumnos` y `semana_sin_clase` se distinguen como en la consulta (D101).
@@ -1024,10 +1024,10 @@ Seleccione la semana actual o una anterior.", texto de CU023), `422 clase_no_rea
 Arreglo de operaciones: `[{ "id_operacion", "version", "realizado_en", "id_actividad", "id_alumno",
 "lsn_titulo", "lsn_nota", "lsn_maximo", "cantidad_lsl", "observacion" }]` → arreglo de resultados.
 
-**Rechazos:** `sin_asistencia` ("El estudiante debe tener asistencia Presente o Tardanza en la clase de
+**Rechazos:** `sin_asistencia` ("El alumno debe tener asistencia Presente o Tardanza en la clase de
 referencia para registrar su lectura."), `lsn_incompleto` ("Para registrar un LSN, completa el título, la nota
 obtenida y el puntaje máximo."), `lsn_invalido` ("Selecciona un máximo de 5 o 10 e ingresa una nota entre 0 y
-ese máximo."), `alumno_fuera_de_la_tabla`, `lectura_no_realizada`, `modificacion_concurrente` (con la fila
+ese máximo."), `alumno_fuera_de_la_tabla` ("El alumno no corresponde a la clase de referencia de esta tabla semanal."), `lectura_no_realizada`, `modificacion_concurrente` (con la fila
 vigente), `sin_habilitacion`, `actividad_requerida`, `fuera_de_actividad`.
 
 **Errores del lote:** `404 tabla_no_encontrada`, `403 aula_fuera_de_alcance`, `422 validacion`.
@@ -1095,7 +1095,7 @@ resultados. Se puede guardar incompleta; un ítem sin cambios no escribe.
 
 **Rechazos:** `valor_no_permitido` ("Selecciona una valoración permitida para esta dimensión."),
 `sin_habilitacion` (con la regla de DP-1 de `GET /rubricas`: basta la habilitación en cualquiera de los PA con
-días lectivos en el mes; la evaluación se guarda igual con el PA de R1), `alumno_fuera_del_grupo` ("El estudiante no pertenecía a este grupo en el mes
+días lectivos en el mes; la evaluación se guarda igual con el PA de R1), `alumno_fuera_del_grupo` ("El alumno no pertenecía a este grupo en el mes
 seleccionado."), `evaluacion_en_otro_grupo` ("Este alumno ya tiene una evaluación registrada para este mes.
 Para corregirla, contacta al Docente que la registró o a tu Supervisor."), `modificacion_concurrente` (con la
 vigente), `mes_futuro`, `mes_sin_actividad`,
@@ -1126,7 +1126,7 @@ Una fila por alumno que perteneció al grupo en el año (incluidos los hoy inact
       "sugerencia": { "accion": "subir", "nivel": { "id": 6, "letra": "F" }, "texto": "…", "resultado_decimas": 31,
                       "excepcion": null, "rubrica": { "id": 8, "mes": "Junio", "fluidez": "…", "comprension": "…", "resultado_decimas": 31 } },
       "nivel_colocado": { "id": 6, "letra": "F" }, "nivel_programa": "…", "proyeccion": null,
-      "observacion": null, "aviso_entrada_cambio": false, "aviso": null, "incompleto": false
+      "observacion": null, "aviso_entrada_cambio": false, "aviso": null, "pertenece": true, "incompleto": false
     }]
   }],
   "total": 1, "page": 1, "page_size": 40, "total_pages": 1,
@@ -1138,6 +1138,15 @@ Una fila por alumno que perteneció al grupo en el año (incluidos los hoy inact
 
 `entrada.de_otro_colegio`: la entrada viene de un PA anterior en otro grupo ("Registrado antes del
 traslado."). Sin alumnos: `items` vacío y `aviso`.
+
+`periodos[].pertenece`: si el alumno pertenecía al grupo algún día de ese PA, con las fechas del PA en el
+calendario del colegio (un PA sin fechas da `false`). Es la misma regla con la que `PUT` rechaza con
+`alumno_fuera_del_grupo`. Con `false` la celda es de solo lectura (nivel colocado, proyección y observación):
+`incompleto` es `false` y, si ya había un registro de ese PA en el grupo, se sigue mostrando. `aviso` trae "El
+alumno no pertenecía a este grupo en el periodo seleccionado." solo si el PA tiene fechas y el alumno no
+estuvo en el grupo (salvo que ya haya otro aviso, como el de entrada cambiada). En un PA sin fechas `aviso` queda
+`null` (o el aviso que ya tuviera): el motivo lo da `periodos[].escritura`. Por eso un alumno que entró al grupo en el PA2 trae el PA1 con `pertenece: false`. Los
+vencidos e incompletos del Inicio (CU011) tampoco se lo exigen en un PA en que no pertenecía al grupo.
 
 **Errores:** `403 aula_fuera_de_alcance`; `404 colegio_no_encontrado`, `404 anio_no_encontrado`;
 `422 seccion_inexistente`, `422 programa_inexistente`.
@@ -1192,9 +1201,15 @@ la más antigua:
 { "items": [{ "id": "…", "id_docente": 1, "fecha": "2026-10-26", "inicio": "…", "fin": "…",
               "duracion_segundos": 3600, "estado": "finalizada", "tipo_cierre": "Manual por finalización de actividad",
               "sincronizacion": "sincronizada", "cambios": 12,
-              "productividad": [{ "modulo": "asistencia", "cantidad": 12 }], "productividad_texto": "12 Asistencias" }],
+              "productividad": [{ "modulo": "asistencia", "cantidad": 12 }], "productividad_texto": "12 en Asistencias" }],
   "total": 1, "page": 1, "page_size": 40, "total_pages": 1 }
 ```
+
+`productividad_texto` (CU021): "{cantidad} en {Módulo}" por cada módulo con cambios, en el orden Asistencias,
+Rúbrica, Registro de Vuelo, Seguimiento de Lectura y Alumnos, unidos con ", " (por ejemplo "15 en Asistencias, 5
+en Rúbrica" o "1 en Asistencias"). El nombre del módulo no cambia con la cantidad y los módulos en 0 se omiten;
+sin cambios, "Sin registros". El front lo muestra tal cual; para decidir usa `productividad` (`modulo` y
+`cantidad`).
 
 ### `GET /actividades/{id_actividad}`
 
@@ -1350,6 +1365,7 @@ endpoints con nombres de alumnos, listados nominales o detalle de un colegio son
 | `GET /dashboard/libros` | Supervisor, Directivo | Consolidado de libros (CU034; CU035 paso 5) | anuales |
 | `GET /dashboard/libros/colegios/{id_colegio}` | Supervisor | Detalle de un colegio por grado y alumno (CU034 paso 6) | anuales |
 | `GET /dashboard/libros/desglose` | Supervisor | Desglose de la cantidad de un alumno en un mes (CU034 paso 8) | anuales |
+| `GET /dashboard/libros/incompletos` | Supervisor | Detalle del aviso "Información incompleta" (CU034) | anuales |
 | `GET /dashboard/evolucion-anual` | Supervisor, Directivo | Cobertura y evolución anual (CU033 paso 9, CU035 paso 8) | anuales |
 | `GET /dashboard/comparacion-colegios` | Supervisor, Directivo | Comparación entre colegios (CU035 paso 9) | según el indicador |
 
@@ -1607,6 +1623,53 @@ Filtros anuales, más `id_alumno`, `anio` y `mes` (1 a 12).
 `id_lectura_semanal` abre el Seguimiento de Lectura en consulta. `lsl` y `total` en `null` si la fila no tiene
 cantidades. **Errores:** `422 id_alumno` si no existe o no perteneció en el año a ningún colegio seleccionado;
 `403 colegio_fuera_de_alcance` si solo perteneció a colegios fuera del alcance.
+
+### `GET /dashboard/libros/incompletos` · Supervisor
+
+Detalle del aviso "Información incompleta" (CU034): las tablas esperadas de Seguimiento de Lectura que dejan
+incompleto el consolidado, para que el Supervisor vea qué clases de referencia faltan. Es **la misma regla** que
+marca `incompleto` en `/dashboard/libros` y sus detalles (se calculan en la misma pasada): un mes, grado, alumno o
+colegio tiene registros esperados faltantes si y solo si aquí aparece al menos un ítem suyo.
+
+Filtros anuales (los mismos de `/libros`, con sus errores), más opcionales para acotar:
+
+| Query | Qué filtra |
+|---|---|
+| `id_colegio` | Un colegio de la selección. |
+| `id_grado` | Un grado (del colegio, si viene `id_colegio`). |
+| `id_alumno` | Las tablas o semanas que lo afectan: su fila "Pendiente" o la semana sin tabla de su grupo en esa fecha. |
+| `anio` + `mes` | Los dos juntos (mes 1 a 12): por la fecha de la clase de referencia. |
+| `page` | Página, desde 1 (40 por página). |
+
+```json
+{ "contexto": { "…": "como en /dashboard/libros" },
+  "items": [{ "colegio": { "id": 1, "nombre": "AMASHCA" }, "grado": { "id": 3, "nombre": "3.º" },
+              "seccion": { "id": 5, "nombre": "Única" }, "subprograma": { "id": 2, "nombre": "Comprensión Lectora" },
+              "semana": { "lunes": "2026-09-07", "viernes": "2026-09-11" }, "anio": 2026, "mes": 9,
+              "clase_referencia": { "id_clase": null, "fecha": "2026-09-09" },
+              "motivo": "sin_tabla", "id_lectura_semanal": null, "filas_pendientes": null },
+            { "colegio": { "id": 1, "nombre": "AMASHCA" }, "grado": { "id": 3, "nombre": "3.º" },
+              "seccion": { "id": 5, "nombre": "Única" }, "subprograma": { "id": 2, "nombre": "Comprensión Lectora" },
+              "semana": { "lunes": "2026-09-14", "viernes": "2026-09-18" }, "anio": 2026, "mes": 9,
+              "clase_referencia": { "id_clase": 120, "fecha": "2026-09-16" },
+              "motivo": "filas_pendientes", "id_lectura_semanal": 31, "filas_pendientes": 4 }],
+  "total": 2, "page": 1, "page_size": 40, "total_pages": 1 }
+```
+
+- `motivo`: `sin_tabla` (semana esperada y vencida sin tabla) o `filas_pendientes` (la tabla existe y tiene filas
+  "Pendiente": `filas_pendientes` = cuántas e `id_lectura_semanal` = la tabla, para abrirla en consulta). Una tabla
+  completa, "No realizada" o de una semana que todavía no vence no aparece.
+- `clase_referencia`: la de la tabla si existe; si no, la clase habitual o reprogramada de esa semana (la que
+  atribuye el mes). `id_clase` es `null` si esa clase todavía no tiene fila; la fecha es la calculada.
+- Con `id_alumno`, `filas_pendientes` sigue siendo el total de la tabla.
+- Orden: colegio (sin mayúsculas ni tildes), grado, sección, fecha de la clase y subprograma.
+- Un mes `sin_informacion` también puede tener ítems (solo semanas sin tabla: faltan registros, pero no hay
+  cantidades); un mes `completo` o `futuro` nunca.
+
+**Errores:** los de los filtros comunes; `422 id_colegio` si no existe o no está en la selección; `403
+colegio_fuera_de_alcance`; `422 id_grado` si no existe o no es del colegio; `422 id_alumno` como en el desglose;
+`422 anio` o `422 mes` si llega uno solo ("Elige el año y el mes juntos.") o el mes no es de 1 a 12. Directivo y
+Docente: `403`.
 
 ### `GET /dashboard/evolucion-anual` — Supervisor y Directivo
 

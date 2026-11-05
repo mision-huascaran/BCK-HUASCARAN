@@ -15,13 +15,13 @@ auth:bearer {
 }
 
 tests {
-  test("la actividad recién finalizada encabeza la lista, con productividad en singular", function () {
+  test("la actividad recién finalizada encabeza la lista, con productividad en el formato de CU021", function () {
     expect(res.status).to.equal(200);
     expect(res.body.items[0].id).to.equal(bru.getVar('idActividadInt'));
-    expect(res.body.items[0].productividad_texto).to.match(/1 Asistencia\b/);
+    expect(res.body.items[0].productividad_texto).to.match(/\b1 en Asistencias\b/);
   });
 }
 
 docs {
-  P5 §2: productividad en singular y plural ("1 Asistencia", "2 Rúbricas").
+  CU021: "{n} en {Módulo}", con el nombre del módulo fijo ("1 en Asistencias", "5 en Rúbrica").
 }

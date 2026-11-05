@@ -24,11 +24,10 @@ from typing import Optional
 
 from sqlmodel import Session, col, select
 
-from app.core.errores import error_de_campo
 from app.core.texto import comparable
 from app.core.tiempo import hoy_lima
 from app.models.evaluacion import ESTADOS_ASISTENCIA, TIPO_HABITUAL, Asistencia, ClaseAlumno
-from app.models.organizacion import ColegioGrado, Grado, Seccion, Usuario
+from app.models.organizacion import Grado, Seccion, Usuario
 from app.schemas.comun import ItemCatalogo
 from app.schemas.dashboard import (
     AsistenciaColegio,
@@ -42,7 +41,7 @@ from app.schemas.dashboard import (
     ResumenAsistencia,
 )
 from app.services.dashboard.corte import colegios_sin_informacion, fechas_de_corte
-from app.services.dashboard.filtros import FiltrosResueltos, item_colegio, validar_colegio_seleccionado
+from app.services.dashboard.filtros import FiltrosResueltos, item_colegio, validar_colegio_seleccionado, validar_grupo
 from app.services.dashboard.numeros import meses_entre, porcentaje
 from app.services.programacion import ClaseProgramada, FiltroGrupos, clases_programadas
 
@@ -247,16 +246,6 @@ def asistencia_del_periodo(db: Session, filtros: FiltrosResueltos) -> Asistencia
 
 # ── Detalle por clase (solo Supervisor) ─────────────────────────────────────────────
 
-def _validar_grupo(db: Session, id_colegio: int, id_grado: Optional[int], id_seccion: Optional[int]) -> None:
-    if id_grado is not None and db.get(ColegioGrado, (id_colegio, id_grado)) is None:
-        raise error_de_campo("id_grado", "El grado no pertenece al colegio seleccionado.")
-    if id_seccion is None:
-        return
-    seccion = db.get(Seccion, id_seccion)
-    if seccion is None or seccion.id_colegio != id_colegio or id_grado not in (None, seccion.id_grado):
-        raise error_de_campo("id_seccion", "La sección no pertenece al colegio o grado seleccionado.")
-
-
 def _clase_dictada(clase: ClaseProgramada, estados: EstadosClase) -> ClaseDictada:
     return ClaseDictada(
         id_clase=clase.id_clase, fecha=clase.fecha, tipo=clase.tipo, reprogramada=clase.reprogramada,
@@ -292,7 +281,7 @@ def asistencia_por_clase(
 ) -> AsistenciaPorClase:
     """Una fila por clase dictada y, aparte, las clases sin registro, por grado y sección."""
     validar_colegio_seleccionado(db, usuario, filtros.ids_colegio, id_colegio)
-    _validar_grupo(db, id_colegio, id_grado, id_seccion)
+    validar_grupo(db, id_colegio, id_grado, id_seccion)
     conjunto = clases_del_periodo(db, filtros, [FiltroGrupos(id_colegio, id_grado, id_seccion)])[id_colegio]
     grupos = _por_grupo(conjunto)
     grados = dict(db.exec(select(Grado.id_grado, Grado.nombre).where(

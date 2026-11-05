@@ -289,8 +289,35 @@ def test_alumno_que_no_pertenecia_al_grupo_ese_mes(client, entorno, doc, activid
     resultados = guardar(client, doc, item(entorno, "carlos", fluidez=2), item(entorno, "luis", fluidez=2)).json()
 
     assert [(r["motivo"], r["detail"]) for r in resultados] == [
-        ("alumno_fuera_del_grupo", "El estudiante no pertenecía a este grupo en el mes seleccionado."),
+        ("alumno_fuera_del_grupo", "El alumno no pertenecía a este grupo en el mes seleccionado."),
     ] * 2
+
+
+def test_el_listado_ofrece_lo_mismo_que_acepta_la_escritura(client, entorno, doc, actividad):
+    """Lectura y escritura aplican la misma regla (R2): cada alumno que lista un grupo y mes
+    sin evaluación puede guardar una nueva, y uno que no aparece recibe
+    `alumno_fuera_del_grupo`. Se lee todo antes de guardar: una evaluación guardada fija
+    el grupo del alumno en ese mes."""
+    grupos = [(mes, programa) for mes in (MAYO, JUNIO) for programa in (CL, ALFA)]
+    listados = {
+        (mes, programa): {i["id_alumno"] for i in listar(client, doc, entorno, mes=mes, programa=programa).json()["items"]}
+        for mes, programa in grupos
+    }
+    claves = ("ana", "carlos", "inés", "luis")
+
+    for (mes, programa), listados_del_grupo in listados.items():
+        resultados = guardar(client, doc, *(
+            item(entorno, clave, grupo_=grupo(entorno, mes=mes, programa=programa), fluidez=2) for clave in claves
+        )).json()
+        for clave, resultado in zip(claves, resultados):
+            if entorno.alumnos[clave].id_alumno in listados_del_grupo:
+                assert resultado["estado"] == "aceptada", (mes, programa, clave, resultado)
+            else:
+                assert resultado["motivo"] == "alumno_fuera_del_grupo", (mes, programa, clave, resultado)
+
+    # Mayo CL: Carlos, Inés y Ana; mayo Alfabetización: nadie; junio CL: Inés y Ana; junio
+    # Alfabetización: Carlos.
+    assert [len(listados[g]) for g in grupos] == [3, 0, 2, 1]
 
 
 def _ana_pasa_a_alfabetizacion(db, entorno, desde=date(2026, 6, 15)):

@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
+from app.core.paginacion import Paginado
 from app.schemas.comun import ItemCatalogo
 
 # ── Base común ──────────────────────────────────────────────────────────────────────
@@ -425,6 +426,46 @@ class DesgloseLibros(BaseModel):
     mes: int
     total: Optional[int] = None
     registros: list[RegistroLibros]
+
+
+MotivoLecturaIncompleta = Literal["sin_tabla", "filas_pendientes"]
+
+
+class SemanaLectura(BaseModel):
+    lunes: date
+    viernes: date
+
+
+class ClaseReferenciaEsperada(BaseModel):
+    """La clase de la tabla o, sin tabla, la clase habitual o reprogramada de la semana.
+    `id_clase` null si esa clase todavía no tiene fila (la fecha es la calculada)."""
+
+    id_clase: Optional[int] = None
+    fecha: date
+
+
+class LecturaIncompleta(BaseModel):
+    """Una tabla esperada de Seguimiento de Lectura que deja incompleto el consolidado
+    (CU034): `sin_tabla` (la semana no tiene tabla) o `filas_pendientes` (la tabla tiene
+    filas "Pendiente"; `filas_pendientes` = cuántas, `id_lectura_semanal` = la tabla)."""
+
+    colegio: ItemCatalogo
+    grado: ItemCatalogo
+    seccion: ItemCatalogo
+    subprograma: ItemCatalogo
+    semana: SemanaLectura
+    anio: int
+    mes: int
+    clase_referencia: ClaseReferenciaEsperada
+    motivo: MotivoLecturaIncompleta
+    id_lectura_semanal: Optional[int] = None
+    filas_pendientes: Optional[int] = None
+
+
+class LecturasIncompletas(Paginado[LecturaIncompleta]):
+    """CU034: detalle del aviso "Información incompleta", paginado de 40."""
+
+    contexto: ContextoDashboard
 
 
 # ── Evolución anual y comparación entre colegios (D6, CU033 y CU035) ────────────────

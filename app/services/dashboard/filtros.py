@@ -19,7 +19,7 @@ from app.core.database import get_db
 from app.core.errores import ErrorNegocio, error_de_campo
 from app.core.texto import comparable_sql
 from app.core.tiempo import ahora_utc, hoy_lima
-from app.models.organizacion import AnioEscolar, Colegio, PeriodoAcademico, Usuario
+from app.models.organizacion import AnioEscolar, Colegio, ColegioGrado, Grado, PeriodoAcademico, Seccion, Usuario
 from app.schemas.comun import ItemCatalogo
 from app.schemas.dashboard import AlcanceColegios, ContextoDashboard, IntervaloFechas, PeriodoVisible
 from app.services.calendario import CalendarioResuelto, Calendarios, cargar_calendarios
@@ -188,6 +188,22 @@ def validar_colegio_seleccionado(
     if id_colegio not in {c.id_colegio for c in colegios_del_alcance(db, usuario)}:
         raise fuera_de_alcance()
     raise error_de_campo(campo, "Elige un colegio de los seleccionados.")
+
+
+def validar_grupo(
+    db: Session, id_colegio: Optional[int], id_grado: Optional[int], id_seccion: Optional[int] = None
+) -> None:
+    """Grado y sección de un detalle: 422 si no son del colegio elegido (sin colegio, si el
+    grado no existe)."""
+    if id_grado is not None and id_colegio is None and db.get(Grado, id_grado) is None:
+        raise error_de_campo("id_grado", "El grado seleccionado no existe.")
+    if id_grado is not None and id_colegio is not None and db.get(ColegioGrado, (id_colegio, id_grado)) is None:
+        raise error_de_campo("id_grado", "El grado no pertenece al colegio seleccionado.")
+    if id_seccion is None:
+        return
+    seccion = db.get(Seccion, id_seccion)
+    if seccion is None or seccion.id_colegio != id_colegio or id_grado not in (None, seccion.id_grado):
+        raise error_de_campo("id_seccion", "La sección no pertenece al colegio o grado seleccionado.")
 
 
 # ── Filtros resueltos ───────────────────────────────────────────────────────────────

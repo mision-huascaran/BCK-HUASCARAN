@@ -49,14 +49,16 @@ MODULOS = {
 # Orden de CU021 (productividad), que siguen también CU017 y CU019.
 ORDEN_MODULOS = (ASISTENCIA, RUBRICA, VUELO, LECTURA, ALUMNOS, OTROS)
 
-# Nombre de la cantidad en la productividad de CU021: (singular, plural).
+# Nombre fijo de cada módulo en la productividad de CU021 ("15 en Asistencias"), igual
+# para cualquier cantidad. "otros" no tiene nombre en el CU: solo es el respaldo de una
+# tabla auditada sin módulo, que hoy no ocurre porque toda tabla con actividad tiene uno.
 NOMBRES = {
-    ASISTENCIA: ("Asistencia", "Asistencias"),
-    RUBRICA: ("Rúbrica", "Rúbricas"),
-    VUELO: ("Registro de Vuelo", "Registros de Vuelo"),
-    LECTURA: ("Seguimiento de Lectura", "Seguimientos de Lectura"),
-    ALUMNOS: ("Alumno", "Alumnos"),
-    OTROS: ("Otro registro", "Otros registros"),
+    ASISTENCIA: "Asistencias",
+    RUBRICA: "Rúbrica",
+    VUELO: "Registro de Vuelo",
+    LECTURA: "Seguimiento de Lectura",
+    ALUMNOS: "Alumnos",
+    OTROS: "Otros registros",
 }
 SIN_REGISTROS = "Sin registros"
 
@@ -111,8 +113,8 @@ def productividad(conteos: dict[str, int]) -> list[ProductividadModulo]:
 
 
 def productividad_texto(conteos: dict[str, int]) -> str:
-    """'15 Asistencias, 1 Rúbrica' (sin los módulos en 0) o 'Sin registros'."""
-    partes = [f"{n} {NOMBRES[m][n != 1]}" for m, n in _ordenados(conteos)]
+    """'15 en Asistencias, 5 en Rúbrica' (sin los módulos en 0) o 'Sin registros'."""
+    partes = [f"{n} en {NOMBRES[m]}" for m, n in _ordenados(conteos)]
     return ", ".join(partes) if partes else SIN_REGISTROS
 
 

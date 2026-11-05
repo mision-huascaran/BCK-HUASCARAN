@@ -51,6 +51,7 @@ from app.services.calendario import (
     pa_de_referencia_para_vencidos,
 )
 from app.services.lectura_service import colegios_con_filas_confirmadas, tablas_con_pendientes
+from app.services.pertenencia import solapa
 from app.services.programacion import ClaseProgramada, FiltroGrupos, clases_programadas
 from app.services.registro_vuelo import colegios_con_decisiones
 from app.services.reglas_provisionales import regla_mes_exigible_en_pa
@@ -230,8 +231,8 @@ def asistencias(db: Session, contexto: ContextoVencidos) -> EstadoRegistros:
 @dataclass(frozen=True)
 class ObligacionLectura:
     """Una tabla de Lectura esperada: grupo, subprograma y semana (su lunes), con la fecha
-    de la clase que la genera, su tabla si existe y si está pendiente (sin tabla, o tabla
-    `normal` con alguna fila "Pendiente")."""
+    de la clase que la genera (y su fila, si ya existe), su tabla si existe y si está
+    pendiente (sin tabla, o tabla `normal` con alguna fila "Pendiente")."""
 
     id_grado: int
     id_seccion: int
@@ -240,14 +241,15 @@ class ObligacionLectura:
     fecha_clase: date
     tabla: Optional[LecturaSemanal]
     pendiente: bool
+    id_clase: Optional[int] = None
 
 
 def _semanas_vencidas(
     db: Session, id_colegio: int, desde: date, hasta: date, calendarios: Calendarios, hoy: date,
     id_periodo: Optional[int],
-) -> dict[tuple, date]:
-    """{(grado, sección, lunes): fecha de la clase} de las semanas con clase habitual o
-    reprogramada con fecha en [desde, min(hasta, hoy)] cuyo sábado ya llegó."""
+) -> dict[tuple, ClaseProgramada]:
+    """{(grado, sección, lunes): la clase} de las semanas con clase habitual o reprogramada
+    con fecha en [desde, min(hasta, hoy)] cuyo sábado ya llegó."""
     fin = min(hasta, hoy)
     if fin < desde:
         return {}
@@ -257,7 +259,7 @@ def _semanas_vencidas(
         vencida = lunes + timedelta(days=DIAS_HASTA_EL_SABADO) <= hoy
         del_periodo = id_periodo is None or clase.id_periodo_academico == id_periodo
         if clase.tipo == TIPO_HABITUAL and vencida and del_periodo:
-            semanas.setdefault((clase.id_grado, clase.id_seccion, lunes), clase.fecha)
+            semanas.setdefault((clase.id_grado, clase.id_seccion, lunes), clase)
     return semanas
 
 
@@ -294,14 +296,17 @@ def obligaciones_lectura(
     tablas = _tablas_del_colegio(db, id_colegio, {lunes for _, _, lunes in semanas})
     pendientes = tablas_con_pendientes(db, [t.id for t in tablas.values() if t.estado == "normal"])
     obligaciones = []
-    for (grado, seccion, lunes), fecha in sorted(semanas.items()):
+    for (grado, seccion, lunes), clase in sorted(semanas.items(), key=lambda par: par[0]):
+        fecha = clase.fecha
         programas = {
             i.id_programa for i in intervalos if (i.id_grado, i.id_seccion) == (grado, seccion) and _contiene(i, fecha)
         }
         for id_programa in sorted(programas):
             tabla = tablas.get((grado, seccion, id_programa, lunes))
             pendiente = tabla is None or tabla.id in pendientes
-            obligaciones.append(ObligacionLectura(grado, seccion, id_programa, lunes, fecha, tabla, pendiente))
+            obligaciones.append(
+                ObligacionLectura(grado, seccion, id_programa, lunes, fecha, tabla, pendiente, clase.id_clase)
+            )
     return obligaciones
 
 
@@ -399,10 +404,12 @@ def _pas_terminados(contexto: ContextoVencidos, id_colegio: int) -> list[Periodo
 
 
 def _ultimo_grupo(intervalos: list[AlumnoPertenencia], pa: PeriodoCalendario) -> dict[int, AlumnoPertenencia]:
-    """{alumno: su último intervalo dentro del PA} (el grupo en que se le exige)."""
+    """{alumno: su último intervalo dentro del PA} (el grupo en que se le exige). Con la
+    misma regla de pertenencia por PA que el Registro de Vuelo (`pertenencia.solapa`): no
+    se exige en un grupo al que el alumno no pertenecía en el PA."""
     ultimo: dict[int, AlumnoPertenencia] = {}
     for i in intervalos:
-        if i.desde <= pa.fecha_fin and (i.hasta is None or i.hasta > pa.fecha_inicio):
+        if solapa(i, pa.fecha_inicio, pa.fecha_fin):
             if i.id_alumno not in ultimo or i.desde > ultimo[i.id_alumno].desde:
                 ultimo[i.id_alumno] = i
     return ultimo
