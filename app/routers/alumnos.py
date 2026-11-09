@@ -45,11 +45,15 @@ def listar_alumnos(
     id_seccion: Optional[int] = None,
     activo: bool = True,
     q: Annotated[Optional[str], Query(description="Busca en nombres y apellidos")] = None,
+    pertenencia: Annotated[
+        Optional[Literal["definida", "pendiente"]], Query(description="Sin este filtro, se listan todos")
+    ] = None,
     page: Pagina = 1,
 ):
     """Ordenado por apellidos y nombres. El Docente solo recibe los de su alcance."""
     return alumno_service.listar_alumnos(
-        db, usuario, id_colegio, id_programa, ciclo, id_grado, activo, q, page, id_seccion=id_seccion
+        db, usuario, id_colegio, id_programa, ciclo, id_grado, activo, q, page, id_seccion=id_seccion,
+        estado_pertenencia=pertenencia,
     )
 
 
@@ -71,13 +75,15 @@ def editar_alumno(id_alumno: int, data: AlumnoEditar, db: Db, usuario: ConAcceso
 
 @router.patch("/alumnos/{id_alumno}/activar", response_model=AlumnoItem)
 def activar_alumno(id_alumno: int, data: CambioEstadoAlumno, db: Db, usuario: ConAcceso):
-    """Vuelve a su grupo desde `aplicar_desde` (hoy o antes)."""
+    """Vuelve a su grupo desde `aplicar_desde` (hoy o antes). Con pertenencia pendiente,
+    solo cambia el estado."""
     return alumno_service.cambiar_estado(db, id_alumno, True, data, usuario)
 
 
 @router.patch("/alumnos/{id_alumno}/desactivar", response_model=AlumnoItem)
 def desactivar_alumno(id_alumno: int, data: CambioEstadoAlumno, db: Db, usuario: ConAcceso):
-    """Deja de pertenecer a su grupo desde `aplicar_desde` (hoy o antes)."""
+    """Deja de pertenecer a su grupo desde `aplicar_desde` (hoy o antes). Con pertenencia
+    pendiente, solo cambia el estado."""
     return alumno_service.cambiar_estado(db, id_alumno, False, data, usuario)
 
 

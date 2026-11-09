@@ -7,8 +7,9 @@ la marca `# REGLA PROVISIONAL` en `app/services/reglas_provisionales.py`.
 
 **Estado de todas: pendiente de validar con el analista después de la exposición del 29/10.**
 
-Ninguna cambia la forma de una respuesta de la API: solo cambian valores (`escritura.permitida`
-de la rúbrica y los conteos del Inicio del Supervisor).
+DP-1 y DP-2 no cambian la forma de una respuesta de la API: solo cambian valores
+(`escritura.permitida` de la rúbrica y los conteos del Inicio del Supervisor). DP-3 a DP-5 son
+de la Tanda Q1 (CU014, semana 14) y no están en `reglas_provisionales.py`.
 
 ## DP-1 · El mes partido entre dos PA en la Rúbrica (D88)
 
@@ -31,6 +32,38 @@ de la rúbrica y los conteos del Inicio del Supervisor).
 | **Qué cambia** | `GET /inicio/supervisor`: `registros_vencidos`, `registros_incompletos`, sus desgloses por módulo y la alerta "Sincronización Olvidada", que también aparece durante el PR. **No cambia:** "Incumplimiento de Sede", que sigue mirando el PA en curso (un colegio en un PR no la genera); "Inactividad Operativa"; "Colegios operando"; "Docentes activos"; ni la Salud del Sistema. |
 | **Cómo revertirla** | En `app/services/reglas_provisionales.py`: que `regla_pa_de_referencia` devuelva el periodo solo si es un PA. La usa `calendario.pa_de_referencia_para_vencidos`, que solo llama `registros_vencidos.estado_de_registros`. `pa_actual_de_colegios` no se tocó. |
 | **Tests** | `tests/test_alertas_operativas.py`, `test_dp2_*`, y `tests/test_rubricas.py`, `test_dp2_*`. Dos tests anteriores cambiaron por esta regla (ver el reporte de la Tanda M). |
+
+## DP-3 · El alumno conserva "Nombres" y "Apellidos" por separado
+
+| | |
+|---|---|
+| **CU** | CU014 (Alumnos, versión de la semana 14), CU016 (Usuarios). |
+| **Problema** | CU014 pide un solo campo "Nombres y apellidos" en "Agregar", "Editar" y la importación de la nómina. |
+| **Decisión** | Se mantienen los dos campos separados, como hoy: permiten ordenar por apellido y son coherentes con Usuarios (CU016). Además, la nómina real los separa en el 92 % de las filas ("APELLIDOS, Nombres") y en casi todo el resto (apellidos en MAYÚSCULAS). La importación (Tanda Q2) los separa con una regla fija. |
+| **Qué cambia** | Nada en el nombre del alumno: no se aplica esa parte del CU. |
+| **Pendiente** | Que el analista lo ratifique y actualice el CU. |
+
+## DP-4 · Alcance del Docente sobre los alumnos con pertenencia pendiente
+
+| | |
+|---|---|
+| **CU** | CU014: "El Docente ve a estos alumnos cuando su colegio forma parte de sus asignaciones vigentes." |
+| **Problema** | El alcance del Docente es por par (colegio, grado), pero un alumno con pertenencia pendiente puede no tener grado o tener uno ajeno. |
+| **Decisión** | **Lectura:** ve al alumno pendiente si su colegio está entre los colegios de su alcance de lectura, sin importar su grado. **Escritura:** puede escribir sobre él si el colegio está entre los de su alcance de escritura. Si pone o cambia el grado, o completa el grupo, el par (colegio, grado) final tiene que estar en su alcance (`403 alumno_fuera_de_alcance`). Puede corregir nombres, apellidos o DNI aunque el grado sea ajeno. Los alumnos con pertenencia siguen rigiéndose por los pares. El Supervisor no cambia. |
+| **Qué cambia** | `GET /alumnos`, `GET /alumnos/{id}` y sus pestañas; `PATCH /alumnos/{id}`, `/activar` y `/desactivar`. |
+| **Cómo revertirla** | En `app/services/alumno_service.py`: `_exigir_alcance_sobre` y la condición de alcance de `listar_alumnos`. |
+| **Tests** | `tests/test_alumnos_pendientes.py`, `test_dp4_*`. |
+
+## DP-5 · Alumno inactivo con pertenencia pendiente
+
+| | |
+|---|---|
+| **CU** | CU014 (Editar; Activar o inactivar). |
+| **Problema** | Un alumno sin intervalos puede estar inactivo, y el CU no dice cuándo confirma su pertenencia en ese caso. |
+| **Decisión** | Puede editarse (incluso completar el grupo de su ficha), pero no confirma su pertenencia hasta que lo activen: `pertenece_desde` se rechaza con "Activa al alumno antes de confirmar desde qué fecha forma parte de su grupo." Activar o inactivar a un alumno pendiente no abre ni cierra intervalos, aunque la ficha tenga el grupo completo. |
+| **Qué cambia** | `PATCH /alumnos/{id}`, `/activar` y `/desactivar`. |
+| **Cómo revertirla** | En `app/services/alumno_service.py`: `_validar_fechas_de_pendiente` y `cambiar_estado`. |
+| **Tests** | `tests/test_alumnos_pendientes.py`, `test_dp5_*`. |
 
 ## S22 · Un alumno que cambia de grupo a mitad de mes no aparece en el grupo nuevo (pendiente, sin cambio)
 

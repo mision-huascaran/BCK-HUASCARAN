@@ -1,14 +1,14 @@
 # Diseño de la base de datos · SICEDU (v5)
 
-> Refleja: rama development en `ceb6c3c`, migración cabeza `a7d3e5f9b102`.
-> Generado a partir del esquema real de PostgreSQL (alembic upgrade head) el 04/11/2026.
+> Refleja: rama development en `372ec8f`, migración cabeza `c6e2a9d4f713`.
+> Generado a partir del esquema real de PostgreSQL (alembic upgrade head) el 09/11/2026.
 > Reemplaza al diseño v4 (21/10/2026).
 
 ## 1. Resumen
 
 La base de datos guarda la organización de los colegios atendidos por Misión Huascarán (colegios, grados, secciones, subprogramas y calendario académico de cada año escolar), los alumnos y su pertenencia histórica a cada grupo, las cuentas de los tres roles con sus sesiones, y lo que registra el Docente en los cuatro módulos operativos: Asistencias, Seguimiento de Lectura, Rúbrica mensual y Registro de Vuelo. También guarda quién puede escribir y cuándo (asignaciones y permisos de corrección), las actividades de trabajo, el resultado de cada operación sincronizada y el historial de cambios.
 
-Totales del esquema real: **40 tablas**, 373 columnas, 143 claves foráneas, 17 UNIQUE, 40 CHECK y 28 índices aparte de los de PK y UNIQUE.
+Totales del esquema real: **40 tablas**, 374 columnas, 143 claves foráneas, 17 UNIQUE, 42 CHECK y 29 índices aparte de los de PK y UNIQUE.
 
 | Módulo | Tablas | Cantidad |
 |---|---|---|
@@ -83,9 +83,9 @@ erDiagram
     docente ||--o{ actividad : "FK"
     sesion ||--o{ actividad : "FK"
     colegio ||--o{ alumno : "FK"
-    grado ||--o{ alumno : "FK"
-    programa ||--o{ alumno : "FK"
-    seccion ||--o{ alumno : "FK"
+    grado |o--o{ alumno : "FK"
+    programa |o--o{ alumno : "FK"
+    seccion |o--o{ alumno : "FK"
     actividad |o--o{ alumno_pertenencia : "FK"
     alumno ||--o{ alumno_pertenencia : "FK"
     programa ||--o{ alumno_pertenencia : "FK"
@@ -761,6 +761,7 @@ erDiagram
         integer modificado_por
         timestamptz modificado_en
         integer id_seccion FK
+        varchar dni
     }
     alumno_pertenencia {
         integer id PK
@@ -793,9 +794,9 @@ erDiagram
         integer id_seccion PK
     }
     colegio ||--o{ alumno : "id_colegio"
-    grado ||--o{ alumno : "id_grado"
-    programa ||--o{ alumno : "id_programa_actual"
-    seccion ||--o{ alumno : "id_seccion, id_colegio, id_grado"
+    grado |o--o{ alumno : "id_grado"
+    programa |o--o{ alumno : "id_programa_actual"
+    seccion |o--o{ alumno : "id_seccion, id_colegio, id_grado"
     actividad |o--o{ alumno_pertenencia : "id_actividad"
     alumno ||--o{ alumno_pertenencia : "id_alumno"
     programa ||--o{ alumno_pertenencia : "id_programa"
@@ -812,15 +813,16 @@ erDiagram
 | `nombres` | Variable | VARCHAR | Nombres del alumno. | NO |
 | `apellidos` | Variable | VARCHAR | Apellidos del alumno. | NO |
 | `id_colegio` | 4 bytes | INTEGER | Colegio actual del alumno (uno solo). Clave foránea a `colegio`; con `id_seccion` e `id_grado`, clave foránea a `seccion`. | NO |
-| `id_grado` | 4 bytes | INTEGER | Grado actual del alumno (uno solo). Clave foránea a `grado`; con `id_seccion` e `id_colegio`, clave foránea a `seccion`. | NO |
-| `id_programa_actual` | 4 bytes | INTEGER | Subprograma actual (foto del grupo vigente). Clave foránea a `programa`. | NO |
+| `id_grado` | 4 bytes | INTEGER | Grado actual del alumno (uno solo). NULL = alumno con pertenencia pendiente (importado desde una nómina, CU014), sin intervalos en `alumno_pertenencia`. Clave foránea a `grado`; con `id_seccion` e `id_colegio`, clave foránea a `seccion`. | SÍ |
+| `id_programa_actual` | 4 bytes | INTEGER | Subprograma actual (foto del grupo vigente). NULL = alumno con pertenencia pendiente (importado desde una nómina, CU014), sin intervalos en `alumno_pertenencia`. Clave foránea a `programa`. | SÍ |
 | `fecha_registro` | 4 bytes | DATE | Día (fecha de Lima) en que se registró el alumno en el sistema. | NO |
 | `activo` | 1 byte | BOOLEAN | false = alumno inactivo (borrado lógico). | NO |
 | `creado_por` | 4 bytes | INTEGER | Usuario que creó la fila. Clave foránea a `usuario`. | NO |
 | `creado_en` | 8 bytes | TIMESTAMPTZ | Instante en que el servidor guardó la fila (UTC). | NO |
 | `modificado_por` | 4 bytes | INTEGER | Último usuario que modificó la fila. NULL = nunca modificada. Clave foránea a `usuario`. | SÍ |
 | `modificado_en` | 8 bytes | TIMESTAMPTZ | Instante de la última modificación (UTC). NULL = nunca modificada. | SÍ |
-| `id_seccion` | 4 bytes | INTEGER | Sección actual (foto del grupo vigente, igual que `id_programa_actual`). Con `id_colegio` e `id_grado`, clave foránea a `seccion`. | NO |
+| `id_seccion` | 4 bytes | INTEGER | Sección actual (foto del grupo vigente, igual que `id_programa_actual`). NULL = alumno con pertenencia pendiente (importado desde una nómina, CU014), sin intervalos en `alumno_pertenencia`. Con `id_colegio` e `id_grado`, clave foránea a `seccion`. | SÍ |
+| `dni` | 8 caracteres | VARCHAR(8) | DNI del alumno (opcional). Texto de 8 dígitos, único entre alumnos e independiente del DNI de `usuario`. | SÍ |
 
 **Restricciones:**
 
@@ -832,16 +834,22 @@ erDiagram
   - `id_seccion`, `id_colegio`, `id_grado` → `seccion` (`id_seccion`, `id_colegio`, `id_grado`): `fk_alumno_seccion`.
   - `creado_por`, `modificado_por` → `usuario` (`id_usuario`): `alumno_creado_por_fkey`, `alumno_modificado_por_fkey` (auditoría).
 - UNIQUE: no tiene.
-- CHECK: no tiene.
+- CHECK:
+  - `ck_alumno_dni_formato`: `CHECK (((dni)::text ~ '^[0-9]{8}$'::text))`. El DNI tiene exactamente 8 dígitos.
+  - `ck_alumno_grupo_coherente`: `CHECK ((((id_seccion IS NULL) = (id_programa_actual IS NULL)) AND ((id_seccion IS NULL) OR (id_grado IS NOT NULL))))`. La sección y el subprograma van juntos y, si hay sección, hay grado.
 
 **Índices:**
 
 - `ix_alumno_colegio_grado`: Índice sobre (`id_colegio`, `id_grado`). Alumnos de un aula (asistencia, vencidos e incompletos de CU011).
+- `uq_alumno_dni`: Único sobre (`dni`), parcial: `WHERE (dni IS NOT NULL)`. Un DNI no se repite entre alumnos; varios alumnos pueden no tenerlo.
 
 **Reglas del servicio:**
 
 - En 1.º grado todos los alumnos son de Alfabetización.
 - Crear, cambiar de grupo, inactivar y activar llevan una fecha efectiva (hoy o antes) y abren o cierran intervalos de `alumno_pertenencia` en la misma transacción; corregir nombres no la toca.
+- Un alumno con pertenencia pendiente (ningún intervalo, esté activo o no) no forma parte de las listas de los demás módulos. Activarlo o inactivarlo solo cambia su estado; abre su primer intervalo al confirmar su grupo con "Pertenece al grupo desde", ya estando activo.
+- El CHECK del DNI solo existe en PostgreSQL; en SQLite (tests) lo valida el servicio.
+- Sobre un alumno con pertenencia pendiente, el alcance del Docente es por colegio; si pone o cambia el grado o confirma el grupo, el par colegio y grado final debe estar en su alcance.
 - El Docente solo escribe alumnos de su alcance (colegio y grado vigentes) y con una actividad activa.
 - El ciclo EBR del alumno se calcula (`app/core/ciclo.py`), no se guarda.
 
@@ -2542,6 +2550,7 @@ La v4 (21/10/2026) era el plan de las tandas T1 a T9. Estos son los cambios apli
 | `e4a9b7c2d815` anio_escolar_desde_calendario | 24/10 | `uq_anio_escolar_nombre`; las fechas del año escolar salen de su calendario general (inicio del PA1 a fin del PR4). |
 | `f5c1d8a3e926` lectura_no_realizada_historial | 25/10 | Crea `lectura_no_realizada` (historial de declaraciones y su reversión, una vigente por tabla). |
 | `a7d3e5f9b102` salud_por_registro | 25/10 | Agrega `clave_registro` a `operacion_sincronizacion` y `operacion_pendiente`, con sus índices. |
+| `c6e2a9d4f713` alumno_pendiente_dni | 09/11 | `alumno`: `id_grado`, `id_seccion` e `id_programa_actual` pasan a nullable (alumno con pertenencia pendiente, CU014), con `ck_alumno_grupo_coherente`; agrega `dni`, con `ck_alumno_dni_formato` y el índice único parcial `uq_alumno_dni`. |
 
 Cambios de reglas sin migración:
 

@@ -195,10 +195,15 @@ def _ultima(db: Session, id_alumno: int) -> Optional[AlumnoPertenencia]:
     ).first()
 
 
-def sin_pertenencia(db: Session, alumno: Alumno) -> bool:
-    """Alumno activo sin ningún intervalo: todavía no tiene un inicio de pertenencia y lo
-    confirma al editarlo (CU014)."""
-    return alumno.activo and _ultima(db, alumno.id_alumno) is None
+def pertenencia_pendiente(db: Session, alumno: Alumno) -> bool:
+    """Alumno sin ningún intervalo, esté activo o no (CU014): no forma parte de ninguna
+    lista de los demás módulos hasta completar su pertenencia."""
+    return _ultima(db, alumno.id_alumno) is None
+
+
+def pendiente_sql():
+    """`pertenencia_pendiente` como condición SQL sobre `Alumno`, para los listados."""
+    return ~select(AlumnoPertenencia.id).where(AlumnoPertenencia.id_alumno == Alumno.id_alumno).exists()
 
 
 # ── Validaciones ────────────────────────────────────────────────────────────────────
@@ -315,6 +320,9 @@ def _no_antes_de(fecha: date, limite: date, mensaje: str, campo: str) -> None:
 # ── Escrituras ──────────────────────────────────────────────────────────────────────
 
 def _nuevo_intervalo(alumno: Alumno, desde: date, movimiento: Movimiento) -> AlumnoPertenencia:
+    if alumno.id_grado is None or alumno.id_seccion is None or alumno.id_programa_actual is None:
+        # El servicio valida el grupo antes: si se llega aquí, es un error de programación.
+        raise ValueError("No se puede abrir un intervalo de pertenencia con el grupo incompleto.")
     return AlumnoPertenencia(
         id_alumno=alumno.id_alumno,
         id_colegio=alumno.id_colegio,

@@ -8,6 +8,7 @@ Todo error que el cliente deba poder distinguir sin leer el texto se responde as
 pasan. `detail` mantiene el nombre que ya usan los HTTPException de FastAPI, así el
 frontend lee el mensaje siempre del mismo campo.
 """
+from collections.abc import Iterable
 from typing import Any, Optional
 
 from fastapi import FastAPI, Request, status
@@ -15,7 +16,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.validacion import MOTIVO_VALIDACION, documentar_formato_422, manejar_error_validacion
+from app.core.validacion import (
+    MENSAJE_GENERAL,
+    MENSAJE_OBLIGATORIO,
+    MOTIVO_VALIDACION,
+    documentar_formato_422,
+    manejar_error_validacion,
+)
 
 # Textos por defecto de Starlette para rutas inexistentes o métodos no admitidos.
 TRADUCCIONES_HTTP = {
@@ -49,14 +56,30 @@ class ErrorNegocio(Exception):
         return cuerpo
 
 
-def error_de_campo(campo: str, mensaje: str) -> ErrorNegocio:
-    """422 de una regla de negocio sobre un campo, con el formato único de validación
-    (`motivo: validacion`, `errores: [{campo, mensaje}]`) y el mensaje también en `detail`."""
+def errores_de_campos(campos: Iterable[str], mensaje: str) -> ErrorNegocio:
+    """422 de una regla de negocio sobre uno o más campos, con el formato único de
+    validación (`motivo: validacion`, `errores: [{campo, mensaje}]`, un error por campo) y
+    el mensaje también en `detail`."""
     return ErrorNegocio(
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         mensaje,
         motivo=MOTIVO_VALIDACION,
-        extra={"errores": [{"campo": campo, "mensaje": mensaje}]},
+        extra={"errores": [{"campo": campo, "mensaje": mensaje} for campo in campos]},
+    )
+
+
+def error_de_campo(campo: str, mensaje: str) -> ErrorNegocio:
+    return errores_de_campos([campo], mensaje)
+
+
+def campo_obligatorio(campo: str) -> ErrorNegocio:
+    """El mismo 422 que da la validación de la petición cuando falta un campo obligatorio,
+    para los campos cuya obligatoriedad depende de una regla de negocio."""
+    return ErrorNegocio(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        MENSAJE_GENERAL,
+        motivo=MOTIVO_VALIDACION,
+        extra={"errores": [{"campo": campo, "mensaje": MENSAJE_OBLIGATORIO}]},
     )
 
 

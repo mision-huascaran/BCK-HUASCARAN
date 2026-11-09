@@ -40,6 +40,7 @@ from app.services.calendario import (
     pa_actual_de_colegios,
 )
 from app.services.permiso_service import vigentes_del_docente
+from app.services.pertenencia import pendiente_sql
 from app.services.registros_vencidos import EstadoRegistros, RegistroObligatorio, estado_de_registros, por_modulo
 from app.services.salud_sistema import salud_sistema
 from app.services.sincronizacion import pendientes_del_usuario
@@ -378,12 +379,13 @@ def inicio_supervisor(db: Session) -> InicioSupervisor:
 # ── Directivo ───────────────────────────────────────────────────────────────────────
 
 def beneficiarios_activos(db: Session) -> int:
-    """CU012: alumnos activos de colegios activos."""
+    """CU012: alumnos activos de colegios activos, sin los que tienen la pertenencia
+    pendiente (CU014)."""
     return db.exec(
         select(func.count())
         .select_from(Alumno)
         .join(Colegio, Colegio.id_colegio == Alumno.id_colegio)
-        .where(col(Alumno.activo).is_(True), col(Colegio.activo).is_(True))
+        .where(col(Alumno.activo).is_(True), col(Colegio.activo).is_(True), ~pendiente_sql())
     ).one()
 
 

@@ -157,7 +157,8 @@ def _ids_enteros(registros: list[tuple[str, str, str]], tabla: str) -> set[int]:
 
 def asignaciones_involucradas(db: Session, registros: list[tuple[str, str, str]]) -> list[AsignacionInvolucrada]:
     """Colegio, grado, ciclo y sección de los alumnos de los registros tocados, según el
-    estado actual de cada alumno. Una sola consulta."""
+    estado actual de cada alumno. Una sola consulta. Un alumno con pertenencia pendiente
+    aparece con su colegio y lo que tenga de su grupo (el resto en null)."""
     consultas = []
     ids = _ids_enteros(registros, "alumno")
     if ids:
@@ -182,19 +183,19 @@ def asignaciones_involucradas(db: Session, registros: list[tuple[str, str, str]]
         .select_from(Alumno)
         .join(alumnos, alumnos.c[0] == Alumno.id_alumno)
         .join(Colegio, Colegio.id_colegio == Alumno.id_colegio)
-        .join(Grado, Grado.id_grado == Alumno.id_grado)
-        .join(Seccion, Seccion.id_seccion == Alumno.id_seccion)
-        .join(CicloEbr, CicloEbr.id_ciclo == Grado.id_ciclo)
-        .join(Programa, Programa.id_programa == Alumno.id_programa_actual)
+        .outerjoin(Grado, Grado.id_grado == Alumno.id_grado)
+        .outerjoin(Seccion, Seccion.id_seccion == Alumno.id_seccion)
+        .outerjoin(CicloEbr, CicloEbr.id_ciclo == Grado.id_ciclo)
+        .outerjoin(Programa, Programa.id_programa == Alumno.id_programa_actual)
         .distinct()
     ).all()
     # Se ordena aquí: con DISTINCT, PostgreSQL exige que el ORDER BY repita la expresión
     # exacta del ciclo, y sus parámetros se renderizan aparte.
-    filas = sorted(filas, key=lambda f: (f[1], f[3], f[2], f[5]))
+    filas = sorted(filas, key=lambda f: (f[1], f[3] or 0, f[2] or "", f[5] or ""))
     return [
         AsignacionInvolucrada(
             colegio=ItemCatalogo(id=id_colegio, nombre=colegio),
-            grado=ItemCatalogo(id=id_grado, nombre=grado),
+            grado=ItemCatalogo(id=id_grado, nombre=grado) if id_grado is not None else None,
             ciclo=nombre_ciclo,
             seccion=seccion,
         )

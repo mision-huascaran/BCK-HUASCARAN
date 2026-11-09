@@ -241,6 +241,7 @@ def lectura(db: Session, id_alumno: int) -> list[LecturaDeLaSemana]:
 ETIQUETAS = {
     "nombres": "Nombres",
     "apellidos": "Apellidos",
+    "dni": "DNI",
     "id_grado": "Grado",
     "id_programa": "Subprograma",
     "id_colegio": "Colegio",

@@ -790,21 +790,34 @@ habitual o reprogramada. **Errores:** `403 sin_permiso` (Directivo), `403 aula_f
 
 Supervisor (todos, sin actividad) y Docente (su alcance, con actividad para escribir) (CU014, CU015).
 
+**Alumno con pertenencia pendiente:** el que no tiene ningún intervalo de pertenencia, esté activo o inactivo.
+Puede no tener grado, y no tiene subprograma ni sección (los alumnos antiguos sin intervalos sí los tienen). No
+aparece en las listas de Asistencias, Lectura, Rúbrica ni Registro de Vuelo, ni en los conteos de Inicio y
+Dashboard.
+
+**Alcance del Docente sobre un alumno pendiente:** lo ve y escribe sobre él si su colegio está entre los
+colegios de su alcance, sin importar el grado. Si pone o cambia el grado, o completa el grupo, el par (colegio,
+grado) final tiene que estar en su alcance (`403 alumno_fuera_de_alcance`). Puede corregir nombres, apellidos o
+DNI aunque el grado sea ajeno.
+
 ### `GET /alumnos`
 
 **Query:** `id_colegio`, `id_grado`, `id_seccion`, `id_programa`, `ciclo` (`III` | `IV` | `V`), `activo` (por
-defecto `true`), `q`, `page`.
+defecto `true`), `pertenencia` (`definida` | `pendiente`; sin ella, todos), `q`, `page`.
 
 - `q`: cada palabra en "nombres apellidos", sin distinguir mayúsculas ni tildes y en cualquier orden.
 - Orden: apellidos y nombres sin distinguir mayúsculas ni tildes, y por id si empatan.
 - El Supervisor no ve los alumnos de colegios inactivos.
+- `grado`, `programa`, `ciclo` y `seccion` pueden llegar en `null` (alumno con pertenencia pendiente). Un alumno
+  sin ese dato no coincide con el filtro correspondiente.
 
 ```json
 {
   "items": [{
-    "id": 12, "nombres": "Luis", "apellidos": "Pérez Quispe", "colegio": { "id": 1, "nombre": "AMASHCA" },
+    "id": 12, "nombres": "Luis", "apellidos": "Pérez Quispe", "dni": "12345678",
+    "colegio": { "id": 1, "nombre": "AMASHCA" },
     "grado": { "id": 1, "nombre": "1.º" }, "programa": { "id": 1, "nombre": "Alfabetización" }, "ciclo": "III",
-    "seccion": { "id": 3, "nombre": "Única" }, "activo": true
+    "seccion": { "id": 3, "nombre": "Única" }, "activo": true, "pertenencia_pendiente": false
   }],
   "total": 1, "page": 1, "page_size": 40, "total_pages": 1
 }
@@ -813,18 +826,19 @@ defecto `true`), `q`, `page`.
 ### `POST /alumnos`
 
 ```json
-{ "nombres": "Luis", "apellidos": "Pérez", "id_colegio": 1, "id_grado": 1, "id_seccion": 3,
+{ "nombres": "Luis", "apellidos": "Pérez", "dni": "12345678", "id_colegio": 1, "id_grado": 1, "id_seccion": 3,
   "id_programa": 1, "pertenece_desde": "2026-03-16" }
 ```
 
 Sin `id_seccion`, la única sección activa del grado (`422` en `id_seccion` si el grado tiene varias, o si la
-enviada no es una sección activa de ese colegio y grado). `pertenece_desde` no puede ser futura. Responde `201`
-con el `AlumnoItem`.
+enviada no es una sección activa de ese colegio y grado). `pertenece_desde` no puede ser futura. `dni` es
+opcional: se recorta y una cadena vacía equivale a no tenerlo. Responde `201` con el `AlumnoItem`.
 
 **Errores:** `403 alumno_fuera_de_alcance` (Docente fuera de su alcance), `409 actividad_requerida`,
+`409 dni_duplicado` ("Ya existe un alumno registrado con ese DNI.", entre todos los alumnos),
 `422 colegio_inexistente`, `422 colegio_inactivo`, `422 grado_no_ofrecido`, `422 programa_no_ofrecido`,
 `422 validacion` ("En 1.º grado todos los alumnos pertenecen a Alfabetización.", fechas futuras, nombres
-vacíos).
+vacíos; en el campo `dni`: "El DNI debe tener exactamente 8 dígitos.").
 
 ### `GET /alumnos/{id_alumno}`
 
@@ -834,33 +848,50 @@ Cabecera de la vista de detalle: los campos del `AlumnoItem` más `fecha_registr
 
 ### `PATCH /alumnos/{id_alumno}`
 
-Todo opcional: `nombres`, `apellidos`, `id_colegio`, `id_grado`, `id_seccion`, `id_programa` y
-`cambio_grupo_desde` (obligatorio si cambia el grupo o el subprograma: "Indica desde qué fecha el alumno
-pertenece a su nuevo grupo.") y `pertenece_desde`. Responde el `AlumnoItem`.
+Todo opcional: `nombres`, `apellidos`, `dni` (`null` lo quita), `id_colegio`, `id_grado`, `id_seccion`,
+`id_programa` y `cambio_grupo_desde` (obligatorio si cambia el grupo o el subprograma: "Indica desde qué fecha el
+alumno pertenece a su nuevo grupo.") y `pertenece_desde`. Responde el `AlumnoItem`.
 
-`pertenece_desde` ("Pertenece al grupo desde", CU014) es solo para un **alumno activo sin pertenencia**
-(`GET /alumnos/{id}` con `pertenece_desde: null`):
+`pertenece_desde` ("Pertenece al grupo desde", CU014) es solo para un **alumno con pertenencia pendiente**. A un
+alumno que ya tiene pertenencia se le rechaza: `422` en `pertenece_desde` ("El alumno ya tiene un inicio de
+pertenencia registrado."). El alumno pendiente edita así:
 
-- Para él es **obligatorio** en cualquier `PATCH`: sin él, `422` en `pertenece_desde` ("Confirma desde qué
-  fecha el alumno forma parte de este grupo."). El front propone `fecha_registro`.
-- Hoy o antes (hora de Lima), con el mismo mensaje que al crear. Se aplican los demás cambios y se abre el
-  primer intervalo con el grupo final del alumno, todo en la misma transacción, validado contra las listas
-  de clases ya guardadas como al crear (`409 conflicto_listas_historicas`). Queda en el historial como fecha
-  efectiva.
-- No lleva `cambio_grupo_desde` aunque cambie el grupo: si llega, `422` en `cambio_grupo_desde` ("Este alumno
-  todavía no tiene un inicio de pertenencia: usa 'Pertenece al grupo desde'.").
-- A un alumno que ya tiene pertenencia, o a uno inactivo (vuelve con "Activar" y su `aplicar_desde`), se le
-  rechaza: `422` en `pertenece_desde` ("El alumno ya tiene un inicio de pertenencia registrado.").
-- El Docente necesita, como en toda edición, el alumno en su alcance y una actividad activa.
+1. **Sin `id_programa`, `id_seccion` ni `pertenece_desde`:** guarda nombres, apellidos, DNI, grado (y colegio, si
+   es el Supervisor) y sigue pendiente. Si llega un grado, el colegio debe ofrecerlo (`422 grado_no_ofrecido`).
+   Si cambia el colegio y el nuevo no ofrece su grado, el grado queda en `null`. Si cambia el colegio o el
+   grado de un alumno antiguo con el grupo completo, la sección y el subprograma quedan en `null`.
+2. **Con `id_programa` o `id_seccion`:** el grado, el subprograma y la sección tienen que quedar completos, con
+   los valores de la ficha para lo que no llegó (si el grado tiene una sola sección activa, se asigna sola). Por
+   cada uno que falte, o si la sección es ambigua o inexistente, `422` en ese campo: "Completa el grado, el
+   subprograma y la sección, o deja vacíos el subprograma y la sección." Con el grupo completo se valida como al
+   crear y `pertenece_desde` es obligatorio: sin él, `422` en `pertenece_desde` ("Confirma desde qué fecha el
+   alumno forma parte de este grupo."). El front propone `fecha_registro`.
+3. **Con `pertenece_desde` sin `id_programa` ni `id_seccion`:** si la ficha ya tiene el grupo completo, se abre el
+   intervalo con ese grupo; si no, `422` con el texto del punto 2 en cada campo que falta.
+4. **`cambio_grupo_desde`** se rechaza: `422` en ese campo ("Este alumno todavía no tiene un inicio de
+   pertenencia: usa 'Pertenece al grupo desde'.").
+5. **Alumno inactivo:** puede editar lo mismo y completar el grupo de su ficha, pero no se abre ningún intervalo.
+   `pertenece_desde` se rechaza: `422` en ese campo ("Activa al alumno antes de confirmar desde qué fecha forma
+   parte de su grupo."). La confirma editándolo después de activarlo.
 
-**Errores:** los de `POST`, `404 alumno_no_encontrado`, `403 cambio_colegio_no_permitido` ("Solo el Supervisor
-puede cambiar el colegio de un alumno."), `409 conflicto_listas_historicas` (el cambio contradice listas de
-clases ya guardadas; trae las `clases` afectadas). En un colegio inactivo solo se pueden corregir los nombres.
+`pertenece_desde` es hoy o antes (hora de Lima), con el mismo mensaje que al crear. Se aplican los demás cambios y
+se abre el primer intervalo con el grupo final del alumno, todo en la misma transacción, validado contra las
+listas de clases ya guardadas como al crear (`409 conflicto_listas_historicas`). Queda en el historial como fecha
+efectiva. El Docente necesita, como en toda edición, una actividad activa.
+
+**Errores:** los de `POST` (incluidos `409 dni_duplicado` y el `422` en `dni`), `404 alumno_no_encontrado`,
+`403 cambio_colegio_no_permitido` ("Solo el Supervisor puede cambiar el colegio de un alumno."),
+`409 conflicto_listas_historicas` (el cambio contradice listas de clases ya guardadas; trae las `clases`
+afectadas). En un colegio inactivo solo se pueden corregir los nombres y el DNI.
 
 ### `PATCH /alumnos/{id_alumno}/activar` · `/desactivar`
 
 `{ "aplicar_desde": "2026-10-20" }` (hoy o antes). Desactivar: deja de pertenecer a su grupo desde esa fecha.
 Activar: vuelve a su grupo (exige que el colegio esté activo). Responden el `AlumnoItem`.
+
+`aplicar_desde` es obligatorio (si falta, `422` en ese campo), salvo para un alumno con pertenencia pendiente: a
+él se le ignora (el body puede ser `{}`) y solo cambia el estado, sin abrir ni cerrar intervalos, aunque la ficha
+tenga el grupo completo.
 
 ### Vista de detalle (CU015)
 
@@ -1221,7 +1252,8 @@ sin cambios, "Sin registros". El front lo muestra tal cual; para decidir usa `pr
 
 Detalle (CU019): los campos del resumen más `sincronizado_en`, `registros_pendientes`, `cambios_por_modulo`
 (`[{ "modulo", "total", "creados", "editados", "activados", "inactivados" }]`) y `asignaciones` involucradas
-(`[{ "colegio", "grado", "ciclo", "seccion" }]`). Ajena o inexistente: `404`.
+(`[{ "colegio", "grado", "ciclo", "seccion" }]`; `grado`, `ciclo` y `seccion` llegan en `null` si el alumno
+tocado tiene la pertenencia pendiente). Ajena o inexistente: `404`.
 
 ---
 
@@ -1349,7 +1381,8 @@ Los registros de ese módulo tocados en la actividad, con el contexto para abrir
 ```
 
 Según el módulo vienen además `programa`, `alumno`, `id_semana`, `semana_inicio`, `mes`, `id_anio_escolar` o
-`id_periodo_academico`. **Errores:** `404 docente_no_encontrado`, `404 actividad_no_encontrada`,
+`id_periodo_academico`. En el módulo `alumnos`, `grado` y `seccion` llegan en `null` si el alumno tiene la
+pertenencia pendiente. **Errores:** `404 docente_no_encontrado`, `404 actividad_no_encontrada`,
 `422 validacion`.
 
 ---

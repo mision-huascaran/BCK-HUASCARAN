@@ -104,9 +104,10 @@ class CambiosModulo(BaseModel):
 
 class AsignacionInvolucrada(BaseModel):
     colegio: ItemCatalogo
-    grado: ItemCatalogo
-    ciclo: str
-    seccion: str
+    # Grado, ciclo y sección: null si el alumno tiene la pertenencia pendiente (CU014).
+    grado: Optional[ItemCatalogo] = None
+    ciclo: Optional[str] = None
+    seccion: Optional[str] = None
 
 
 class ActividadDetalle(BaseModel):
