@@ -31,6 +31,7 @@
 - [Calendarios](#calendarios)
 - [Catálogos](#catálogos)
 - [Alumnos](#alumnos)
+- [Importación de nómina (CU014)](#importación-de-nómina-cu014)
 - [Clases y reprogramaciones](#clases-y-reprogramaciones)
 - [Asistencias](#asistencias)
 - [Seguimiento de lectura](#seguimiento-de-lectura)
@@ -112,6 +113,7 @@ Un rol fuera de la lista responde `403 sin_permiso` ("No tienes permisos para re
 | `GET /calendarios`, `GET /calendarios/periodo`, `GET /clases/{id}/reprogramaciones` | ✅ * | ✅ | ❌ |
 | `POST`/`PUT /calendarios…` | ❌ | ✅ | ❌ |
 | `/alumnos` (lectura y escritura) | ✅ * | ✅ | ❌ |
+| `/alumnos/importaciones` | ❌ | ✅ | ❌ |
 | `GET /asistencias`, `/lectura/tablas`, `/rubricas`, `/rubricas/criterios`, `/registro-vuelo` | ✅ * | ✅ (solo lectura) | ❌ |
 | `PUT /asistencias`, escrituras de lectura, `PUT /rubricas`, `PUT /registro-vuelo` | ✅ * | ❌ | ❌ |
 | `/actividades…`, `/sincronizacion…`, `GET /me/asignaciones`, `/me/habilitaciones`, `/me/permisos` | ✅ | ❌ | ❌ |
@@ -903,9 +905,104 @@ tenga el grupo completo.
 | `GET /alumnos/{id}/registro-vuelo` | Una fila por PA: `[{ "numero", "id_periodo_academico", "entrada", "origen_entrada", "nivel_colocado", "id_nivel_colocado", "proyeccion", "nivel_programa" }]` |
 | `GET /alumnos/{id}/historial?page=` | Paginado: `[{ "fecha", "usuario", "rol", "accion", "cambios": [{ "campo", "anterior", "nuevo" }] }]` |
 
-En el historial, `accion` es un código (`crear` | `editar` | `activar` | `inactivar`) que el front traduce al
-verbo de CU014; `rol` es el nombre del rol del autor ("Docente", "Supervisor"); en `crear` el arreglo
-`cambios` llega vacío.
+En el historial, `accion` es un código (`crear` | `editar` | `activar` | `inactivar` | `importar`) que el front
+traduce al verbo de CU014; `rol` es el nombre del rol del autor ("Docente", "Supervisor"); en `crear` el arreglo
+`cambios` llega vacío; en `importar` llega `[{ "campo": "Archivo", "anterior": null, "nuevo": "nomina.xlsx" }]`.
+
+---
+
+## Importación de nómina (CU014)
+
+Solo el Supervisor (Docente y Directivo: `403 sin_permiso`). Es exclusivamente en línea, no requiere actividad de
+trabajo y no se guarda como operación pendiente. Crea alumnos activos con la pertenencia pendiente.
+
+**El archivo viaja como cuerpo crudo**, sin `FormData`, y su nombre en el query. El backend no mira el
+`Content-Type`: la validez se decide abriendo el archivo.
+
+```js
+const idImportacion = crypto.randomUUID(); // Al elegir el archivo; se reutiliza en los reintentos.
+const previa = await fetch(
+  `/api/alumnos/importaciones/vista-previa?nombre_archivo=${encodeURIComponent(archivo.name)}`,
+  { method: 'POST', body: archivo, headers: { Authorization: `Bearer ${token}` } },
+).then((r) => r.json());
+
+const params = new URLSearchParams({
+  id_importacion: idImportacion, huella: previa.huella, nombre_archivo: archivo.name,
+});
+await fetch(`/api/alumnos/importaciones?${params}`, {
+  method: 'POST', body: archivo, headers: { Authorization: `Bearer ${token}` },
+});
+```
+
+### `POST /alumnos/importaciones/vista-previa?nombre_archivo=…`
+
+Cuerpo: el `.xlsx`. No escribe nada. Responde `200`, también con `listos: 0` (el front muestra "No hay alumnos para
+importar en este archivo."):
+
+```json
+{
+  "listos": 280, "con_advertencia": 31, "no_importadas": 63,
+  "huella": "<64 hex>",
+  "observaciones": [
+    { "hoja": "PARIACACA", "fila": 2, "tipo": "rechazo", "motivo": "colegio_no_registrado", "detalle": "Colegio no registrado." },
+    { "hoja": "AMASHCA", "fila": 9, "tipo": "advertencia", "motivo": "grado_no_reconocido", "detalle": "Grado no reconocido. Se importará sin grado." },
+    { "hoja": "Hoja3", "fila": null, "tipo": "hoja_omitida", "motivo": "hoja_omitida", "detalle": "Hoja omitida: no tiene las columnas II.EE y NOMBRES Y APELLIDOS." }
+  ]
+}
+```
+
+- `listos`: filas importables, incluidas las que tienen advertencias. `con_advertencia`: importables con al menos
+  una advertencia. `no_importadas`: rechazadas. Una hoja omitida no suma en `no_importadas`.
+- `observaciones`: todas, sin paginar (el front pagina de a 40), por orden de hoja y fila. `fila` es el número de
+  fila de Excel; una fila importable puede traer varias. El front decide por `motivo`.
+
+| `motivo` | `tipo` | `detalle` |
+| --- | --- | --- |
+| `colegio_no_registrado` | `rechazo` | Colegio no registrado. |
+| `dni_repetido` | `rechazo` | DNI repetido. |
+| `alumno_ya_registrado` | `rechazo` | Alumno ya registrado en el colegio. |
+| `grado_no_reconocido` | `advertencia` | Grado no reconocido. Se importará sin grado. |
+| `dni_no_valido` | `advertencia` | DNI no válido. Se importará sin DNI. |
+| `nombre_sin_separar` | `advertencia` | Nombre sin separar. Revisa los nombres y apellidos después de importar. |
+| `hoja_omitida` | `hoja_omitida` | Hoja omitida: no tiene las columnas II.EE y NOMBRES Y APELLIDOS. |
+
+### `POST /alumnos/importaciones?id_importacion=<uuid>&huella=<hex>&nombre_archivo=…`
+
+Cuerpo: el mismo `.xlsx`. Vuelve a analizarlo y, si la huella coincide, registra todo en una sola transacción.
+Responde `201`:
+
+```json
+{ "id_importacion": "…", "fecha": "2026-11-09T22:41:49Z", "nombre_archivo": "nomina.xlsx",
+  "importados": 280, "no_importadas": 63, "con_advertencia": 31 }
+```
+
+Con un `id_importacion` ya aplicado por el mismo usuario responde `200` con ese resultado, sin leer el cuerpo.
+
+**Errores propios:** `409 importacion_desactualizada` ("Los datos cambiaron desde la vista previa. Carga el archivo
+nuevamente.", sin escribir nada), `409 importacion_existente` (el id lo usó otro usuario), `422 sin_alumnos` ("No hay
+alumnos para importar en este archivo.").
+
+### `GET /alumnos/importaciones/{id_importacion}`
+
+`200` con el mismo cuerpo del `201`. Si no se aplicó: `404 importacion_no_encontrada` ("No se encontró la importación.").
+
+### Errores de los dos `POST`
+
+| Código | `motivo` | Cuándo |
+| --- | --- | --- |
+| `422` | `archivo_invalido` | Archivo ilegible, cuerpo vacío o más de 5 MB: "No se pudo leer el archivo. Verifica que sea un archivo Excel (.xlsx) de hasta 5 MB." |
+| `422` | `demasiados_alumnos` | Más de 3000 filas con nombre: "El archivo supera el máximo de 3000 alumnos por importación. Divide la nómina e inténtalo nuevamente." |
+| `422` | `validacion` | Falta `nombre_archivo`, `id_importacion` o `huella`, o tienen un formato inválido (`huella`: 64 hex en minúsculas; `nombre_archivo`: hasta 255 caracteres, se guarda sin rutas) |
+
+### Protocolo de huella e `id_importacion`
+
+- El `id_importacion` es un UUID que el front genera **cuando el Supervisor elige el archivo**. Un archivo nuevo lleva
+  un id nuevo.
+- La vista previa no se guarda en el servidor. La confirmación manda la `huella` recibida; si algo cambió (un colegio
+  inactivado, un grado retirado, un alumno nuevo con ese DNI o ese nombre), la huella ya no coincide.
+- **Sin respuesta al confirmar:** al recuperar la conexión, consultar `GET /alumnos/importaciones/{id_importacion}`. Con
+  `200`, la importación se aplicó: cerrar el modal e informar el resultado. Con `404`, no se aplicó: habilitar de
+  nuevo "Confirmar importación" con el mismo id.
 
 ---
 

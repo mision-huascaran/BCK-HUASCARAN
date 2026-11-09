@@ -2,7 +2,8 @@
 
 - Un carácter nulo (NUL, \\x00) en la query o en un cuerpo JSON se rechaza con el 422
   `validacion` de siempre, antes de llegar a la base: PostgreSQL no admite NUL en textos
-  y, sin esto, la petición terminaba en un 500 (lo detectó OWASP ZAP).
+  y, sin esto, la petición terminaba en un 500 (lo detectó OWASP ZAP). No se revisa el
+  cuerpo binario de las importaciones de nómina.
 - Toda respuesta lleva `X-Content-Type-Options: nosniff` y
   `Cross-Origin-Resource-Policy: same-origin`. El frontend llama a la API por su propio
   dominio (`/api`, proxy de nginx), así que same-origin no lo afecta.
@@ -22,6 +23,7 @@ CABECERAS = (
     (b"cross-origin-resource-policy", b"same-origin"),
 )
 METODOS_CON_CUERPO = frozenset({"POST", "PUT", "PATCH"})
+RUTA_DE_ARCHIVOS = "/alumnos/importaciones"
 
 
 def campo_con_nulo_en_query(query_string: bytes) -> Optional[str]:
@@ -120,6 +122,12 @@ async def _responder_nulo(campo: str, send) -> None:
     await send({"type": "http.response.body", "body": cuerpo})
 
 
+def _cuerpo_es_json(scope) -> bool:
+    """Si hay que revisar el cuerpo. El de las importaciones es un .xlsx que su ruta lee por
+    partes y con tope: leerlo aquí entero anularía ese límite."""
+    return scope["method"] in METODOS_CON_CUERPO and RUTA_DE_ARCHIVOS not in scope["path"]
+
+
 class ProteccionHttp:
     def __init__(self, app):
         self.app = app
@@ -130,7 +138,7 @@ class ProteccionHttp:
             return
         send = _con_cabeceras(send)
         campo = campo_con_nulo_en_query(scope.get("query_string", b""))
-        if campo is None and scope["method"] in METODOS_CON_CUERPO:
+        if campo is None and _cuerpo_es_json(scope):
             cuerpo = await _leer_cuerpo(receive)
             campo = campo_con_nulo_en_json(cuerpo)
             receive = _reproducir(cuerpo, receive)

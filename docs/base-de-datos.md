@@ -1,6 +1,6 @@
 # Diseño de la base de datos · SICEDU (v5)
 
-> Refleja: rama development en `372ec8f`, migración cabeza `c6e2a9d4f713`.
+> Refleja: rama development en `eeb56af`, migración cabeza `d8f1b3c5a742`.
 > Generado a partir del esquema real de PostgreSQL (alembic upgrade head) el 09/11/2026.
 > Reemplaza al diseño v4 (21/10/2026).
 
@@ -8,12 +8,12 @@
 
 La base de datos guarda la organización de los colegios atendidos por Misión Huascarán (colegios, grados, secciones, subprogramas y calendario académico de cada año escolar), los alumnos y su pertenencia histórica a cada grupo, las cuentas de los tres roles con sus sesiones, y lo que registra el Docente en los cuatro módulos operativos: Asistencias, Seguimiento de Lectura, Rúbrica mensual y Registro de Vuelo. También guarda quién puede escribir y cuándo (asignaciones y permisos de corrección), las actividades de trabajo, el resultado de cada operación sincronizada y el historial de cambios.
 
-Totales del esquema real: **40 tablas**, 374 columnas, 143 claves foráneas, 17 UNIQUE, 42 CHECK y 29 índices aparte de los de PK y UNIQUE.
+Totales del esquema real: **41 tablas**, 383 columnas, 145 claves foráneas, 17 UNIQUE, 43 CHECK y 30 índices aparte de los de PK y UNIQUE.
 
 | Módulo | Tablas | Cantidad |
 |---|---|---|
 | 4. Organización y calendario | [`año_escolar`](#año_escolar), [`periodo_academico`](#periodo_academico), [`calendario`](#calendario), [`calendario_periodo`](#calendario_periodo), [`dia_no_lectivo`](#dia_no_lectivo), [`semana_reporte`](#semana_reporte), [`ciclo_ebr`](#ciclo_ebr), [`grado`](#grado), [`programa`](#programa), [`colegio`](#colegio), [`colegio_grado`](#colegio_grado), [`colegio_programa`](#colegio_programa), [`seccion`](#seccion) | 13 |
-| 5. Alumnos | [`alumno`](#alumno), [`alumno_pertenencia`](#alumno_pertenencia) | 2 |
+| 5. Alumnos | [`alumno`](#alumno), [`alumno_pertenencia`](#alumno_pertenencia), [`importacion_alumnos`](#importacion_alumnos) | 3 |
 | 6. Usuarios y seguridad | [`rol`](#rol), [`usuario`](#usuario), [`docente`](#docente), [`control_acceso_correo`](#control_acceso_correo), [`sesion`](#sesion) | 5 |
 | 7. Habilitaciones y actividad | [`docente_colegio_grado`](#docente_colegio_grado), [`permiso_correccion`](#permiso_correccion), [`actividad`](#actividad) | 3 |
 | 8. Sincronización y trazabilidad | [`operacion_sincronizacion`](#operacion_sincronizacion), [`operacion_pendiente`](#operacion_pendiente), [`auditoria`](#auditoria) | 3 |
@@ -25,7 +25,7 @@ Totales del esquema real: **40 tablas**, 374 columnas, 143 claves foráneas, 17 
 ## 2. Convenciones
 
 - **Fechas y horas.** Los instantes son `TIMESTAMPTZ` en UTC (`ahora_utc()`, tipo `UTCDateTime` de `app/core/tiempo.py`). Los días son fechas `DATE` de Lima (`hoy_lima()`). El "día" y el "periodo" dependen del calendario de cada colegio: toda operación sobre un colegio pregunta con `periodo_de(db, id_colegio, fecha)`.
-- **Auditoría de fila.** Casi todas las tablas llevan `creado_por`, `creado_en`, `modificado_por` y `modificado_en` (los `*_por` son FK a `usuario`). No los tienen los catálogos puros, las tablas técnicas y las que guardan su propio quién y cuándo (por ejemplo `otorgado_por` y `revocado_por` en `permiso_correccion`): `actividad`, `auditoria`, `calendario_periodo`, `ciclo_ebr`, `clase_alumno`, `clase_reprogramacion`, `control_acceso_correo`, `descriptor_rubrica`, `escala_nivel_descriptivo`, `grado`, `lectura_no_realizada`, `nivel_esperado_por_grado`, `nivel_razkids`, `nivel_rubrica`, `operacion_pendiente`, `operacion_sincronizacion`, `permiso_correccion`, `programa`, `rol`, `sesion`. `lectura_no_realizada` solo tiene `creado_en`.
+- **Auditoría de fila.** Casi todas las tablas llevan `creado_por`, `creado_en`, `modificado_por` y `modificado_en` (los `*_por` son FK a `usuario`). No los tienen los catálogos puros, las tablas técnicas y las que guardan su propio quién y cuándo (por ejemplo `otorgado_por` y `revocado_por` en `permiso_correccion`): `actividad`, `auditoria`, `calendario_periodo`, `ciclo_ebr`, `clase_alumno`, `clase_reprogramacion`, `control_acceso_correo`, `descriptor_rubrica`, `escala_nivel_descriptivo`, `grado`, `importacion_alumnos`, `lectura_no_realizada`, `nivel_esperado_por_grado`, `nivel_razkids`, `nivel_rubrica`, `operacion_pendiente`, `operacion_sincronizacion`, `permiso_correccion`, `programa`, `rol`, `sesion`. `lectura_no_realizada` solo tiene `creado_en`.
 - **Escritura del Docente.** Las tablas operativas llevan `id_docente`, `id_actividad`, `id_permiso`, `fecha_registro` y `version`, con el mismo significado en todas: `asistencia`, `lectura_semanal`, `lectura_semanal_alumno`, `registro_vuelo`, `rubrica_mensual`. `lectura_no_realizada` tiene las mismas columnas salvo `version`. `fecha_registro` es el momento real de la captura; `creado_en`, cuándo la guardó el servidor.
 - **Historial.** El historial campo por campo va a `auditoria` (una fila por campo editado), con la actividad y el permiso usados.
 - **Contexto histórico del grupo.** Las tablas operativas (`clase`, `lectura_semanal`, `rubrica_mensual` y `registro_vuelo`) guardan `id_colegio`, `id_grado` e `id_seccion` al registrar, con FK compuesta a `seccion` (`uq_seccion_grupo`), y las tres últimas también `id_programa`. Nunca se recalculan si el alumno cambia de grupo.
@@ -36,7 +36,7 @@ Totales del esquema real: **40 tablas**, 374 columnas, 143 claves foráneas, 17 
 
 ## 3. Mapa de módulos (diagrama general)
 
-Las 40 tablas y sus relaciones, sin columnas. No se dibujan las FK de auditoría (`creado_por`, `modificado_por` → `usuario`), que tienen casi todas las tablas.
+Las 41 tablas y sus relaciones, sin columnas. No se dibujan las FK de auditoría (`creado_por`, `modificado_por` → `usuario`), que tienen casi todas las tablas.
 
 ```mermaid
 erDiagram
@@ -62,6 +62,7 @@ erDiagram
     docente_colegio_grado
     escala_nivel_descriptivo
     grado
+    importacion_alumnos
     lectura_no_realizada
     lectura_semanal
     lectura_semanal_alumno
@@ -84,6 +85,7 @@ erDiagram
     sesion ||--o{ actividad : "FK"
     colegio ||--o{ alumno : "FK"
     grado |o--o{ alumno : "FK"
+    importacion_alumnos |o--o{ alumno : "FK"
     programa |o--o{ alumno : "FK"
     seccion |o--o{ alumno : "FK"
     actividad |o--o{ alumno_pertenencia : "FK"
@@ -121,6 +123,7 @@ erDiagram
     grado ||--o{ escala_nivel_descriptivo : "FK"
     nivel_razkids ||--o{ escala_nivel_descriptivo : "FK"
     ciclo_ebr ||--o{ grado : "FK"
+    usuario ||--o{ importacion_alumnos : "FK"
     usuario ||--o{ lectura_no_realizada : "FK"
     actividad |o--o{ lectura_no_realizada : "FK"
     docente ||--o{ lectura_no_realizada : "FK"
@@ -762,6 +765,7 @@ erDiagram
         timestamptz modificado_en
         integer id_seccion FK
         varchar dni
+        uuid id_importacion FK
     }
     alumno_pertenencia {
         integer id PK
@@ -778,6 +782,16 @@ erDiagram
         integer modificado_por
         timestamptz modificado_en
     }
+    importacion_alumnos {
+        uuid id_importacion PK
+        integer id_usuario FK
+        timestamptz fecha
+        varchar nombre_archivo
+        character huella
+        integer importados
+        integer no_importadas
+        integer con_advertencia
+    }
     actividad {
         uuid id_actividad PK
     }
@@ -793,14 +807,19 @@ erDiagram
     seccion {
         integer id_seccion PK
     }
+    usuario {
+        integer id_usuario PK
+    }
     colegio ||--o{ alumno : "id_colegio"
     grado |o--o{ alumno : "id_grado"
+    importacion_alumnos |o--o{ alumno : "id_importacion"
     programa |o--o{ alumno : "id_programa_actual"
     seccion |o--o{ alumno : "id_seccion, id_colegio, id_grado"
     actividad |o--o{ alumno_pertenencia : "id_actividad"
     alumno ||--o{ alumno_pertenencia : "id_alumno"
     programa ||--o{ alumno_pertenencia : "id_programa"
     seccion ||--o{ alumno_pertenencia : "id_seccion, id_colegio, id_grado"
+    usuario ||--o{ importacion_alumnos : "id_usuario"
 ```
 
 ### `alumno`
@@ -823,6 +842,7 @@ erDiagram
 | `modificado_en` | 8 bytes | TIMESTAMPTZ | Instante de la última modificación (UTC). NULL = nunca modificada. | SÍ |
 | `id_seccion` | 4 bytes | INTEGER | Sección actual (foto del grupo vigente, igual que `id_programa_actual`). NULL = alumno con pertenencia pendiente (importado desde una nómina, CU014), sin intervalos en `alumno_pertenencia`. Con `id_colegio` e `id_grado`, clave foránea a `seccion`. | SÍ |
 | `dni` | 8 caracteres | VARCHAR(8) | DNI del alumno (opcional). Texto de 8 dígitos, único entre alumnos e independiente del DNI de `usuario`. | SÍ |
+| `id_importacion` | 16 bytes | UUID | Nómina de la que vino el alumno. NULL = se registró con "Agregar". Clave foránea a `importacion_alumnos`. | SÍ |
 
 **Restricciones:**
 
@@ -830,6 +850,7 @@ erDiagram
 - FK:
   - `id_colegio` → `colegio` (`id_colegio`): `alumno_id_colegio_fkey`.
   - `id_grado` → `grado` (`id_grado`): `alumno_id_grado_fkey`.
+  - `id_importacion` → `importacion_alumnos` (`id_importacion`): `alumno_id_importacion_fkey`.
   - `id_programa_actual` → `programa` (`id_programa`): `alumno_id_programa_actual_fkey`.
   - `id_seccion`, `id_colegio`, `id_grado` → `seccion` (`id_seccion`, `id_colegio`, `id_grado`): `fk_alumno_seccion`.
   - `creado_por`, `modificado_por` → `usuario` (`id_usuario`): `alumno_creado_por_fkey`, `alumno_modificado_por_fkey` (auditoría).
@@ -841,6 +862,7 @@ erDiagram
 **Índices:**
 
 - `ix_alumno_colegio_grado`: Índice sobre (`id_colegio`, `id_grado`). Alumnos de un aula (asistencia, vencidos e incompletos de CU011).
+- `ix_alumno_id_importacion`: Índice sobre (`id_importacion`). Alumnos que vinieron de una importación.
 - `uq_alumno_dni`: Único sobre (`dni`), parcial: `WHERE (dni IS NOT NULL)`. Un DNI no se repite entre alumnos; varios alumnos pueden no tenerlo.
 
 **Reglas del servicio:**
@@ -897,6 +919,40 @@ erDiagram
 - Los intervalos de un alumno no se superponen.
 - Las fechas efectivas nunca son futuras y respetan el orden del historial.
 - `creado_en` es cuándo se registró, distinto de `desde`.
+
+### `importacion_alumnos`
+
+**Descripción:** Una nómina de alumnos importada desde Excel por el Supervisor (CU014). Guarda quién y cuándo la importó y sus conteos; el archivo no se conserva.
+
+| Campo | Tamaño | Tipo de Dato | Descripción | NULL |
+|---|---|---|---|---|
+| `id_importacion` | 16 bytes | UUID | Identificador de la importación. Lo genera el cliente: reenviar con el mismo id nunca importa dos veces. Clave primaria. | NO |
+| `id_usuario` | 4 bytes | INTEGER | Supervisor responsable. Clave foránea a `usuario`. | NO |
+| `fecha` | 8 bytes | TIMESTAMPTZ | Instante de la importación (UTC). | NO |
+| `nombre_archivo` | 255 caracteres | VARCHAR(255) | Nombre del archivo, sin rutas. | NO |
+| `huella` | ? | CHARACTER(64) | SHA-256 en hexadecimal del análisis confirmado. | NO |
+| `importados` | 4 bytes | INTEGER | Alumnos registrados. | NO |
+| `no_importadas` | 4 bytes | INTEGER | Filas rechazadas. | NO |
+| `con_advertencia` | 4 bytes | INTEGER | Filas importadas con al menos una advertencia. | NO |
+
+**Restricciones:**
+
+- PK: (`id_importacion`), `importacion_alumnos_pkey`.
+- FK:
+  - `id_usuario` → `usuario` (`id_usuario`): `importacion_alumnos_id_usuario_fkey`.
+- UNIQUE: no tiene.
+- CHECK:
+  - `ck_importacion_alumnos_conteos`: `CHECK (((importados >= 0) AND (no_importadas >= 0) AND (con_advertencia >= 0)))`. Los tres conteos no son negativos.
+
+**Índices:**
+
+No tiene índices aparte de los de su PK y sus UNIQUE.
+
+**Reglas del servicio:**
+
+- Los alumnos importados quedan activos y con la pertenencia pendiente, sin sección, subprograma ni intervalos.
+- La vista previa no se guarda: la confirmación vuelve a analizar el archivo y exige la misma huella.
+- Es solo del Supervisor, exclusivamente en línea y no requiere actividad de trabajo.
 
 ## 6. Usuarios y seguridad
 
@@ -1493,7 +1549,7 @@ erDiagram
 | `id_auditoria` | 8 bytes | BIGINT | Identificador de la fila de auditoría. Clave primaria. | NO |
 | `tabla` | Variable | TEXT | Tabla del registro cambiado. | NO |
 | `id_registro` | Variable | TEXT | Clave del registro cambiado, como texto (admite claves enteras y UUID). | NO |
-| `accion` | Variable | TEXT | 'crear', 'editar', 'activar' o 'inactivar'. | NO |
+| `accion` | Variable | TEXT | 'crear', 'editar', 'activar', 'inactivar' o 'importar'. | NO |
 | `campo` | Variable | TEXT | Campo editado. NULL en 'crear'. | SÍ |
 | `valor_anterior` | Variable | TEXT | Valor anterior del campo, como texto. NULL = no tenía valor. | SÍ |
 | `valor_nuevo` | Variable | TEXT | Valor nuevo del campo, como texto. NULL = quedó sin valor. | SÍ |
@@ -1511,7 +1567,7 @@ erDiagram
   - `id_usuario` → `usuario` (`id_usuario`): `auditoria_id_usuario_fkey`.
 - UNIQUE: no tiene.
 - CHECK:
-  - `ck_auditoria_accion`: `CHECK ((accion = ANY (ARRAY['crear'::text, 'editar'::text, 'activar'::text, 'inactivar'::text])))`. Solo las cuatro acciones posibles.
+  - `ck_auditoria_accion`: `CHECK ((accion = ANY (ARRAY['crear'::text, 'editar'::text, 'activar'::text, 'inactivar'::text, 'importar'::text])))`. Solo las cinco acciones posibles.
 
 **Índices:**
 
@@ -2551,6 +2607,7 @@ La v4 (21/10/2026) era el plan de las tandas T1 a T9. Estos son los cambios apli
 | `f5c1d8a3e926` lectura_no_realizada_historial | 25/10 | Crea `lectura_no_realizada` (historial de declaraciones y su reversión, una vigente por tabla). |
 | `a7d3e5f9b102` salud_por_registro | 25/10 | Agrega `clave_registro` a `operacion_sincronizacion` y `operacion_pendiente`, con sus índices. |
 | `c6e2a9d4f713` alumno_pendiente_dni | 09/11 | `alumno`: `id_grado`, `id_seccion` e `id_programa_actual` pasan a nullable (alumno con pertenencia pendiente, CU014), con `ck_alumno_grupo_coherente`; agrega `dni`, con `ck_alumno_dni_formato` y el índice único parcial `uq_alumno_dni`. |
+| `d8f1b3c5a742` importacion_alumnos | 09/11 | Crea `importacion_alumnos` (nómina importada desde Excel, CU014); agrega `alumno.id_importacion`, con FK e índice; `ck_auditoria_accion` admite 'importar'. |
 
 Cambios de reglas sin migración:
 

@@ -331,7 +331,7 @@ def _dni_valido(db: Session, dni: Optional[str], excepto: Optional[int] = None) 
     limpio = (dni or "").strip()
     if not limpio:
         return None
-    if re.fullmatch(r"[0-9]{8}", limpio) is None:
+    if re.fullmatch(r"\d{8}", limpio, re.ASCII) is None:
         raise error_de_campo(CAMPO_DNI, MENSAJE_DNI_FORMATO)
     otro = db.exec(select(Alumno.id_alumno).where(Alumno.dni == limpio)).first()
     if otro is not None and otro != excepto:

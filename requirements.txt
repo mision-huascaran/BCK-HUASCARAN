@@ -6,6 +6,8 @@ bcrypt==4.0.1
 cffi==2.1.1
 click==8.5.0
 cryptography==50.0.1
+defusedxml==0.7.1
+et-xmlfile==2.0.0
 fastapi==0.141.1
 greenlet==3.5.6
 h11==0.16.0
@@ -13,6 +15,7 @@ holidays==0.106
 idna==3.20
 Mako==1.4.2
 MarkupSafe==3.0.3
+openpyxl==3.1.5
 passlib==1.7.4
 psycopg2-binary==2.9.13
 pycparser==3.0

@@ -247,6 +247,8 @@ ETIQUETAS = {
     "id_colegio": "Colegio",
     "id_seccion": "Sección",
     "activo": "Estado",
+    # Nombre del archivo de la nómina de la que vino el alumno (acción `importar`).
+    "archivo": "Archivo",
     # Campo virtual de la pertenencia (CU014): la fecha desde la que rige el evento.
     CAMPO_AUDITORIA: "Fecha efectiva",
 }

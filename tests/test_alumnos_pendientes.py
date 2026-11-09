@@ -665,8 +665,10 @@ def test_cu014_el_pendiente_no_sale_en_rubrica_ni_en_registro_de_vuelo(miercoles
     vuelo = client.get("/registro-vuelo", params=grupo, headers=doc)
 
     assert (rubrica.status_code, vuelo.status_code) == (200, 200)
-    assert "Torres" in rubrica.text and "Torres" in vuelo.text
-    assert "Antigua" not in rubrica.text and "Antigua" not in vuelo.text
+    assert "Torres" in rubrica.text
+    assert "Torres" in vuelo.text
+    assert "Antigua" not in rubrica.text
+    assert "Antigua" not in vuelo.text
 
 
 def test_cu014_el_pendiente_no_cuenta_como_atendido_en_el_dashboard(db, entorno):
