@@ -16,6 +16,8 @@ LABEL proyecto="huascaran-bck"
 
 # Ni el Python del sistema ni el venv quedan con pip, setuptools ni wheel.
 # Usuario sin privilegios: el arranque no escribe en el disco del contenedor.
+# Cambia a diario desde Jenkins para que esta capa no quede en caché y baje los parches de Alpine.
+ARG PARCHES_ALPINE=local
 RUN apk upgrade --no-cache \
     && python -m pip uninstall -y pip setuptools wheel \
     && rm -rf /usr/local/lib/python3.11/site-packages/setuptools \

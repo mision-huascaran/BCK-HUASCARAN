@@ -110,7 +110,10 @@ pipeline {
             }
             steps {
                 // --pull: cada build trae los últimos parches de la imagen base. No usa el .env.
-                sh 'docker build --pull -t "$IMAGEN:candidata" .'
+                // PARCHES_ALPINE (la fecha) invalida una vez al día la capa del `apk upgrade`: si
+                // el digest de la base no cambia, sin él Docker reutiliza esa capa y no baja los
+                // parches nuevos de Alpine. La etapa `build` (pip install) sigue en caché.
+                sh 'docker build --pull --build-arg PARCHES_ALPINE="$(date +%Y%m%d)" -t "$IMAGEN:candidata" .'
             }
         }
 
