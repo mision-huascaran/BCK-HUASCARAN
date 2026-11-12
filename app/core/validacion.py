@@ -23,12 +23,13 @@ from pydantic import BaseModel
 MENSAJE_GENERAL = "Los datos enviados no son válidos."
 MOTIVO_VALIDACION = "validacion"
 MENSAJE_GENERICO = "Valor inválido."
+MENSAJE_OBLIGATORIO = "Este campo es obligatorio."
 
 ORIGENES = {"body", "query", "path", "header", "cookie"}
 
 # Mensaje fijo -> tipos de error de Pydantic que lo usan.
 _MENSAJES_POR_TIPO = {
-    "Este campo es obligatorio.": ("missing",),
+    MENSAJE_OBLIGATORIO: ("missing",),
     "Debe ser un texto.": ("string_type",),
     "Debe ser un número entero.": ("int_type", "int_parsing", "int_from_float"),
     "Debe ser un número.": ("float_type", "float_parsing"),

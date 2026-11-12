@@ -19,7 +19,7 @@ TIPOS_CIERRE_ACTIVIDAD = (
     "Automático por expiración de sesión",
 )
 
-ACCIONES_AUDITORIA = ("crear", "editar", "activar", "inactivar")
+ACCIONES_AUDITORIA = ("crear", "editar", "activar", "inactivar", "importar")
 
 # Módulos que generan operaciones offline (CU017-CU021).
 MODULOS_SINCRONIZACION = ("asistencias", "lectura", "rubrica", "registro_vuelo", "alumnos", "actividad")

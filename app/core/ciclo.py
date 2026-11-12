@@ -4,7 +4,7 @@ Si el subprograma es Alfabetización, el ciclo es III; si es Comprensión Lector
 ciclo de su grado (2.º: III; 3.º y 4.º: IV; 5.º y 6.º: V), que viene del catálogo
 `grado.id_ciclo`.
 """
-from sqlalchemy import case, literal
+from sqlalchemy import case, literal, null
 
 ALFABETIZACION = "Alfabetización"
 CICLO_ALFABETIZACION = "III"
@@ -27,8 +27,9 @@ def ordenar_ciclos(ciclos: set[str]) -> list[str]:
 def ciclo_sql(nombre_programa, nombre_ciclo_del_grado):
     """La misma regla que `calcular_ciclo`, como expresión SQL, para filtrar y paginar por
     ciclo en la base de datos. Recibe las columnas `programa.nombre` y `ciclo_ebr.nombre`
-    (del grado)."""
+    (del grado). Sin subprograma (alumno con pertenencia pendiente) no hay ciclo."""
     return case(
+        (nombre_programa.is_(None), null()),
         (nombre_programa == ALFABETIZACION, literal(CICLO_ALFABETIZACION)),
         else_=nombre_ciclo_del_grado,
     )

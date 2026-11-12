@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, SmallInteger, Text, UniqueConstraint, Uuid, text
+from sqlalchemy import CHAR, CheckConstraint, ForeignKeyConstraint, Index, SmallInteger, Text, UniqueConstraint, Uuid, text
 from sqlmodel import Field, SQLModel
 
 from app.core.tiempo import UTCDateTime
@@ -191,22 +191,69 @@ class Usuario(SQLModel, table=True):
     contrasena_temporal_expira: Optional[datetime] = Field(default=None, sa_type=UTCDateTime)
 
 
+class ImportacionAlumnos(SQLModel, table=True):
+    """Una nómina de alumnos importada desde Excel (CU014). Guarda quién y cuándo la
+    importó y sus conteos; el archivo no se conserva."""
+
+    __tablename__ = "importacion_alumnos"
+    __table_args__ = (
+        CheckConstraint(
+            "importados >= 0 AND no_importadas >= 0 AND con_advertencia >= 0",
+            name="ck_importacion_alumnos_conteos",
+        ),
+    )
+
+    # Lo genera el cliente: reenviar con el mismo id nunca importa dos veces.
+    id_importacion: uuid.UUID = Field(sa_type=Uuid, primary_key=True)
+    id_usuario: int = Field(foreign_key=FK_USUARIO)
+    fecha: datetime = Field(sa_type=UTCDateTime)
+    nombre_archivo: str = Field(max_length=255)
+    # SHA-256 en hexadecimal del análisis confirmado.
+    huella: str = Field(sa_type=CHAR(64))
+    importados: int
+    no_importadas: int
+    con_advertencia: int
+
+
 class Alumno(SQLModel, table=True):
     __tablename__ = "alumno"
     __table_args__ = (
         # Alumnos de un aula (asistencia, vencidos e incompletos de CU011).
         Index("ix_alumno_colegio_grado", "id_colegio", "id_grado"),
+        # Con alguna columna NULL (pertenencia pendiente) la FK no se valida (MATCH SIMPLE).
         ForeignKeyConstraint(COLUMNAS_GRUPO, FK_GRUPO, name="fk_alumno_seccion"),
+        # La sección y el subprograma van juntos; si hay sección, hay grado.
+        CheckConstraint(
+            "(id_seccion IS NULL) = (id_programa_actual IS NULL) AND (id_seccion IS NULL OR id_grado IS NOT NULL)",
+            name="ck_alumno_grupo_coherente",
+        ),
+        # El operador ~ es de PostgreSQL: en SQLite (los tests) el CHECK no se emite.
+        CheckConstraint("dni ~ '^[0-9]{8}$'", name="ck_alumno_dni_formato").ddl_if(dialect="postgresql"),
+        # Único entre alumnos (no contra `usuario`); varios alumnos pueden no tener DNI.
+        Index(
+            "uq_alumno_dni",
+            "dni",
+            unique=True,
+            postgresql_where=text("dni IS NOT NULL"),
+            sqlite_where=text("dni IS NOT NULL"),
+        ),
     )
 
     id_alumno: Optional[int] = Field(default=None, primary_key=True)
     nombres: str
     apellidos: str
+    # Texto y no número: un DNI puede empezar con 0.
+    dni: Optional[str] = Field(default=None, max_length=8)
     id_colegio: int = Field(foreign_key=FK_COLEGIO)
-    id_grado: int = Field(foreign_key=FK_GRADO)
+    # NULL en el grupo = alumno con pertenencia pendiente (importado de una nómina, CU014).
+    id_grado: Optional[int] = Field(default=None, foreign_key=FK_GRADO)
     # Sección actual (CU014): foto del grupo vigente, igual que id_programa_actual.
-    id_seccion: int
-    id_programa_actual: int = Field(foreign_key=FK_PROGRAMA)
+    id_seccion: Optional[int] = None
+    id_programa_actual: Optional[int] = Field(default=None, foreign_key=FK_PROGRAMA)
+    # De qué nómina vino; NULL si se registró con "Agregar".
+    id_importacion: Optional[uuid.UUID] = Field(
+        default=None, sa_type=Uuid, foreign_key="importacion_alumnos.id_importacion", index=True
+    )
     fecha_registro: date
     activo: bool = Field(default=True)
 

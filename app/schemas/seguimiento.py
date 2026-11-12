@@ -36,8 +36,9 @@ class RegistroDeActividad(BaseModel):
     # id de la clase, la tabla de lectura, la rúbrica, el registro de vuelo o el alumno.
     id: int
     colegio: ItemCatalogo
-    grado: ItemCatalogo
-    seccion: ItemCatalogo
+    # Grado y sección: null solo en un alumno con pertenencia pendiente (CU014).
+    grado: Optional[ItemCatalogo] = None
+    seccion: Optional[ItemCatalogo] = None
     programa: Optional[ItemCatalogo] = None
     alumno: Optional[ItemCatalogo] = None
     # Asistencias: fecha de la clase.
