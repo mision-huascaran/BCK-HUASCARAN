@@ -1,4 +1,4 @@
-"""Importación de la nómina de alumnos (CU014): plantilla, vista previa, confirmación y consulta.
+"""Importación de la nómina de alumnos (CU014): vista previa, confirmación y consulta.
 
 La vista previa no escribe nada ni se guarda en el servidor: su huella resume el análisis
 y la confirmación vuelve a analizar el archivo y exige la misma huella. Los alumnos
@@ -14,7 +14,7 @@ from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio
 from app.core.tiempo import ahora_utc, hoy_lima
-from app.core.texto import comparable_sql, nombre_comparable
+from app.core.texto import nombre_comparable
 from app.models.organizacion import Alumno, Colegio, ColegioGrado, Grado, ImportacionAlumnos, Usuario
 from app.schemas.importacion import ObservacionImportacion, ResultadoImportacion, VistaPreviaImportacion
 from app.services.auditoria import IMPORTAR, registrar_auditoria
@@ -29,7 +29,6 @@ from app.services.importacion_nomina import (
     leer_grado,
     leer_nomina,
 )
-from app.services.plantilla_nomina import generar_plantilla
 
 MENSAJE_SIN_ALUMNOS = "No hay alumnos para importar en este archivo."
 MENSAJE_DESACTUALIZADA = "Los datos cambiaron desde la vista previa. Carga el archivo nuevamente."
@@ -41,19 +40,6 @@ TABLA_ALUMNO = "alumno"
 
 def _desactualizada() -> ErrorNegocio:
     return ErrorNegocio(status.HTTP_409_CONFLICT, MENSAJE_DESACTUALIZADA, motivo="importacion_desactualizada")
-
-
-# ── Plantilla ───────────────────────────────────────────────────────────────────────
-
-def plantilla(db: Session) -> bytes:
-    """La plantilla de la nómina con los colegios activos de ahora, ordenados por nombre
-    sin distinguir mayúsculas ni tildes."""
-    nombres = db.exec(
-        select(Colegio.nombre)
-        .where(col(Colegio.activo).is_(True))
-        .order_by(comparable_sql(Colegio.nombre), Colegio.id_colegio)
-    ).all()
-    return generar_plantilla(list(nombres))
 
 
 # ── Análisis ────────────────────────────────────────────────────────────────────────

@@ -31,7 +31,6 @@ from app.schemas.importacion import ResultadoImportacion, VistaPreviaImportacion
 from app.services import alumno_detalle_service as detalle
 from app.services import alumno_service, importacion_service
 from app.services.importacion_nomina import TAMANO_MAXIMO, archivo_invalido
-from app.services.plantilla_nomina import MEDIA_TYPE_XLSX, NOMBRE_ARCHIVO
 from app.services.usuario_service import DOCENTE, SUPERVISOR
 
 router = APIRouter(tags=["alumnos"])
@@ -53,12 +52,15 @@ def _nombre_base(nombre: str) -> str:
 
 NombreArchivo = Annotated[str, AfterValidator(_nombre_base), Query(description="Nombre del archivo elegido")]
 HuellaImportacion = Annotated[str, Query(pattern=r"^[0-9a-f]{64}$", description="`huella` de la vista previa")]
-CONTENIDO_XLSX = {MEDIA_TYPE_XLSX: {"schema": {"type": "string", "format": "binary"}}}
-CUERPO_XLSX = {"requestBody": {"required": True, "content": CONTENIDO_XLSX}}
-CABECERAS_PLANTILLA = {
-    "Content-Disposition": f'attachment; filename="{NOMBRE_ARCHIVO}"',
-    # La lista de colegios cambia: siempre se genera de nuevo.
-    "Cache-Control": "no-store",
+CUERPO_XLSX = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {"type": "string", "format": "binary"}
+            }
+        },
+    }
 }
 
 
@@ -111,16 +113,6 @@ async def confirmar_importacion(
     if not creada:
         response.status_code = status.HTTP_200_OK
     return resultado
-
-
-@router.get(
-    "/alumnos/importaciones/plantilla", response_class=Response,
-    responses={status.HTTP_200_OK: {"content": CONTENIDO_XLSX, "description": "Plantilla .xlsx de la nómina"}},
-)
-def descargar_plantilla(db: Db, _: SoloSupervisor):
-    """La plantilla para llenar la nómina, con los colegios activos del momento. Va antes de
-    `/alumnos/importaciones/{id_importacion}`: si no, "plantilla" se leería como UUID (422)."""
-    return Response(importacion_service.plantilla(db), media_type=MEDIA_TYPE_XLSX, headers=CABECERAS_PLANTILLA)
 
 
 @router.get("/alumnos/importaciones/{id_importacion}", response_model=ResultadoImportacion)
