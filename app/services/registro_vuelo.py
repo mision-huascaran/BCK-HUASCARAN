@@ -273,8 +273,11 @@ def decision_de_entrada(datos: DatosVuelo, id_alumno: int, periodo: PeriodoAcade
     return decision_del_periodo(datos.registros.get(id_alumno, []), anterior.id_periodo_academico)
 
 
-def entrada_de(datos: DatosVuelo, id_alumno: int, periodo: PeriodoAcademico, id_grado: int) -> tuple[Optional[int], str]:
-    """(id del nivel de entrada o None, origen)."""
+def entrada_de(
+    datos: DatosVuelo, id_alumno: int, periodo: PeriodoAcademico, id_grado: Optional[int]
+) -> tuple[Optional[int], str]:
+    """(id del nivel de entrada o None, origen). Sin grado (alumno con pertenencia
+    pendiente) no hay entrada por grado."""
     if datos.anterior(periodo) is None:
         return datos.entrada_por_grado.get(id_grado), ORIGEN_GRADO
     decision = decision_de_entrada(datos, id_alumno, periodo)

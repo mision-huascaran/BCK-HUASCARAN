@@ -4,7 +4,7 @@ Supervisor: todos. Docente: los de su alcance (colegio y grado de sus asignacion
 vigentes). El Directivo no tiene acceso.
 """
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import ClassVar, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -18,6 +18,8 @@ from app.schemas.lectura import EstadoFila, EstadoTabla
 class AlumnoCrear(BaseModel):
     nombres: Texto
     apellidos: Texto
+    # Opcional: 8 dígitos y único entre alumnos (lo valida el servicio).
+    dni: Optional[str] = None
     id_colegio: int
     id_grado: int
     # Obligatoria si el grado tiene varias secciones activas; con una sola, se asigna sola.
@@ -28,19 +30,34 @@ class AlumnoCrear(BaseModel):
 
 
 class AlumnoEditar(ParcheSinNulos):
-    """Campos opcionales; un null se rechaza en el campo. El Docente no puede cambiar
-    `id_colegio` (solo el Supervisor rota alumnos entre colegios).
+    """Campos opcionales; un null se rechaza en el campo, salvo en `dni`, donde lo quita.
+    El Docente no puede cambiar `id_colegio` (solo el Supervisor rota alumnos entre
+    colegios).
 
     Si cambia el grupo (colegio, grado, sección o subprograma) de un alumno activo,
     `cambio_grupo_desde` es obligatorio. Si cambia el colegio o el grado sin `id_seccion`,
     se asigna la única sección activa del grado nuevo (422 si tiene varias).
 
-    Un alumno activo sin intervalos de pertenencia confirma en `pertenece_desde` desde qué
-    día forma parte de su grupo (el final, con los demás cambios aplicados): es obligatorio
-    para él y se rechaza para cualquier otro (CU014)."""
+    Un alumno con pertenencia pendiente (sin intervalos, CU014) no lleva
+    `cambio_grupo_desde`:
+
+    - Sin `id_programa`, `id_seccion` ni `pertenece_desde`, guarda sus nombres, DNI o
+      grado y sigue pendiente.
+    - Con `id_programa` o `id_seccion`, el grado, el subprograma y la sección tienen que
+      quedar completos (422 en cada campo que falte) y, si está activo, `pertenece_desde`
+      es obligatorio: se abre su primer intervalo.
+    - Con `pertenece_desde` solo, se abre el intervalo con el grupo de la ficha, que debe
+      estar completo.
+    - Si está inactivo puede completar su ficha, pero `pertenece_desde` se rechaza: la
+      confirma después de activarlo.
+
+    A un alumno que ya tiene intervalos se le rechaza `pertenece_desde`."""
+
+    CAMPOS_NULABLES: ClassVar[frozenset[str]] = frozenset({"dni"})
 
     nombres: Optional[Texto] = None
     apellidos: Optional[Texto] = None
+    dni: Optional[str] = None
     id_colegio: Optional[int] = None
     id_grado: Optional[int] = None
     id_seccion: Optional[int] = None
@@ -51,9 +68,10 @@ class AlumnoEditar(ParcheSinNulos):
 
 class CambioEstadoAlumno(BaseModel):
     """Activar o inactivar: desde qué día (hoy o antes) el alumno vuelve a su grupo o deja
-    de pertenecer a él (CU014)."""
+    de pertenecer a él (CU014). Obligatorio (lo exige el servicio), salvo para un alumno
+    con pertenencia pendiente: a él solo le cambia el estado y la fecha se ignora."""
 
-    aplicar_desde: date
+    aplicar_desde: Optional[date] = None
 
 
 # ── Listado y cabecera ──────────────────────────────────────────────────────────────
@@ -62,13 +80,17 @@ class AlumnoItem(BaseModel):
     id: int
     nombres: str
     apellidos: str
+    dni: Optional[str] = None
     colegio: ItemCatalogo
-    grado: ItemCatalogo
-    programa: ItemCatalogo
+    # Grado, subprograma, ciclo y sección: null en un alumno con pertenencia pendiente.
+    grado: Optional[ItemCatalogo] = None
+    programa: Optional[ItemCatalogo] = None
     # Calculado: Alfabetización -> III; Comprensión Lectora -> ciclo de su grado.
-    ciclo: str
-    seccion: ItemCatalogo
+    ciclo: Optional[str] = None
+    seccion: Optional[ItemCatalogo] = None
     activo: bool
+    # Sin ningún intervalo de pertenencia (CU014), esté activo o no.
+    pertenencia_pendiente: bool
 
 
 class AlumnoDetalle(AlumnoItem):

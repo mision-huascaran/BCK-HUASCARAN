@@ -146,8 +146,9 @@ def _consulta(modulo: _Modulo, id_actividad: uuid.UUID):
         .select_from(tocados)
         .join(entidad, modulo.clave == tocados.c.id)
         .join(Colegio, Colegio.id_colegio == entidad.id_colegio)
-        .join(Grado, Grado.id_grado == entidad.id_grado)
-        .join(Seccion, Seccion.id_seccion == entidad.id_seccion)
+        # Outer joins: un alumno con pertenencia pendiente puede no tener grado ni sección.
+        .outerjoin(Grado, Grado.id_grado == entidad.id_grado)
+        .outerjoin(Seccion, Seccion.id_seccion == entidad.id_seccion)
     )
     return modulo.joins(consulta).order_by(
         comparable_sql(Colegio.nombre), Colegio.id_colegio, Grado.id_grado, comparable_sql(Seccion.nombre), tocados.c.id
@@ -165,8 +166,8 @@ def _item(modulo: str, fila) -> RegistroDeActividad:
     return RegistroDeActividad(
         modulo=modulo, id=datos["id"], cambios=datos["cambios"],
         colegio=ItemCatalogo(id=datos["id_colegio"], nombre=datos["colegio"]),
-        grado=ItemCatalogo(id=datos["id_grado"], nombre=datos["grado"]),
-        seccion=ItemCatalogo(id=datos["id_seccion"], nombre=datos["seccion"]),
+        grado=ItemCatalogo(id=datos["id_grado"], nombre=datos["grado"]) if datos["id_grado"] is not None else None,
+        seccion=ItemCatalogo(id=datos["id_seccion"], nombre=datos["seccion"]) if datos["id_seccion"] is not None else None,
         programa=programa, alumno=alumno,
         **{c: datos.get(c) for c in ("fecha", "id_semana", "semana_inicio", "mes", "id_anio_escolar",
                                        "id_periodo_academico")},

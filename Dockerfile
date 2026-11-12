@@ -1,5 +1,7 @@
 # Imagen del backend en dos etapas sobre Alpine (Trivy: solo hallazgos LOW).
 # La misma etiqueta de Alpine en las dos etapas; sin digest para recibir los parches de esa línea.
+# Además, sus paquetes se actualizan al construir: la imagen publicada puede atrasarse respecto
+# del repositorio de Alpine (CVE-2026-4738 en zlib).
 
 FROM python:3.11-alpine3.24 AS build
 
@@ -14,7 +16,10 @@ LABEL proyecto="huascaran-bck"
 
 # Ni el Python del sistema ni el venv quedan con pip, setuptools ni wheel.
 # Usuario sin privilegios: el arranque no escribe en el disco del contenedor.
-RUN python -m pip uninstall -y pip setuptools wheel \
+# Cambia a diario desde Jenkins para que esta capa no quede en caché y baje los parches de Alpine.
+ARG PARCHES_ALPINE=local
+RUN apk upgrade --no-cache \
+    && python -m pip uninstall -y pip setuptools wheel \
     && rm -rf /usr/local/lib/python3.11/site-packages/setuptools \
               /usr/local/lib/python3.11/site-packages/pkg_resources \
               /usr/local/lib/python3.11/site-packages/_distutils_hack \

@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 from sqlmodel import select
 
+from app.core.tiempo import ahora_utc
 from app.models.organizacion import AlumnoPertenencia
 from app.models.trazabilidad import Auditoria
 from tests.conftest import clase_guardada, crear_alumno, hoy_iso, motivo, seccion_de
@@ -80,15 +81,14 @@ def test_cu014_sin_pertenencia_el_intervalo_toma_el_grado_nuevo(client, db, ento
 @pytest.mark.parametrize(
     "cuerpo, error",
     [
-        (lambda e: {"nombres": "Rita María"}, ("pertenece_desde", CONFIRMA)),
-        (lambda e: {}, ("pertenece_desde", CONFIRMA)),
+        (lambda e: {"id_programa": e.programas["Comprensión Lectora"]}, ("pertenece_desde", CONFIRMA)),
         (lambda e: {"pertenece_desde": (e.hoy + timedelta(days=1)).isoformat()}, ("pertenece_desde", FECHA_FUTURA)),
         (
             lambda e: {"id_grado": e.grados["3.º"], "pertenece_desde": hoy_iso(), "cambio_grupo_desde": hoy_iso()},
             ("cambio_grupo_desde", USA_PERTENECE),
         ),
     ],
-    ids=["sin-fecha", "cuerpo-vacio", "fecha-futura", "con-cambio-grupo-desde"],
+    ids=["subprograma-sin-fecha", "fecha-futura", "con-cambio-grupo-desde"],
 )
 def test_cu014_sin_pertenencia_rechazos(client, db, entorno, sup, sin_pertenencia, cuerpo, error):
     respuesta = client.patch(f"/alumnos/{sin_pertenencia.id_alumno}", json=cuerpo(entorno), headers=sup)
@@ -100,8 +100,30 @@ def test_cu014_sin_pertenencia_rechazos(client, db, entorno, sup, sin_pertenenci
     assert (sin_pertenencia.nombres, sin_pertenencia.id_grado) == ("Rita", entorno.grados["2.º"])
 
 
+def test_cu014_sin_pertenencia_sin_fecha_guarda_y_sigue_pendiente(client, db, entorno, sup, sin_pertenencia):
+    # Semana 14: confirmar la pertenencia ya no es obligatorio para corregir la ficha.
+    url = f"/alumnos/{sin_pertenencia.id_alumno}"
+
+    corregido = client.patch(url, json={"nombres": "Rita María"}, headers=sup)
+    vacio = client.patch(url, json={}, headers=sup)
+
+    assert (corregido.status_code, corregido.json()["nombres"]) == (200, "Rita María")
+    assert corregido.json()["pertenencia_pendiente"] is True
+    assert (vacio.status_code, vacio.json()) == (200, corregido.json())
+    assert intervalos(db, sin_pertenencia.id_alumno) == []
+
+
 @pytest.mark.parametrize("alumno", ["ana", "inactivo"])
 def test_cu014_pertenece_desde_se_rechaza_si_no_es_alumno_sin_pertenencia(client, db, entorno, sup, alumno):
+    if alumno == "inactivo":
+        # Sin intervalos, Iván tendría la pertenencia pendiente (ver test_alumnos_pendientes).
+        ivan = entorno.alumnos["inactivo"]
+        db.add(AlumnoPertenencia(
+            id_alumno=ivan.id_alumno, id_colegio=ivan.id_colegio, id_grado=ivan.id_grado, id_seccion=ivan.id_seccion,
+            id_programa=ivan.id_programa_actual, desde=entorno.hoy - timedelta(days=9),
+            hasta=entorno.hoy - timedelta(days=2), creado_por=entorno.supervisor.id_usuario, creado_en=ahora_utc(),
+        ))
+        db.commit()
     id_alumno = entorno.alumnos[alumno].id_alumno
     antes = [(i.desde, i.hasta) for i in intervalos(db, id_alumno)]
 

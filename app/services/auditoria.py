@@ -19,7 +19,8 @@ CREAR = "crear"
 EDITAR = "editar"
 ACTIVAR = "activar"
 INACTIVAR = "inactivar"
-ACCIONES = (CREAR, EDITAR, ACTIVAR, INACTIVAR)
+IMPORTAR = "importar"
+ACCIONES = (CREAR, EDITAR, ACTIVAR, INACTIVAR, IMPORTAR)
 
 # Columnas que nunca deben quedar en el historial, aunque un llamador las pase.
 CAMPOS_SENSIBLES = frozenset(
@@ -66,6 +67,7 @@ def registrar_auditoria(
     - `editar`: una fila por campo de `cambios` ({campo: (anterior, nuevo)}) cuyo valor
       realmente cambió; si ninguno cambió, no escribe nada.
     - `activar` / `inactivar`: una fila con `campo = 'activo'`.
+    - `importar`: una fila por campo de `cambios` (el archivo de la nómina).
     En `crear`, `activar` e `inactivar`, los `cambios` que se pasen se agregan como filas
     del mismo evento (p. ej. la fecha efectiva de la pertenencia de un alumno).
 

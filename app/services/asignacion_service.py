@@ -59,6 +59,7 @@ from app.schemas.usuario import (
     PeriodoAsignado,
 )
 from app.services.habilitacion import asignacion_utilizable, pares_a_cargo
+from app.services.pertenencia import pendiente_sql
 from app.services.calendario import (
     CalendarioResuelto,
     Calendarios,
@@ -815,7 +816,8 @@ def _secciones_activas(db: Session, alcance: set[tuple[int, int]]) -> dict[tuple
 
 
 def _alumnado(db: Session, alcance: set[tuple[int, int]]) -> tuple[_Alumnado, dict, dict]:
-    """Alumnos activos de esos colegio y grados: en total, por colegio y por (colegio, grado)."""
+    """Alumnos activos de esos colegio y grados: en total, por colegio y por (colegio, grado).
+    Los que tienen la pertenencia pendiente no cuentan (CU014)."""
     alumnos = db.exec(
         select(
             Alumno.id_colegio,
@@ -830,6 +832,7 @@ def _alumnado(db: Session, alcance: set[tuple[int, int]]) -> tuple[_Alumnado, di
         .join(CicloEbr, CicloEbr.id_ciclo == Grado.id_ciclo)
         .where(
             col(Alumno.activo).is_(True),
+            ~pendiente_sql(),
             or_(*(and_(Alumno.id_colegio == c, Alumno.id_grado == g) for c, g in alcance)),
         )
         .group_by(Alumno.id_colegio, Alumno.id_grado, Programa.id_programa, Programa.nombre, CicloEbr.nombre)
