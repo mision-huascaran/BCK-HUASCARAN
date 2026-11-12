@@ -9,8 +9,8 @@ la marca `# REGLA PROVISIONAL` en `app/services/reglas_provisionales.py`.
 
 DP-1 y DP-2 no cambian la forma de una respuesta de la API: solo cambian valores
 (`escritura.permitida` de la rúbrica y los conteos del Inicio del Supervisor). DP-3 a DP-5 son
-de la Tanda Q1 y DP-6 a DP-11, de la Tanda Q2 (CU014, semana 14); no están en
-`reglas_provisionales.py`.
+de la Tanda Q1, DP-6 a DP-11, de la Tanda Q2 y DP-12, de la Tanda R (CU014, semana 14); no
+están en `reglas_provisionales.py`.
 
 ## DP-1 · El mes partido entre dos PA en la Rúbrica (D88)
 
@@ -124,6 +124,17 @@ de la Tanda Q1 y DP-6 a DP-11, de la Tanda Q2 (CU014, semana 14); no están en
 | **Qué cambia** | El front manda el archivo con `fetch(url, {method: 'POST', body: archivo})`, sin `FormData`. |
 | **Cómo revertirla** | `_leer_cuerpo` en `app/routers/alumnos.py`, `RUTA_DE_ARCHIVOS` en `app/core/proteccion_http.py`, `_validar_zip` en `app/services/importacion_nomina.py` y `confirmar` en `app/services/importacion_service.py`. |
 | **Tests** | `tests/test_importacion_api.py` y `tests/test_importacion_nomina.py`, `test_archivo_ilegible`. |
+
+## DP-12 · Plantilla de nómina
+
+| | |
+|---|---|
+| **CU** | CU014 (importar nómina). Tanda R, semana 14. |
+| **Origen** | Pedida por el cliente (Franco) y aprobada por el equipo. **Pendiente de que el analista la incorpore a CU014.** |
+| **Decisión** | `GET /alumnos/importaciones/plantilla`, solo Supervisor, genera en el momento un `.xlsx` con una hoja `Nómina` y el núcleo común de columnas de las nóminas de Misión Huascarán (N°, II.EE, GRADO, NOMBRES Y APELLIDOS, DNI, SEXO, F. NACIMIENTO, EDAD, PESO, TALLA, IMC, T/E, IMC/E, Dx Nutricional, Hb, Hb con descuento, Dx). Las 4 que importa SICEDU llevan nota y validación (lista de colegios activos, lista de grados 1° a 6°, DNI de 8 dígitos con formato de texto); las otras 13 van sin validaciones ni fórmulas. La lista de colegios va en una columna oculta (`AZ`) de la misma hoja: una hoja aparte, sin encabezados, saldría como "Hoja omitida" al importar, mientras que las filas de `AZ` no tienen nombre y el lector las ignora. Sin filas de ejemplo. Los nombres de colegio se escriben siempre como texto (sin inyección de fórmulas). |
+| **Qué no cambia** | Ninguna regla de la importación ni la base de datos: la plantilla es solo una ayuda para llenar la nómina, y la importación valida cada fila igual que con cualquier otro archivo. |
+| **Cómo revertirla** | Quitar `descargar_plantilla` de `app/routers/alumnos.py`, `plantilla` de `app/services/importacion_service.py` y `app/services/plantilla_nomina.py`. |
+| **Tests** | `tests/test_plantilla_nomina.py` (incluye la ida y vuelta con el lector real y que `columnas_de` reconozca los 4 títulos). |
 
 ## S22 · Un alumno que cambia de grupo a mitad de mes no aparece en el grupo nuevo (pendiente, sin cambio)
 

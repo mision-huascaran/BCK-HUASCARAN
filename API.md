@@ -934,6 +934,27 @@ await fetch(`/api/alumnos/importaciones?${params}`, {
 });
 ```
 
+### `GET /alumnos/importaciones/plantilla`
+
+Solo el Supervisor (Docente y Directivo: `403 sin_permiso`; sin sesión: `401`). Responde `200` con un `.xlsx` binario
+generado en el momento (no se guarda en el servidor):
+
+- `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- `Content-Disposition: attachment; filename="plantilla_nomina_sicedu.xlsx"`
+- `Cache-Control: no-store`
+
+La plantilla tiene una sola hoja, `Nómina`, con el núcleo común de columnas de las nóminas de Misión Huascarán:
+`N° | II.EE | GRADO | NOMBRES Y APELLIDOS | DNI | SEXO | F. NACIMIENTO | EDAD | PESO | TALLA | IMC | T/E | IMC/E |
+Dx Nutricional | Hb | Hb con descuento | Dx`.
+
+- Las 4 que importa SICEDU (II.EE, GRADO, NOMBRES Y APELLIDOS y DNI) llevan nota y validación: II.EE es una lista de
+  los colegios activos, GRADO una lista de 1° a 6°, el DNI exige 8 dígitos y tiene formato de texto (conserva el 0
+  inicial). NOMBRES Y APELLIDOS solo muestra la ayuda (`APELLIDOS, Nombres`).
+- Las otras 13 son de uso interno de Misión Huascarán: van sin validaciones ni fórmulas, y la importación no las lee
+  ni las guarda.
+- No trae filas de ejemplo. La lista de colegios es una foto del momento de la descarga (va en una columna oculta de
+  la misma hoja): si después se inactiva un colegio, la importación igual valida cada fila.
+
 ### `POST /alumnos/importaciones/vista-previa?nombre_archivo=…`
 
 Cuerpo: el `.xlsx`. No escribe nada. Responde `200`, también con `listos: 0` (el front muestra "No hay alumnos para
