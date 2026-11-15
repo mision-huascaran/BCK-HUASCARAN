@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
+    # Máximo total de conexiones a PostgreSQL del proceso (documento de diseño: 10 al
+    # inicio, ajustable hasta 20 según las pruebas). En SQLite (los tests) no se aplica.
+    DB_POOL_MAX: int = Field(default=10, ge=1)
     # OBSOLETA, sin efecto: la sesión dura 8 horas por regla de negocio (CU003, CU007) y
     # es una constante del servidor (app/services/sesiones.py, DURACION_SESION). Se
     # mantiene declarada solo para que un .env antiguo que aún la tenga no impida
