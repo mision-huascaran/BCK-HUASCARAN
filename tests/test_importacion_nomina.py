@@ -23,7 +23,7 @@ from app.services.importacion_nomina import (
     leer_nomina,
     separar_nombre,
 )
-from tests.nomina_factory import ENCABEZADOS, FILA_VACIA, SIN_DNI, fila, fila_sin_dni, hoja, hoja_sin_encabezados, libro
+from tests.nomina_factory import ENCABEZADOS, FILA_VACIA, SIN_DNI, TextoLiteral, fila, fila_sin_dni, hoja, hoja_sin_encabezados, libro
 
 COLEGIO = "Colegio Prueba"
 ID_COLEGIO = 7
@@ -402,3 +402,71 @@ def test_el_middleware_no_lee_el_cuerpo_de_las_importaciones(ruta):
 
 def test_el_middleware_sigue_leyendo_los_demas_cuerpos():
     assert _llamar_middleware("/alumnos") == (1, True)
+
+
+# ── Nombre no válido (app/core/nombre_persona.py) ───────────────────────────────────
+
+@pytest.mark.parametrize(
+    "nombre, motivo",
+    [
+        (TextoLiteral('=HYPERLINK("http://ejemplo.invalid","x")'), "nombre_con_formula"),
+        ("+SUM(1,1), Ana", "nombre_con_formula"),
+        ("-1+1", "nombre_con_formula"),
+        ("@ROJAS, Ana", "nombre_con_formula"),
+        ("\t=1+1", "nombre_con_formula"),
+        ("\rROJAS, Ana", "nombre_con_formula"),
+        ("ROJAS, " + "a" * 300, "nombre_demasiado_largo"),
+        ("A" * 300, "nombre_demasiado_largo"),
+        (12345678, "nombre_no_es_texto"),
+        (3.5, "nombre_no_es_texto"),
+        (True, "nombre_no_es_texto"),
+        ("ROJAS <script>, Ana", "nombre_no_valido"),
+        ("ROJAS; DROP TABLE alumno, Ana", "nombre_no_valido"),
+        ("ROJAS, Ana (2)", "nombre_no_valido"),
+        ("ROJAS, Ana-", "nombre_no_valido"),
+        ("ROJAS, =Ana", "nombre_no_valido"),
+    ],
+    ids=[
+        "formula-igual", "formula-mas", "formula-menos", "formula-arroba", "tabulador", "retorno", "nombres-300",
+        "apellidos-300", "numero-entero", "numero-decimal", "booleano", "script", "sql", "parentesis",
+        "guion-al-final", "igual-en-los-nombres",
+    ],
+)
+def test_nombre_no_valido_rechaza_la_fila(nombre, motivo):
+    analisis = clasificar_filas(fila(COLEGIO, 1, nombre), fila(COLEGIO, 2, "ROJAS, Ana"))
+
+    assert motivos(analisis) == [(2, "rechazo", motivo)]
+    assert (analisis.listos, analisis.no_importadas) == (1, 1)
+    assert analisis.altas[0].apellidos == "ROJAS"
+
+
+@pytest.mark.parametrize(
+    "nombre, apellidos, nombres",
+    [
+        ("PÉREZ ÑAHUI, José María", "PÉREZ ÑAHUI", "José María"),
+        ("O'HIGGINS, Ana", "O'HIGGINS", "Ana"),
+        ("D’ALESSANDRO MÜLLER, Lía", "D’ALESSANDRO MÜLLER", "Lía"),
+        ("HUAMÁN-VILLAR, Ñusta", "HUAMÁN-VILLAR", "Ñusta"),
+        ("QUISPE MAMANI Luis 3ro", "QUISPE MAMANI", "Luis 3ro"),
+    ],
+)
+def test_nombres_validos_con_tildes_enie_y_apostrofo(nombre, apellidos, nombres):
+    analisis = clasificar_filas(fila(COLEGIO, 1, nombre))
+
+    assert (analisis.listos, analisis.no_importadas, motivos(analisis)) == (1, 0, [])
+    assert (analisis.altas[0].apellidos, analisis.altas[0].nombres) == (apellidos, nombres)
+
+
+def test_una_formula_de_verdad_nunca_se_importa():
+    # El libro se abre con `data_only`: de una fórmula solo se lee el valor que Excel
+    # guardó al calcularla (aquí ninguno), nunca la fórmula. Sin valor, la fila no tiene
+    # nombre y no se lee.
+    analisis = clasificar_filas(fila(COLEGIO, 1, '=HYPERLINK("http://ejemplo.invalid","x")'), fila(COLEGIO, 2, "ROJAS, Ana"))
+
+    assert (analisis.listos, analisis.no_importadas, motivos(analisis)) == (1, 0, [])
+
+
+def test_el_nombre_no_valido_va_despues_del_colegio():
+    analisis = clasificar_filas(fila("Otro", 1, TextoLiteral("=1+1")))
+
+    assert motivos(analisis) == [(2, "rechazo", "colegio_no_registrado")]

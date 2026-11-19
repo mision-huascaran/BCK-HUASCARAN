@@ -16,7 +16,7 @@ from app.models.trazabilidad import Auditoria
 from app.services import importacion_service
 from app.services.importacion_nomina import MAXIMO_ALUMNOS, TAMANO_MAXIMO
 from tests.conftest import a_las, cabecera_de, crear_colegio, motivo
-from tests.nomina_factory import FILA_VACIA, SIN_DNI, fila, fila_sin_dni, hoja, hoja_sin_encabezados, libro, nomina_ejemplo
+from tests.nomina_factory import FILA_VACIA, SIN_DNI, TextoLiteral, fila, fila_sin_dni, hoja, hoja_sin_encabezados, libro, nomina_ejemplo
 
 PREVIA = "/alumnos/importaciones/vista-previa"
 CONFIRMAR = "/alumnos/importaciones"
@@ -98,6 +98,32 @@ def escrituras(db) -> tuple[int, int, int]:
         len(db.exec(select(Alumno).where(Alumno.id_importacion.is_not(None))).all()),
         len(db.exec(select(Auditoria).where(Auditoria.accion == "importar")).all()),
     )
+
+
+def test_nombres_no_validos_se_rechazan_y_los_demas_se_importan(client, db, entorno, sup):
+    datos = libro(
+        hoja(
+            "A",
+            fila(ANDINO, 2, TextoLiteral("=HYPERLINK(\"http://ejemplo.invalid\",\"x\")"), 70000011),
+            fila(ANDINO, 2, "ROJAS, " + "a" * 300),
+            fila(ANDINO, 2, 70000013),
+            fila(ANDINO, 2, "ROJAS <b>, Ana"),
+            fila(ANDINO, 2, "O'HIGGINS ÑAHUI, José"),
+        )
+    )
+    cuerpo = previa(client, sup, datos).json()
+    assert (cuerpo["listos"], cuerpo["no_importadas"]) == (1, 4)
+    assert [(o["fila"], o["tipo"], o["motivo"]) for o in cuerpo["observaciones"]] == [
+        (2, "rechazo", "nombre_con_formula"),
+        (3, "rechazo", "nombre_demasiado_largo"),
+        (4, "rechazo", "nombre_no_es_texto"),
+        (5, "rechazo", "nombre_no_valido"),
+    ]
+    assert all(o["detalle"].startswith("Nombre no válido") for o in cuerpo["observaciones"])
+
+    importar(client, sup, datos)
+    importados = db.exec(select(Alumno).where(Alumno.id_importacion.is_not(None))).all()
+    assert [(a.apellidos, a.nombres) for a in importados] == [("O'HIGGINS ÑAHUI", "José")]
 
 
 # ── 1. Vista previa ─────────────────────────────────────────────────────────────────

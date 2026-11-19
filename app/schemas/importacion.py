@@ -13,6 +13,10 @@ MotivoObservacion = Literal[
     "grado_no_reconocido",
     "dni_no_valido",
     "nombre_sin_separar",
+    "nombre_no_es_texto",
+    "nombre_con_formula",
+    "nombre_demasiado_largo",
+    "nombre_no_valido",
     "hoja_omitida",
 ]
 

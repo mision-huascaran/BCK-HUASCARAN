@@ -4,6 +4,10 @@
 `clasificar` decide qué pasa con cada una a partir de un `Contexto` que arma el servicio
 (colegios activos, grados ofrecidos y alumnos existentes). El archivo no se conserva y de
 él solo se usan las columnas II.EE, GRADO, NOMBRES Y APELLIDOS y DNI.
+
+Nombres y apellidos pasan por la misma regla que el formulario (app/core/nombre_persona.py):
+una fila con una fórmula, un texto de más de 60 caracteres, una celda que no es texto o
+caracteres no permitidos se rechaza con su motivo, y las demás se importan.
 """
 import hashlib
 import json
@@ -20,6 +24,7 @@ from fastapi import status
 from openpyxl import load_workbook
 
 from app.core.errores import ErrorNegocio
+from app.core.nombre_persona import LARGO_MAXIMO_NOMBRE, MOTIVO_LARGO, motivo_nombre_invalido, parece_formula
 from app.core.texto import nombre_comparable
 
 TAMANO_MAXIMO = 5 * 1024 * 1024
@@ -55,6 +60,10 @@ ALUMNO_YA_REGISTRADO = "alumno_ya_registrado"
 GRADO_NO_RECONOCIDO = "grado_no_reconocido"
 DNI_NO_VALIDO = "dni_no_valido"
 NOMBRE_SIN_SEPARAR = "nombre_sin_separar"
+NOMBRE_NO_ES_TEXTO = "nombre_no_es_texto"
+NOMBRE_CON_FORMULA = "nombre_con_formula"
+NOMBRE_DEMASIADO_LARGO = "nombre_demasiado_largo"
+NOMBRE_NO_VALIDO = "nombre_no_valido"
 
 DETALLES = {
     COLEGIO_NO_REGISTRADO: "Colegio no registrado.",
@@ -63,6 +72,15 @@ DETALLES = {
     GRADO_NO_RECONOCIDO: "Grado no reconocido. Se importará sin grado.",
     DNI_NO_VALIDO: "DNI no válido. Se importará sin DNI.",
     NOMBRE_SIN_SEPARAR: "Nombre sin separar. Revisa los nombres y apellidos después de importar.",
+    NOMBRE_NO_ES_TEXTO: "Nombre no válido: la celda no es un texto.",
+    NOMBRE_CON_FORMULA: "Nombre no válido: empieza con =, +, -, @, tabulador o retorno de carro.",
+    NOMBRE_DEMASIADO_LARGO: (
+        f"Nombre no válido: los nombres y los apellidos pueden tener hasta {LARGO_MAXIMO_NOMBRE} caracteres cada uno."
+    ),
+    NOMBRE_NO_VALIDO: (
+        "Nombre no válido: usa solo letras, números, espacios, apóstrofo y guion, sin empezar ni terminar "
+        "con apóstrofo o guion."
+    ),
     HOJA_OMITIDA: "Hoja omitida: no tiene las columnas II.EE y NOMBRES Y APELLIDOS.",
 }
 MENSAJE_ARCHIVO_INVALIDO = "No se pudo leer el archivo. Verifica que sea un archivo Excel (.xlsx) de hasta 5 MB."
@@ -167,6 +185,8 @@ class FilaNomina:
     grado: Any
     nombre: str
     dni: Any
+    # False si la celda del nombre no era texto (un número, una fecha, un booleano).
+    nombre_es_texto: bool = True
 
 
 @dataclass
@@ -214,7 +234,7 @@ def _filas_con_nombre(
             continue
         yield FilaNomina(
             orden, hoja, numero, _celda(fila, columnas, COLUMNA_COLEGIO), _celda(fila, columnas, COLUMNA_GRADO),
-            str(nombre).replace("\x00", ""), _celda(fila, columnas, COLUMNA_DNI),
+            str(nombre).replace("\x00", ""), _celda(fila, columnas, COLUMNA_DNI), isinstance(nombre, str),
         )
 
 
@@ -346,12 +366,30 @@ def _ya_registrado(alta_dni: Optional[str], clave: tuple[str, ...], id_colegio: 
     return any(alta_dni is None or dni is None for dni in existentes)
 
 
+def motivo_de_nombre(fila: FilaNomina, apellidos: str, nombres: str) -> Optional[str]:
+    """Por qué el nombre de la fila no se puede importar, o None. La celda se mira tal cual
+    (fórmula, tipo) y los apellidos y nombres ya separados, con la regla del formulario
+    (app/core/nombre_persona.py)."""
+    if not fila.nombre_es_texto:
+        return NOMBRE_NO_ES_TEXTO
+    if parece_formula(fila.nombre):
+        return NOMBRE_CON_FORMULA
+    motivos = {motivo_nombre_invalido(apellidos), motivo_nombre_invalido(nombres)} - {None}
+    if MOTIVO_LARGO in motivos:
+        return NOMBRE_DEMASIADO_LARGO
+    return NOMBRE_NO_VALIDO if motivos else None
+
+
 def _motivo_de_rechazo(
-    id_colegio: Optional[int], dni: Optional[str], apellidos: str, nombres: str, contexto: Contexto, repetidos: Counter
+    fila: FilaNomina, id_colegio: Optional[int], dni: Optional[str], apellidos: str, nombres: str, contexto: Contexto,
+    repetidos: Counter,
 ) -> Optional[str]:
     """El primer rechazo, en el orden de las reglas."""
     if id_colegio is None:
         return COLEGIO_NO_REGISTRADO
+    motivo_nombre = motivo_de_nombre(fila, apellidos, nombres)
+    if motivo_nombre is not None:
+        return motivo_nombre
     if dni is not None and (dni in contexto.dnis_existentes or repetidos[dni] > 1):
         return DNI_REPETIDO
     if _ya_registrado(dni, clave_de_nombre(apellidos, nombres), id_colegio, contexto):
@@ -384,7 +422,7 @@ def _clasificar_fila(
     def observacion(tipo: str, motivo: str) -> Observacion:
         return Observacion(fila.orden_hoja, fila.hoja, fila.fila, tipo, motivo)
 
-    rechazo = _motivo_de_rechazo(id_colegio, dni.valor, apellidos, nombres, contexto, repetidos)
+    rechazo = _motivo_de_rechazo(fila, id_colegio, dni.valor, apellidos, nombres, contexto, repetidos)
     if rechazo is not None:
         return None, [observacion(RECHAZO, rechazo)], _firma(fila, False, [rechazo], None)
 
@@ -401,8 +439,8 @@ def _clasificar_fila(
 
 
 def clasificar(nomina: Nomina, contexto: Contexto) -> Analisis:
-    """Aplica las reglas a cada fila, en orden: colegio, DNI repetido y alumno ya
-    registrado. El primer rechazo decide; una fila importable puede tener varias
+    """Aplica las reglas a cada fila, en orden: colegio, nombre no válido, DNI repetido y
+    alumno ya registrado. El primer rechazo decide; una fila importable puede tener varias
     advertencias, pero cuenta una sola vez."""
     repetidos = Counter(dnis_de(nomina))
     altas, observaciones, firmas = [], [], []

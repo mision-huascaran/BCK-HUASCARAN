@@ -14,6 +14,11 @@ EXTRAS = ["M", 21.5, 1.2, 14.9, 22.0, 15.1]
 FILA_VACIA: tuple = ()
 
 
+class TextoLiteral(str):
+    """Un texto que se guarda como texto aunque empiece con =: openpyxl lo guardaría como
+    fórmula. Así llega una celda que el usuario escribió con apóstrofo o pegó como texto."""
+
+
 @dataclass
 class Hoja:
     titulo: str
@@ -49,7 +54,9 @@ def libro(*hojas: Hoja) -> bytes:
         for numero, valores in enumerate(datos.filas, start=1):
             for columna, valor in enumerate(valores, start=1):
                 if valor is not None:
-                    ws.cell(row=numero, column=columna, value=valor)
+                    celda = ws.cell(row=numero, column=columna, value=valor)
+                    if isinstance(valor, TextoLiteral):
+                        celda.value, celda.data_type = str(valor), "s"
     salida = BytesIO()
     wb.save(salida)
     return salida.getvalue()
