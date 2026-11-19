@@ -38,6 +38,7 @@ from app.schemas.importacion import (
 )
 from app.services import pertenencia
 from app.services.auditoria import IMPORTAR, registrar_auditoria
+from app.services.plantilla_nomina import generar_plantilla
 from app.services.importacion_nomina import (
     DETALLES_PENDIENTE,
     Analisis,
@@ -145,6 +146,11 @@ def vista_previa(db: Session, datos: bytes) -> VistaPreviaImportacion:
             for o in analisis.observaciones
         ],
     )
+
+
+def plantilla(db: Session) -> bytes:
+    """La plantilla de la nómina, con los subprogramas del catálogo en el orden del catálogo."""
+    return generar_plantilla(list(db.exec(select(Programa.nombre).order_by(Programa.id_programa)).all()))
 
 
 # ── Consulta ────────────────────────────────────────────────────────────────────────

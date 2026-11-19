@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from io import BytesIO
 
 import pytest
+from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
@@ -31,6 +32,7 @@ from tests.nomina_factory import (
 )
 
 PREVIA = "/alumnos/importaciones/vista-previa"
+PLANTILLA = "/alumnos/importaciones/plantilla"
 CONFIRMAR = "/alumnos/importaciones"
 ARCHIVO = "nomina.xlsx"
 ANDINO, LEJANO = "Colegio Andino", "Colegio Lejano"
@@ -780,3 +782,48 @@ def test_seccion_agregada_entre_vista_previa_y_confirmacion(client, db, entorno,
     cuerpo = previa(client, sup, datos).json()
     assert [(p["motivo"], p["cantidad"]) for p in cuerpo["pendientes_por_motivo"]] == [("seccion_por_elegir", 1)]
 
+
+# ── Plantilla ───────────────────────────────────────────────────────────────────────
+
+def test_la_plantilla_trae_la_columna_y_la_lista_de_subprogramas(client, entorno, sup):
+    respuesta = client.get(PLANTILLA, headers=sup)
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert respuesta.headers["content-disposition"] == 'attachment; filename="plantilla_nomina.xlsx"'
+    hoja_plantilla = load_workbook(BytesIO(respuesta.content)).active
+    assert [c.value for c in hoja_plantilla[1]] == ["II.EE", "GRADO", "SUBPROGRAMA", "NOMBRES Y APELLIDOS", "DNI"]
+    # Sin filas de ejemplo: se importarían como alumnos.
+    assert hoja_plantilla.max_row == 1
+    [validacion] = hoja_plantilla.data_validations.dataValidation
+    assert (validacion.type, validacion.formula1) == ("list", '"Alfabetización,Comprensión Lectora"')
+    assert str(validacion.sqref) == f"C2:C{MAXIMO_ALUMNOS + 1}"
+    assert (validacion.showErrorMessage, validacion.errorStyle, validacion.allow_blank) == (True, "stop", True)
+    # Los nombres de la lista son los del catálogo, tal cual.
+    assert validacion.formula1.strip('"').split(",") == list(entorno.programas)
+
+
+def test_la_plantilla_llena_se_importa_con_la_pertenencia_completa(client, db, entorno, sup):
+    libro_plantilla = load_workbook(BytesIO(client.get(PLANTILLA, headers=sup).content))
+    libro_plantilla.active.append([ANDINO, "2°", "Comprensión Lectora", "QUISPE MAMANI, Juan Carlos", "70000031"])
+    salida = BytesIO()
+    libro_plantilla.save(salida)
+
+    cuerpo = previa(client, sup, salida.getvalue()).json()
+    assert (cuerpo["listos"], cuerpo["pendientes"], cuerpo["observaciones"]) == (1, 0, [])
+    importar(client, sup, salida.getvalue())
+    alumno = db.exec(select(Alumno).where(Alumno.dni == "70000031")).one()
+    assert alumno.id_programa_actual == entorno.programas["Comprensión Lectora"]
+
+
+@pytest.mark.parametrize("rol", ["Docente", "Directivo"])
+def test_la_plantilla_es_solo_del_supervisor(client, entorno, cabeceras, rol):
+    respuesta = client.get(PLANTILLA, headers=cabeceras[rol])
+
+    assert (respuesta.status_code, motivo(respuesta)) == (403, "sin_permiso")
+
+
+def test_la_plantilla_sin_sesion(client, entorno):
+    respuesta = client.get(PLANTILLA)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (401, "sesion_invalida")
