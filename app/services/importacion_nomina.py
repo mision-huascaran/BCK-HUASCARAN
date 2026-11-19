@@ -3,7 +3,15 @@
 `leer_nomina` abre el archivo con límites de seguridad y devuelve las filas con nombre;
 `clasificar` decide qué pasa con cada una a partir de un `Contexto` que arma el servicio
 (colegios activos, grados ofrecidos y alumnos existentes). El archivo no se conserva y de
-él solo se usan las columnas II.EE, GRADO, NOMBRES Y APELLIDOS y DNI.
+él solo se usan las columnas II.EE, GRADO, SUBPROGRAMA, NOMBRES Y APELLIDOS y DNI.
+
+Subprograma (opcional, para no romper las plantillas anteriores): se valida como en el
+formulario de "Nuevo alumno" (`alumno_service.validar_estado`): un valor del catálogo, sin
+distinguir mayúsculas ni tildes, que el colegio ofrezca y compatible con el grado (en 1.º,
+solo Alfabetización). Si es inválido, la fila se rechaza. Si colegio, grado y subprograma
+son válidos y el grado tiene una sola sección activa, el alumno se crea con su pertenencia
+completa; si no (sin la columna, celda vacía, sin grado o con varias secciones), se crea
+con la pertenencia pendiente y `Analisis.pendientes` cuenta por qué.
 
 Nombres y apellidos pasan por la misma regla que el formulario (app/core/nombre_persona.py):
 una fila con una fórmula, un texto de más de 60 caracteres, una celda que no es texto o
@@ -25,6 +33,7 @@ from openpyxl import load_workbook
 
 from app.core.errores import ErrorNegocio
 from app.core.nombre_persona import LARGO_MAXIMO_NOMBRE, MOTIVO_LARGO, motivo_nombre_invalido, parece_formula
+from app.core.ciclo import programa_permitido_en_grado
 from app.core.texto import nombre_comparable
 
 TAMANO_MAXIMO = 5 * 1024 * 1024
@@ -38,9 +47,11 @@ COLUMNA_COLEGIO = "colegio"
 COLUMNA_GRADO = "grado"
 COLUMNA_NOMBRE = "nombre"
 COLUMNA_DNI = "dni"
+COLUMNA_SUBPROGRAMA = "subprograma"
 ENCABEZADOS = {
     "ii.ee": COLUMNA_COLEGIO,
     "grado": COLUMNA_GRADO,
+    "subprograma": COLUMNA_SUBPROGRAMA,
     "nombresyapellidos": COLUMNA_NOMBRE,
     "dni": COLUMNA_DNI,
 }
@@ -64,6 +75,14 @@ NOMBRE_NO_ES_TEXTO = "nombre_no_es_texto"
 NOMBRE_CON_FORMULA = "nombre_con_formula"
 NOMBRE_DEMASIADO_LARGO = "nombre_demasiado_largo"
 NOMBRE_NO_VALIDO = "nombre_no_valido"
+SUBPROGRAMA_NO_VALIDO = "subprograma_no_valido"
+PROGRAMA_NO_OFRECIDO = "programa_no_ofrecido"
+PRIMER_GRADO_SOLO_ALFABETIZACION = "primer_grado_solo_alfabetizacion"
+SUBPROGRAMA_SIN_GRADO = "subprograma_sin_grado"
+SECCION_POR_ELEGIR = "seccion_por_elegir"
+# Por qué un alumno importado queda con la pertenencia pendiente (además de los dos de arriba).
+SIN_COLUMNA_SUBPROGRAMA = "sin_columna_subprograma"
+SUBPROGRAMA_VACIO = "subprograma_vacio"
 
 DETALLES = {
     COLEGIO_NO_REGISTRADO: "Colegio no registrado.",
@@ -82,6 +101,20 @@ DETALLES = {
         "con apóstrofo o guion."
     ),
     HOJA_OMITIDA: "Hoja omitida: no tiene las columnas II.EE y NOMBRES Y APELLIDOS.",
+    SUBPROGRAMA_NO_VALIDO: "Subprograma no válido. Elige uno de la lista: Alfabetización o Comprensión Lectora.",
+    PROGRAMA_NO_OFRECIDO: "El colegio no ofrece ese subprograma.",
+    PRIMER_GRADO_SOLO_ALFABETIZACION: "En 1.º grado todos los alumnos pertenecen a Alfabetización.",
+    SUBPROGRAMA_SIN_GRADO: "Subprograma sin grado reconocido. Se importará con la pertenencia pendiente.",
+    SECCION_POR_ELEGIR: (
+        "El grado tiene varias secciones. Se importará con la pertenencia pendiente: elige su sección después."
+    ),
+}
+# Textos del resumen de pendientes (`Analisis.pendientes`).
+DETALLES_PENDIENTE = {
+    SIN_COLUMNA_SUBPROGRAMA: "El archivo no tiene la columna SUBPROGRAMA (plantilla anterior).",
+    SUBPROGRAMA_VACIO: "La celda SUBPROGRAMA está vacía.",
+    SUBPROGRAMA_SIN_GRADO: "Tienen subprograma, pero no un grado reconocido.",
+    SECCION_POR_ELEGIR: "Su grado tiene varias secciones: hay que elegirla.",
 }
 MENSAJE_ARCHIVO_INVALIDO = "No se pudo leer el archivo. Verifica que sea un archivo Excel (.xlsx) de hasta 5 MB."
 MENSAJE_DEMASIADOS = "El archivo supera el máximo de 3000 alumnos por importación. Divide la nómina e inténtalo nuevamente."
@@ -187,6 +220,9 @@ class FilaNomina:
     dni: Any
     # False si la celda del nombre no era texto (un número, una fecha, un booleano).
     nombre_es_texto: bool = True
+    subprograma: Any = None
+    # False si la hoja no tiene la columna SUBPROGRAMA (plantillas anteriores).
+    con_columna_subprograma: bool = False
 
 
 @dataclass
@@ -235,6 +271,7 @@ def _filas_con_nombre(
         yield FilaNomina(
             orden, hoja, numero, _celda(fila, columnas, COLUMNA_COLEGIO), _celda(fila, columnas, COLUMNA_GRADO),
             str(nombre).replace("\x00", ""), _celda(fila, columnas, COLUMNA_DNI), isinstance(nombre, str),
+            _celda(fila, columnas, COLUMNA_SUBPROGRAMA), COLUMNA_SUBPROGRAMA in columnas,
         )
 
 
@@ -302,6 +339,15 @@ class Contexto:
     dnis_existentes: set[str]
     # {(id_colegio, clave de nombre): DNI (o None) de cada alumno con ese nombre}.
     alumnos: dict[tuple[int, tuple[str, ...]], list[Optional[str]]]
+    # {nombre comparable: id} del catálogo de subprogramas.
+    programas: dict[str, int] = field(default_factory=dict)
+    # {id_colegio: ids de los subprogramas que ofrece}.
+    programas_por_colegio: dict[int, set[int]] = field(default_factory=dict)
+    # {id_grado: nombre} y {id_programa: nombre}, para la regla de 1.º.
+    nombre_grado: dict[int, str] = field(default_factory=dict)
+    nombre_programa: dict[int, str] = field(default_factory=dict)
+    # {(id_colegio, id_grado): ids de sus secciones activas}.
+    secciones: dict[tuple[int, int], list[int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -313,6 +359,13 @@ class AltaNomina:
     nombres: str
     id_grado: Optional[int]
     dni: Optional[str]
+    # Con los dos, el alumno se crea con su pertenencia completa; sin ellos, pendiente.
+    id_programa: Optional[int] = None
+    id_seccion: Optional[int] = None
+
+    @property
+    def completa(self) -> bool:
+        return self.id_grado is not None and self.id_programa is not None and self.id_seccion is not None
 
 
 @dataclass(frozen=True)
@@ -335,6 +388,8 @@ class Analisis:
     con_advertencia: int
     no_importadas: int
     huella: str
+    # {motivo: cuántos alumnos importables quedan con la pertenencia pendiente por eso}.
+    pendientes: Counter = field(default_factory=Counter)
 
     @property
     def listos(self) -> int:
@@ -412,9 +467,49 @@ def _huella(firmas: list[dict[str, Any]], omitidas: list[tuple[int, str]]) -> st
     return hashlib.sha256(canonico.encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class Pertenencia:
+    """Lo que el subprograma decide de una fila: un rechazo, o el subprograma y la sección
+    con los que se crea (o el motivo por el que queda pendiente, y su advertencia)."""
+
+    rechazo: Optional[str] = None
+    id_programa: Optional[int] = None
+    id_seccion: Optional[int] = None
+    pendiente: Optional[str] = None
+    advertencia: Optional[str] = None
+
+
+def leer_subprograma(valor: Any, programas: dict[str, int]) -> Optional[int]:
+    """El id del subprograma del catálogo, sin distinguir mayúsculas, tildes ni espacios
+    sobrantes; None si no es uno del catálogo (un número, una fórmula, un texto libre)."""
+    return programas.get(nombre_comparable(valor)) if isinstance(valor, str) else None
+
+
+def _pertenencia(fila: FilaNomina, id_colegio: int, id_grado: Optional[int], contexto: Contexto) -> Pertenencia:
+    """Las reglas del subprograma, en el orden de `alumno_service.validar_estado`."""
+    if not fila.con_columna_subprograma:
+        return Pertenencia(pendiente=SIN_COLUMNA_SUBPROGRAMA)
+    if _es_vacio(fila.subprograma):
+        return Pertenencia(pendiente=SUBPROGRAMA_VACIO)
+    id_programa = leer_subprograma(fila.subprograma, contexto.programas)
+    if id_programa is None:
+        return Pertenencia(rechazo=SUBPROGRAMA_NO_VALIDO)
+    if id_programa not in contexto.programas_por_colegio.get(id_colegio, set()):
+        return Pertenencia(rechazo=PROGRAMA_NO_OFRECIDO)
+    if id_grado is None:
+        return Pertenencia(pendiente=SUBPROGRAMA_SIN_GRADO, advertencia=SUBPROGRAMA_SIN_GRADO)
+    if not programa_permitido_en_grado(contexto.nombre_grado[id_grado], contexto.nombre_programa[id_programa]):
+        return Pertenencia(rechazo=PRIMER_GRADO_SOLO_ALFABETIZACION)
+    secciones = contexto.secciones.get((id_colegio, id_grado), [])
+    if len(secciones) != 1:
+        # Como en el formulario: con varias secciones activas hay que elegirla.
+        return Pertenencia(pendiente=SECCION_POR_ELEGIR, advertencia=SECCION_POR_ELEGIR)
+    return Pertenencia(id_programa=id_programa, id_seccion=secciones[0])
+
+
 def _clasificar_fila(
     fila: FilaNomina, contexto: Contexto, repetidos: Counter
-) -> tuple[Optional[AltaNomina], list[Observacion], dict[str, Any]]:
+) -> tuple[Optional[AltaNomina], list[Observacion], dict[str, Any], Optional[str]]:
     id_colegio = colegio_de(fila, contexto.colegios)
     dni = leer_dni(fila.dni)
     apellidos, nombres, separado = separar_nombre(fila.nombre)
@@ -423,30 +518,36 @@ def _clasificar_fila(
         return Observacion(fila.orden_hoja, fila.hoja, fila.fila, tipo, motivo)
 
     rechazo = _motivo_de_rechazo(fila, id_colegio, dni.valor, apellidos, nombres, contexto, repetidos)
+    if rechazo is None:
+        id_grado, grado_invalido = _id_grado(leer_grado(fila.grado), id_colegio, contexto)
+        grupo = _pertenencia(fila, id_colegio, id_grado, contexto)
+        rechazo = grupo.rechazo
     if rechazo is not None:
-        return None, [observacion(RECHAZO, rechazo)], _firma(fila, False, [rechazo], None)
+        return None, [observacion(RECHAZO, rechazo)], _firma(fila, False, [rechazo], None), None
 
-    id_grado, grado_invalido = _id_grado(leer_grado(fila.grado), id_colegio, contexto)
     motivos = [
         motivo
         for motivo, aplica in (
             (GRADO_NO_RECONOCIDO, grado_invalido), (DNI_NO_VALIDO, dni.advertencia), (NOMBRE_SIN_SEPARAR, not separado),
+            (grupo.advertencia, grupo.advertencia is not None),
         )
         if aplica
     ]
-    alta = AltaNomina(id_colegio, apellidos, nombres, id_grado, dni.valor)
-    return alta, [observacion(ADVERTENCIA, m) for m in motivos], _firma(fila, True, motivos, alta)
+    alta = AltaNomina(id_colegio, apellidos, nombres, id_grado, dni.valor, grupo.id_programa, grupo.id_seccion)
+    return alta, [observacion(ADVERTENCIA, m) for m in motivos], _firma(fila, True, motivos, alta), grupo.pendiente
 
 
 def clasificar(nomina: Nomina, contexto: Contexto) -> Analisis:
-    """Aplica las reglas a cada fila, en orden: colegio, nombre no válido, DNI repetido y
-    alumno ya registrado. El primer rechazo decide; una fila importable puede tener varias
-    advertencias, pero cuenta una sola vez."""
+    """Aplica las reglas a cada fila, en orden: colegio, nombre no válido, DNI repetido,
+    alumno ya registrado y subprograma (no válido, no ofrecido, 1.º solo Alfabetización).
+    El primer rechazo decide; una fila importable puede tener varias advertencias, pero
+    cuenta una sola vez."""
     repetidos = Counter(dnis_de(nomina))
     altas, observaciones, firmas = [], [], []
     no_importadas = con_advertencia = 0
+    pendientes: Counter = Counter()
     for fila in nomina.filas:
-        alta, propias, firma = _clasificar_fila(fila, contexto, repetidos)
+        alta, propias, firma, pendiente = _clasificar_fila(fila, contexto, repetidos)
         observaciones.extend(propias)
         firmas.append(firma)
         if alta is None:
@@ -454,7 +555,11 @@ def clasificar(nomina: Nomina, contexto: Contexto) -> Analisis:
             continue
         altas.append(alta)
         con_advertencia += bool(propias)
+        if pendiente is not None:
+            pendientes[pendiente] += 1
     observaciones.extend(Observacion(orden, nombre, None, HOJA_OMITIDA, HOJA_OMITIDA) for orden, nombre in nomina.hojas_omitidas)
     # El sort es estable: las de una misma fila conservan el orden de las reglas.
     observaciones.sort(key=lambda o: (o.orden_hoja, o.fila or 0))
-    return Analisis(altas, observaciones, con_advertencia, no_importadas, _huella(firmas, nomina.hojas_omitidas))
+    return Analisis(
+        altas, observaciones, con_advertencia, no_importadas, _huella(firmas, nomina.hojas_omitidas), pendientes
+    )

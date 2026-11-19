@@ -2,7 +2,7 @@
 import asyncio
 import uuid
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
 
 import pytest
@@ -15,8 +15,20 @@ from app.models.organizacion import Alumno, AlumnoPertenencia, ColegioGrado, Imp
 from app.models.trazabilidad import Auditoria
 from app.services import importacion_service
 from app.services.importacion_nomina import MAXIMO_ALUMNOS, TAMANO_MAXIMO
-from tests.conftest import a_las, cabecera_de, crear_colegio, motivo
-from tests.nomina_factory import FILA_VACIA, SIN_DNI, TextoLiteral, fila, fila_sin_dni, hoja, hoja_sin_encabezados, libro, nomina_ejemplo
+from tests.conftest import a_las, agregar_seccion, cabecera_de, crear_colegio, motivo, seccion_de
+from tests.nomina_factory import (
+    FILA_VACIA,
+    SIN_DNI,
+    TextoLiteral,
+    fila,
+    fila_con_subprograma,
+    fila_sin_dni,
+    hoja,
+    hoja_con_subprograma,
+    hoja_sin_encabezados,
+    libro,
+    nomina_ejemplo,
+)
 
 PREVIA = "/alumnos/importaciones/vista-previa"
 CONFIRMAR = "/alumnos/importaciones"
@@ -644,3 +656,127 @@ def test_nomina_de_ejemplo(client, db, entorno, sup):
         ("REPETIDOS", 6, "dni_repetido"),
         ("RESUMEN", None, "hoja_omitida"),
     ]
+
+
+# ── Subprograma (pertenencia completa al importar) ──────────────────────────────────
+
+def libro_con_subprograma() -> bytes:
+    return libro(
+        hoja_con_subprograma(
+            "ANDINO",
+            fila_con_subprograma(ANDINO, 2, "comprension lectora", "GOMEZ RIOS, Ada", 70000021),
+            fila_con_subprograma(ANDINO, "1°", "ALFABETIZACION", "VARGAS, Beto", 70000022),
+            fila_con_subprograma(ANDINO, 3, "Comprensión Lectora", "LUNA, Ciro"),
+            fila_con_subprograma(ANDINO, 1, "Comprensión Lectora", "PAZ, Dina"),
+            fila_con_subprograma(ANDINO, 2, "Matemática", "SALAS, Elio"),
+            fila_con_subprograma(ANDINO, 2, None, "ROJAS, Fito"),
+            fila_con_subprograma(ANDINO, None, "Alfabetización", "MORI, Gala"),
+        )
+    )
+
+
+def test_vista_previa_con_subprograma(client, entorno, sup):
+    cuerpo = previa(client, sup, libro_con_subprograma()).json()
+
+    assert (cuerpo["listos"], cuerpo["no_importadas"], cuerpo["pendientes"]) == (5, 2, 2)
+    assert cuerpo["pendientes_por_motivo"] == [
+        {"motivo": "subprograma_vacio", "cantidad": 1, "detalle": "La celda SUBPROGRAMA está vacía."},
+        {"motivo": "subprograma_sin_grado", "cantidad": 1, "detalle": "Tienen subprograma, pero no un grado reconocido."},
+    ]
+    assert [(o["fila"], o["tipo"], o["motivo"]) for o in cuerpo["observaciones"]] == [
+        (5, "rechazo", "primer_grado_solo_alfabetizacion"),
+        (6, "rechazo", "subprograma_no_valido"),
+        (8, "advertencia", "subprograma_sin_grado"),
+    ]
+
+
+def test_plantilla_anterior_avisa_cuantos_quedan_pendientes(client, entorno, sup):
+    cuerpo = previa(client, sup, libro_simple()).json()
+
+    assert (cuerpo["listos"], cuerpo["pendientes"]) == (2, 2)
+    assert [(p["motivo"], p["cantidad"]) for p in cuerpo["pendientes_por_motivo"]] == [("sin_columna_subprograma", 2)]
+
+
+def test_confirmar_con_subprograma_crea_la_pertenencia_completa(client, db, entorno, sup):
+    importar(client, sup, libro_con_subprograma())
+
+    db.expire_all()
+    andino = entorno.colegios["Andino"]
+    por_apellido = {a.apellidos: a for a in db.exec(select(Alumno).where(Alumno.id_importacion.is_not(None))).all()}
+    assert set(por_apellido) == {"GOMEZ RIOS", "VARGAS", "LUNA", "ROJAS", "MORI"}
+    ada = por_apellido["GOMEZ RIOS"]
+    assert (ada.id_grado, ada.id_programa_actual) == (entorno.grados["2.º"], entorno.programas["Comprensión Lectora"])
+    assert ada.id_seccion == seccion_de(db, andino, entorno.grados["2.º"]).id_seccion
+    [intervalo] = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == ada.id_alumno)).all()
+    assert (intervalo.desde, intervalo.hasta, intervalo.id_programa, intervalo.id_seccion) == (
+        entorno.hoy, None, ada.id_programa_actual, ada.id_seccion,
+    )
+    assert intervalo.creado_por == entorno.supervisor.id_usuario
+    # Sin subprograma o sin grado: como hasta ahora, sin intervalos.
+    for apellido in ("ROJAS", "MORI"):
+        alumno = por_apellido[apellido]
+        assert (alumno.id_programa_actual, alumno.id_seccion) == (None, None)
+        assert db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == alumno.id_alumno)).all() == []
+
+
+def test_los_importados_completos_no_salen_como_pendientes_y_tienen_ciclo(client, entorno, sup):
+    importar(client, sup, libro_con_subprograma())
+
+    params = {"id_colegio": entorno.colegios["Andino"].id_colegio}
+    items = client.get("/alumnos", params=params, headers=sup).json()["items"]
+    por_apellido = {a["apellidos"]: a for a in items}
+
+    # El ciclo se calcula como al crear a mano: Alfabetización, III; Comprensión Lectora, el del grado.
+    esperado = {"GOMEZ RIOS": (False, "III", "Única"), "VARGAS": (False, "III", "Única"), "LUNA": (False, "IV", "Única"),
+                "ROJAS": (True, None, None), "MORI": (True, None, None)}
+    assert {
+        apellido: (a["pertenencia_pendiente"], a["ciclo"], a["seccion"] and a["seccion"]["nombre"])
+        for apellido, a in por_apellido.items() if apellido in esperado
+    } == esperado
+
+
+def test_la_fecha_de_pertenencia_es_hoy_en_lima_aunque_en_utc_ya_sea_manana(client, db, entorno, reloj):
+    # 22:30 en Lima (UTC-5) son las 03:30 del día siguiente en UTC.
+    reloj.fijar(a_las(entorno.hoy, 22, 30))
+    assert reloj.instante.date() == entorno.hoy + timedelta(days=1)
+    cabecera = cabecera_de(db, entorno.supervisor)
+
+    importar(client, cabecera, libro_con_subprograma())
+
+    db.expire_all()
+    ada = db.exec(select(Alumno).where(Alumno.dni == "70000021")).one()
+    [intervalo] = db.exec(select(AlumnoPertenencia).where(AlumnoPertenencia.id_alumno == ada.id_alumno)).all()
+    assert (intervalo.desde, ada.fecha_registro) == (entorno.hoy, entorno.hoy)
+    detalle = client.get(f"/alumnos/{ada.id_alumno}", headers=cabecera).json()
+    assert (detalle["pertenece_desde"], detalle["pertenencia_pendiente"]) == (entorno.hoy.isoformat(), False)
+
+
+def test_historial_del_importado_con_pertenencia(client, db, entorno, sup):
+    importar(client, sup, libro_con_subprograma())
+    completo = db.exec(select(Alumno).where(Alumno.dni == "70000021")).one()
+    pendiente = db.exec(select(Alumno).where(Alumno.apellidos == "ROJAS")).one()
+
+    [evento] = client.get(f"/alumnos/{completo.id_alumno}/historial", headers=sup).json()["items"]
+    [evento_pendiente] = client.get(f"/alumnos/{pendiente.id_alumno}/historial", headers=sup).json()["items"]
+
+    assert evento["accion"] == "importar"
+    # La misma fila de pertenencia que deja "Nuevo alumno", con la fecha de hoy.
+    assert sorted(evento["cambios"], key=lambda c: c["campo"]) == [
+        {"campo": "Archivo", "anterior": None, "nuevo": ARCHIVO},
+        {"campo": "Fecha efectiva", "anterior": None, "nuevo": entorno.hoy.strftime("%d/%m/%Y")},
+    ]
+    assert evento_pendiente["cambios"] == [{"campo": "Archivo", "anterior": None, "nuevo": ARCHIVO}]
+
+
+def test_seccion_agregada_entre_vista_previa_y_confirmacion(client, db, entorno, sup):
+    datos = libro(hoja_con_subprograma("A", fila_con_subprograma(ANDINO, 2, "Alfabetización", "ROJAS, Ana")))
+    huella = previa(client, sup, datos).json()["huella"]
+    agregar_seccion(db, entorno.colegios["Andino"], entorno.grados["2.º"], "B", entorno.supervisor.id_usuario)
+    db.commit()
+
+    respuesta = confirmar(client, sup, datos, huella)
+
+    assert (respuesta.status_code, motivo(respuesta)) == (409, "importacion_desactualizada")
+    cuerpo = previa(client, sup, datos).json()
+    assert [(p["motivo"], p["cantidad"]) for p in cuerpo["pendientes_por_motivo"]] == [("seccion_por_elegir", 1)]
+

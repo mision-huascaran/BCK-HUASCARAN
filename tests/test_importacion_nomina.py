@@ -23,11 +23,25 @@ from app.services.importacion_nomina import (
     leer_nomina,
     separar_nombre,
 )
-from tests.nomina_factory import ENCABEZADOS, FILA_VACIA, SIN_DNI, TextoLiteral, fila, fila_sin_dni, hoja, hoja_sin_encabezados, libro
+from tests.nomina_factory import (
+    ENCABEZADOS,
+    FILA_VACIA,
+    SIN_DNI,
+    TextoLiteral,
+    fila,
+    fila_con_subprograma,
+    fila_sin_dni,
+    hoja,
+    hoja_con_subprograma,
+    hoja_sin_encabezados,
+    libro,
+)
 
 COLEGIO = "Colegio Prueba"
 ID_COLEGIO = 7
 IDS_GRADO = {n: 100 + n for n in range(1, 7)}
+ALFA, COMPRENSION = 1, 2
+SECCION_1, SECCION_2 = 501, 502
 
 
 def contexto(**cambios) -> Contexto:
@@ -37,6 +51,11 @@ def contexto(**cambios) -> Contexto:
         "id_grado_por_numero": IDS_GRADO,
         "dnis_existentes": set(),
         "alumnos": {},
+        "programas": {"alfabetizacion": ALFA, "comprension lectora": COMPRENSION},
+        "programas_por_colegio": {ID_COLEGIO: {ALFA, COMPRENSION}},
+        "nombre_grado": {IDS_GRADO[n]: f"{n}.º" for n in IDS_GRADO},
+        "nombre_programa": {ALFA: "Alfabetización", COMPRENSION: "Comprensión Lectora"},
+        "secciones": {(ID_COLEGIO, IDS_GRADO[1]): [SECCION_1], (ID_COLEGIO, IDS_GRADO[2]): [SECCION_2]},
         **cambios,
     }
     return Contexto(**datos)
@@ -470,3 +489,130 @@ def test_el_nombre_no_valido_va_despues_del_colegio():
     analisis = clasificar_filas(fila("Otro", 1, TextoLiteral("=1+1")))
 
     assert motivos(analisis) == [(2, "rechazo", "colegio_no_registrado")]
+
+
+# ── Subprograma ─────────────────────────────────────────────────────────────────────
+
+def con_subprograma(*filas, ctx=None):
+    return clasificar(leer_nomina(libro(hoja_con_subprograma("A", *filas))), ctx or contexto())
+
+
+@pytest.mark.parametrize(
+    "grado, subprograma, id_programa, id_seccion",
+    [
+        (1, "Alfabetización", ALFA, SECCION_1),
+        ("2°", "Comprensión Lectora", COMPRENSION, SECCION_2),
+        (2, "Alfabetización", ALFA, SECCION_2),
+    ],
+)
+def test_subprograma_valido_da_la_pertenencia_completa(grado, subprograma, id_programa, id_seccion):
+    analisis = con_subprograma(fila_con_subprograma(COLEGIO, grado, subprograma, "ROJAS, Ana"))
+
+    assert (motivos(analisis), analisis.pendientes) == ([], {})
+    alta = analisis.altas[0]
+    assert (alta.id_programa, alta.id_seccion, alta.completa) == (id_programa, id_seccion, True)
+
+
+@pytest.mark.parametrize(
+    "subprograma", ["ALFABETIZACION", "alfabetización", " Alfabetizacion ", "comprension  LECTORA", "COMPRENSIÓN LECTORA"]
+)
+def test_subprograma_sin_distinguir_mayusculas_ni_tildes(subprograma):
+    analisis = con_subprograma(fila_con_subprograma(COLEGIO, 2, subprograma, "ROJAS, Ana"))
+
+    assert (analisis.listos, motivos(analisis)) == (1, [])
+    assert analisis.altas[0].completa
+
+
+@pytest.mark.parametrize(
+    "subprograma",
+    [
+        "Matemática", "Alfabetizacion Lectora", 2, 3.5, True, TextoLiteral("=HYPERLINK(\"http://ejemplo.invalid\",\"x\")"),
+        "+Alfabetización", "@Alfabetización", "Alfabetización'; DROP TABLE alumno; --", "A" * 300,
+    ],
+    ids=["otro", "mezcla", "entero", "decimal", "booleano", "formula", "mas", "arroba", "sql", "largo"],
+)
+def test_subprograma_no_valido_rechaza_la_fila_y_las_demas_se_importan(subprograma):
+    analisis = con_subprograma(
+        fila_con_subprograma(COLEGIO, 2, subprograma, "ROJAS, Ana"),
+        fila_con_subprograma(COLEGIO, 2, "Comprensión Lectora", "PAZ, Hugo"),
+    )
+
+    assert motivos(analisis) == [(2, "rechazo", "subprograma_no_valido")]
+    assert (analisis.listos, analisis.no_importadas) == (1, 1)
+    assert analisis.altas[0].apellidos == "PAZ"
+
+
+def test_primer_grado_solo_admite_alfabetizacion():
+    analisis = con_subprograma(fila_con_subprograma(COLEGIO, "1°", "Comprensión Lectora", "ROJAS, Ana"))
+
+    assert motivos(analisis) == [(2, "rechazo", "primer_grado_solo_alfabetizacion")]
+    assert analisis.no_importadas == 1
+
+
+def test_subprograma_que_el_colegio_no_ofrece():
+    ctx = contexto(programas_por_colegio={ID_COLEGIO: {ALFA}})
+    analisis = con_subprograma(fila_con_subprograma(COLEGIO, 2, "Comprensión Lectora", "ROJAS, Ana"), ctx=ctx)
+
+    assert motivos(analisis) == [(2, "rechazo", "programa_no_ofrecido")]
+
+
+@pytest.mark.parametrize("subprograma", [None, "", "   "])
+def test_subprograma_vacio_queda_pendiente_sin_advertencia(subprograma):
+    analisis = con_subprograma(fila_con_subprograma(COLEGIO, 2, subprograma, "ROJAS, Ana"))
+
+    assert (analisis.listos, motivos(analisis), analisis.pendientes) == (1, [], {"subprograma_vacio": 1})
+    assert (analisis.altas[0].id_programa, analisis.altas[0].completa) == (None, False)
+
+
+def test_plantilla_anterior_sin_la_columna_queda_pendiente():
+    analisis = clasificar_filas(fila(COLEGIO, 1, "ROJAS, Ana"), fila(COLEGIO, 2, "PAZ, Hugo"))
+
+    assert (analisis.listos, motivos(analisis), analisis.pendientes) == (2, [], {"sin_columna_subprograma": 2})
+
+
+@pytest.mark.parametrize("grado, motivos_esperados", [
+    (None, [(2, "advertencia", "subprograma_sin_grado")]),
+    ("9°", [(2, "advertencia", "grado_no_reconocido"), (2, "advertencia", "subprograma_sin_grado")]),
+])
+def test_subprograma_sin_grado_queda_pendiente_con_advertencia(grado, motivos_esperados):
+    analisis = con_subprograma(fila_con_subprograma(COLEGIO, grado, "Alfabetización", "ROJAS, Ana"))
+
+    assert motivos(analisis) == motivos_esperados
+    assert (analisis.listos, analisis.con_advertencia, analisis.pendientes) == (1, 1, {"subprograma_sin_grado": 1})
+    assert not analisis.altas[0].completa
+
+
+def test_grado_con_varias_secciones_queda_pendiente_con_advertencia():
+    ctx = contexto(secciones={(ID_COLEGIO, IDS_GRADO[2]): [SECCION_2, 503]})
+    analisis = con_subprograma(fila_con_subprograma(COLEGIO, 2, "Alfabetización", "ROJAS, Ana"), ctx=ctx)
+
+    assert motivos(analisis) == [(2, "advertencia", "seccion_por_elegir")]
+    assert analisis.pendientes == {"seccion_por_elegir": 1}
+    assert (analisis.altas[0].id_programa, analisis.altas[0].id_seccion) == (None, None)
+
+
+def test_el_subprograma_va_despues_de_las_demas_reglas():
+    analisis = con_subprograma(
+        fila_con_subprograma("Otro", 1, "Matemática", "ROJAS, Ana"),
+        fila_con_subprograma(COLEGIO, 1, "Matemática", TextoLiteral("=1+1")),
+    )
+
+    assert motivos(analisis) == [(2, "rechazo", "colegio_no_registrado"), (3, "rechazo", "nombre_con_formula")]
+
+
+def test_la_huella_cambia_con_el_subprograma():
+    alfa = con_subprograma(fila_con_subprograma(COLEGIO, 2, "Alfabetización", "ROJAS, Ana"))
+    comprension = con_subprograma(fila_con_subprograma(COLEGIO, 2, "Comprensión Lectora", "ROJAS, Ana"))
+
+    assert alfa.huella != comprension.huella
+
+
+def test_hojas_con_y_sin_la_columna_en_el_mismo_libro():
+    datos = libro(
+        hoja_con_subprograma("NUEVA", fila_con_subprograma(COLEGIO, 2, "Alfabetización", "ROJAS, Ana")),
+        hoja("VIEJA", fila(COLEGIO, 2, "PAZ, Hugo")),
+    )
+    analisis = clasificar(leer_nomina(datos), contexto())
+
+    assert [a.completa for a in analisis.altas] == [True, False]
+    assert analisis.pendientes == {"sin_columna_subprograma": 1}

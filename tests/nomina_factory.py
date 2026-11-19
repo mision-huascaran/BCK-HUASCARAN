@@ -12,6 +12,8 @@ ENCABEZADOS = ["N°", "II.EE", "GRADO ", "NOMBRES Y APELLIDOS ", "DNI ", "SEXO",
 SIN_DNI = ["N°", " ii.ee ", "Grado", "Nombres  y  Apellidos", "SEXO"]
 EXTRAS = ["M", 21.5, 1.2, 14.9, 22.0, 15.1]
 FILA_VACIA: tuple = ()
+# La plantilla con SUBPROGRAMA, con el encabezado escrito con espacios y en minúsculas.
+CON_SUBPROGRAMA = ["II.EE", "GRADO", " Sub programa ", "NOMBRES Y APELLIDOS", "DNI"]
 
 
 class TextoLiteral(str):
@@ -28,6 +30,15 @@ class Hoja:
 def fila(colegio: Any, grado: Any, nombre: Any, dni: Any = None) -> list[Any]:
     """Una fila con las columnas de `ENCABEZADOS`."""
     return [1, colegio, grado, nombre, dni, *EXTRAS]
+
+
+def fila_con_subprograma(colegio: Any, grado: Any, subprograma: Any, nombre: Any, dni: Any = None) -> list[Any]:
+    """Una fila con las columnas de `CON_SUBPROGRAMA`."""
+    return [colegio, grado, subprograma, nombre, dni]
+
+
+def hoja_con_subprograma(titulo: str, *filas: list[Any]) -> "Hoja":
+    return hoja(titulo, *filas, encabezados=CON_SUBPROGRAMA)
 
 
 def fila_sin_dni(colegio: Any, grado: Any, nombre: Any) -> list[Any]:
