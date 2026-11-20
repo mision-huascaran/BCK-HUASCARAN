@@ -31,6 +31,7 @@ from app.schemas.importacion import ResultadoImportacion, VistaPreviaImportacion
 from app.services import alumno_detalle_service as detalle
 from app.services import alumno_service, importacion_service
 from app.services.importacion_nomina import TAMANO_MAXIMO, archivo_invalido
+from app.services.plantilla_nomina import NOMBRE_ARCHIVO as NOMBRE_PLANTILLA
 from app.services.usuario_service import DOCENTE, SUPERVISOR
 
 router = APIRouter(tags=["alumnos"])
@@ -52,11 +53,12 @@ def _nombre_base(nombre: str) -> str:
 
 NombreArchivo = Annotated[str, AfterValidator(_nombre_base), Query(description="Nombre del archivo elegido")]
 HuellaImportacion = Annotated[str, Query(pattern=r"^[0-9a-f]{64}$", description="`huella` de la vista previa")]
+TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 CUERPO_XLSX = {
     "requestBody": {
         "required": True,
         "content": {
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+            TIPO_XLSX: {
                 "schema": {"type": "string", "format": "binary"}
             }
         },
@@ -113,6 +115,20 @@ async def confirmar_importacion(
     if not creada:
         response.status_code = status.HTTP_200_OK
     return resultado
+
+
+@router.get(
+    "/alumnos/importaciones/plantilla",
+    response_class=Response,
+    responses={200: {"content": {TIPO_XLSX: {"schema": {"type": "string", "format": "binary"}}}}},
+)
+def descargar_plantilla(db: Db, _: SoloSupervisor) -> Response:
+    """La plantilla de Excel de la nómina, con la lista de subprogramas en SUBPROGRAMA."""
+    return Response(
+        content=importacion_service.plantilla(db),
+        media_type=TIPO_XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{NOMBRE_PLANTILLA}"', "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/alumnos/importaciones/{id_importacion}", response_model=ResultadoImportacion)

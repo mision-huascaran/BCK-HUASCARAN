@@ -7,8 +7,8 @@ intervalos de un alumno no se superponen y como mucho uno está vigente.
 
 - Lecturas para Asistencias, Lectura, Rúbrica y Registro de Vuelo: `pertenencia_en`,
   `alumnos_del_grupo` y `alumnos_del_grupo_en_rango`.
-- Escrituras para CU014: `abrir` (crear, activar), `cambiar_grupo` (editar) y `cerrar`
-  (inactivar). Ninguna hace commit.
+- Escrituras para CU014: `abrir` (crear, activar), `abrir_altas` (importar la nómina),
+  `cambiar_grupo` (editar) y `cerrar` (inactivar). Ninguna hace commit.
 Las fechas efectivas nunca son futuras y respetan el orden del historial.
 """
 import uuid
@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import status
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlmodel import Session, col, select
 
 from app.core.errores import ErrorNegocio, error_de_campo
@@ -350,6 +350,30 @@ def abrir(db: Session, alumno: Alumno, desde: date, campo: str, movimiento: Movi
         _no_antes_de(desde, ultima.hasta or ultima.desde, MENSAJE_ANTES_DE_LA_SALIDA, campo)
     db.add(_nuevo_intervalo(alumno, desde, movimiento))
     validar_contra_listas_historicas(db, alumno.id_alumno, alta)
+
+
+def abrir_altas(db: Session, alumnos: list[Alumno], desde: date, campo: str, movimiento: Movimiento) -> None:
+    """El primer intervalo de alumnos recién creados (importación de la nómina): lo mismo
+    que `abrir(..., alta=True)` de cada uno, sin una consulta por alumno. Un alumno nuevo
+    no tiene historial ni figura en ninguna lista, así que solo choca con las listas
+    congeladas de su grupo de fecha posterior a `desde` (409 `conflicto_listas_historicas`)."""
+    if not alumnos:
+        return
+    validar_fecha_efectiva(desde, campo)
+    db.add_all(_nuevo_intervalo(alumno, desde, movimiento) for alumno in alumnos)
+    grupos = {(a.id_colegio, a.id_grado, a.id_seccion) for a in alumnos}
+    conflictos = db.exec(
+        select(Clase).where(
+            col(Clase.lista_congelada_en).is_not(None),
+            Clase.fecha > desde,
+            or_(*(and_(Clase.id_colegio == c, Clase.id_grado == g, Clase.id_seccion == s) for c, g, s in grupos)),
+        )
+    ).all()
+    if conflictos:
+        raise ErrorNegocio(
+            status.HTTP_409_CONFLICT, MENSAJE_CONFLICTO_LISTAS, motivo="conflicto_listas_historicas",
+            extra={"clases": _descripcion(db, list(conflictos))},
+        )
 
 
 def cerrar(db: Session, id_alumno: int, hasta: date, campo: str, movimiento: Movimiento) -> None:
