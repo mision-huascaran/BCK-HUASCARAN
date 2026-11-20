@@ -39,11 +39,39 @@ ANDINO, LEJANO = "Colegio Andino", "Colegio Lejano"
 DESACTUALIZADA = "Los datos cambiaron desde la vista previa. Carga el archivo nuevamente."
 ILEGIBLE = "No se pudo leer el archivo. Verifica que sea un archivo Excel (.xlsx) de hasta 5 MB."
 HOY_MIERCOLES, LUNES = date(2026, 6, 17), date(2026, 6, 15)
+# Números de `colegio_grado.dia_clase`.
+DIA_LUNES, DIA_MIERCOLES = 1, 3
 
 
 @pytest.fixture
 def sup(cabeceras):
     return cabeceras["Supervisor"]
+
+
+@pytest.fixture
+def en_miercoles(reloj):
+    """Fija el reloj ANTES de armar el entorno, como test_asistencias: el calendario y las
+    asignaciones del entorno se calculan desde hoy. Fijarlo después dejaba las fechas del
+    test fuera de los PA del entorno, que seguían la fecha real (403 aula_fuera_de_alcance
+    desde el 13/11/2026). El test lo pide antes que `entorno`."""
+    reloj.fijar(a_las(HOY_MIERCOLES, 9))
+    return reloj
+
+
+def con_clase(db, entorno, dia_clase: int) -> None:
+    """2.º del Andino con clase ese día de la semana."""
+    fila_grado = db.get(ColegioGrado, (entorno.colegios["Andino"].id_colegio, entorno.grados["2.º"]))
+    fila_grado.dia_clase = dia_clase
+    db.add(fila_grado)
+    db.commit()
+
+
+def asistencias_de_ana(client, cabeceras, entorno, fecha: date):
+    ana = entorno.alumnos["ana"]
+    params = {"id_colegio": ana.id_colegio, "id_grado": ana.id_grado, "id_seccion": ana.id_seccion, "fecha": fecha.isoformat()}
+    respuesta = client.get("/asistencias", params=params, headers=cabeceras["Docente"])
+    assert respuesta.status_code == 200, respuesta.text
+    return respuesta.text
 
 
 def previa(client, cabecera, datos, nombre=ARCHIVO):
@@ -289,24 +317,40 @@ def test_los_importados_salen_como_pendientes(client, entorno, sup):
     assert {(a["seccion"], a["programa"], a["ciclo"]) for a in items} == {(None, None, None)}
 
 
-def test_los_importados_no_salen_en_asistencias(reloj, client, db, entorno, cabeceras):
-    reloj.fijar(a_las(HOY_MIERCOLES, 9))
-    fila_grado = db.get(ColegioGrado, (entorno.colegios["Andino"].id_colegio, entorno.grados["2.º"]))
-    fila_grado.dia_clase = 1
-    db.add(fila_grado)
-    db.commit()
-    ana = entorno.alumnos["ana"]
+def test_los_importados_no_salen_en_asistencias(en_miercoles, client, db, entorno, cabeceras):
+    assert entorno.hoy == HOY_MIERCOLES  # El entorno se armó con el reloj fijado.
+    con_clase(db, entorno, DIA_LUNES)
     importar(client, cabeceras["Supervisor"], libro_simple())
 
-    respuesta = client.get(
-        "/asistencias",
-        params={"id_colegio": ana.id_colegio, "id_grado": ana.id_grado, "id_seccion": ana.id_seccion, "fecha": LUNES.isoformat()},
-        headers=cabeceras["Docente"],
-    )
+    texto = asistencias_de_ana(client, cabeceras, entorno, LUNES)
 
-    assert respuesta.status_code == 200, respuesta.text
-    assert "GOMEZ" not in respuesta.text
-    assert "Torres" in respuesta.text
+    assert "GOMEZ" not in texto
+    assert "Torres" in texto
+
+
+def test_en_asistencias_sale_el_importado_con_subprograma_y_no_el_pendiente(en_miercoles, client, db, entorno, cabeceras):
+    # Los dos al 2.º del Andino, que tiene una sola sección: el de subprograma válido entra
+    # con su pertenencia desde hoy; el de la celda vacía queda pendiente.
+    assert entorno.hoy == HOY_MIERCOLES
+    con_clase(db, entorno, DIA_MIERCOLES)
+    datos = libro(
+        hoja_con_subprograma(
+            "ANDINO",
+            fila_con_subprograma(ANDINO, 2, "Comprensión Lectora", "GOMEZ RIOS, Ada", 70000041),
+            fila_con_subprograma(ANDINO, 2, None, "VARGAS, Beto", 70000042),
+        )
+    )
+    importar(client, cabeceras["Supervisor"], datos)
+
+    # La clase de hoy, el mismo día del inicio de su pertenencia.
+    texto = asistencias_de_ana(client, cabeceras, entorno, HOY_MIERCOLES)
+
+    assert "GOMEZ RIOS" in texto
+    assert "VARGAS" not in texto
+    assert "Torres" in texto
+    # El lunes, antes de su pertenencia, todavía no estaba en el grupo.
+    con_clase(db, entorno, DIA_LUNES)
+    assert "GOMEZ RIOS" not in asistencias_de_ana(client, cabeceras, entorno, LUNES)
 
 
 # ── 4. Datos que cambian ────────────────────────────────────────────────────────────
