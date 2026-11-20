@@ -19,7 +19,20 @@ def opciones_de_conexion(url: str) -> dict[str, Any]:
     return {}
 
 
-engine = create_engine(settings.DATABASE_URL, connect_args=opciones_de_conexion(settings.DATABASE_URL))
+def opciones_de_pool(url: str) -> dict[str, Any]:
+    """Pool de conexiones de PostgreSQL: como máximo `DB_POOL_MAX` conexiones (sin
+    desborde) y `pool_pre_ping` para descartar las que cayeron tras reiniciar la BD.
+    SQLite (los tests) rechaza `max_overflow`, así que solo se pasa con PostgreSQL."""
+    if make_url(url).get_backend_name() == "postgresql":
+        return {"pool_size": settings.DB_POOL_MAX, "max_overflow": 0, "pool_pre_ping": True}
+    return {}
+
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args=opciones_de_conexion(settings.DATABASE_URL),
+    **opciones_de_pool(settings.DATABASE_URL),
+)
 
 
 def get_db() -> Generator[Session, None, None]:

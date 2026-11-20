@@ -907,14 +907,34 @@ tenga el grupo completo.
 
 En el historial, `accion` es un código (`crear` | `editar` | `activar` | `inactivar` | `importar`) que el front
 traduce al verbo de CU014; `rol` es el nombre del rol del autor ("Docente", "Supervisor"); en `crear` el arreglo
-`cambios` llega vacío; en `importar` llega `[{ "campo": "Archivo", "anterior": null, "nuevo": "nomina.xlsx" }]`.
+`cambios` llega vacío; en `importar` llega `[{ "campo": "Archivo", "anterior": null, "nuevo": "nomina.xlsx" }]` y,
+si el alumno se importó con la pertenencia completa, además `{ "campo": "Fecha efectiva", "anterior": null, "nuevo":
+"DD/MM/AAAA" }`, como en `crear`.
 
 ---
 
 ## Importación de nómina (CU014)
 
 Solo el Supervisor (Docente y Directivo: `403 sin_permiso`). Es exclusivamente en línea, no requiere actividad de
-trabajo y no se guarda como operación pendiente. Crea alumnos activos con la pertenencia pendiente.
+trabajo y no se guarda como operación pendiente. Crea alumnos activos.
+
+**Subprograma.** La columna `SUBPROGRAMA` es opcional (las plantillas anteriores no la traen). Se valida como en
+`POST /alumnos`: un valor del catálogo sin distinguir mayúsculas ni tildes, que el colegio ofrezca y compatible con
+el grado (en 1.º, solo Alfabetización). Si colegio, grado y subprograma son válidos y el grado tiene una sola sección
+activa, el alumno se crea con subprograma, sección e intervalo de pertenencia desde **hoy en Lima** (fecha del
+servidor, nunca la del navegador). Si no (sin la columna, celda vacía, sin grado reconocido o con varias secciones),
+queda con la pertenencia pendiente.
+
+**Nombres.** Nombres y apellidos (ya separados) siguen la regla del formulario de Alumnos, documentada en
+`app/core/nombre_persona.py`: hasta 60 caracteres cada uno; solo letras, números, espacios, apóstrofo y guion, sin
+empezar ni terminar con apóstrofo o guion. Una celda que empieza con `=`, `+`, `-`, `@`, tabulador o retorno de carro,
+o que no es texto, se rechaza.
+
+### `GET /alumnos/importaciones/plantilla`
+
+`200` con el `.xlsx` (`Content-Disposition: attachment; filename="plantilla_nomina.xlsx"`): una hoja con los
+encabezados `II.EE`, `GRADO`, `SUBPROGRAMA`, `NOMBRES Y APELLIDOS` y `DNI`, y una lista desplegable en `SUBPROGRAMA`
+con los nombres del catálogo `programa`. Sin filas de ejemplo.
 
 **El archivo viaja como cuerpo crudo**, sin `FormData`, y su nombre en el query. El backend no mira el
 `Content-Type`: la validez se decide abriendo el archivo.
@@ -943,6 +963,11 @@ importar en este archivo."):
 {
   "listos": 280, "con_advertencia": 31, "no_importadas": 63,
   "huella": "<64 hex>",
+  "pendientes": 12,
+  "pendientes_por_motivo": [
+    { "motivo": "subprograma_vacio", "cantidad": 10, "detalle": "La celda SUBPROGRAMA está vacía." },
+    { "motivo": "seccion_por_elegir", "cantidad": 2, "detalle": "Su grado tiene varias secciones: hay que elegirla." }
+  ],
   "observaciones": [
     { "hoja": "PARIACACA", "fila": 2, "tipo": "rechazo", "motivo": "colegio_no_registrado", "detalle": "Colegio no registrado." },
     { "hoja": "AMASHCA", "fila": 9, "tipo": "advertencia", "motivo": "grado_no_reconocido", "detalle": "Grado no reconocido. Se importará sin grado." },
@@ -953,6 +978,9 @@ importar en este archivo."):
 
 - `listos`: filas importables, incluidas las que tienen advertencias. `con_advertencia`: importables con al menos
   una advertencia. `no_importadas`: rechazadas. Una hoja omitida no suma en `no_importadas`.
+- `pendientes`: de los `listos`, los que quedarán con la pertenencia pendiente; `pendientes_por_motivo`, cuántos por
+  cada motivo (`sin_columna_subprograma`, `subprograma_vacio`, `subprograma_sin_grado`, `seccion_por_elegir`), en ese
+  orden y sin los que no tienen ninguno.
 - `observaciones`: todas, sin paginar (el front pagina de a 40), por orden de hoja y fila. `fila` es el número de
   fila de Excel; una fila importable puede traer varias. El front decide por `motivo`.
 
@@ -961,6 +989,15 @@ importar en este archivo."):
 | `colegio_no_registrado` | `rechazo` | Colegio no registrado. |
 | `dni_repetido` | `rechazo` | DNI repetido. |
 | `alumno_ya_registrado` | `rechazo` | Alumno ya registrado en el colegio. |
+| `nombre_no_es_texto` | `rechazo` | Nombre no válido: la celda no es un texto. |
+| `nombre_con_formula` | `rechazo` | Nombre no válido: empieza con =, +, -, @, tabulador o retorno de carro. |
+| `nombre_demasiado_largo` | `rechazo` | Nombre no válido: los nombres y los apellidos pueden tener hasta 60 caracteres cada uno. |
+| `nombre_no_valido` | `rechazo` | Nombre no válido: usa solo letras, números, espacios, apóstrofo y guion, sin empezar ni terminar con apóstrofo o guion. |
+| `subprograma_no_valido` | `rechazo` | Subprograma no válido. Elige uno de la lista: Alfabetización o Comprensión Lectora. |
+| `programa_no_ofrecido` | `rechazo` | El colegio no ofrece ese subprograma. |
+| `primer_grado_solo_alfabetizacion` | `rechazo` | En 1.º grado todos los alumnos pertenecen a Alfabetización. |
+| `subprograma_sin_grado` | `advertencia` | Subprograma sin grado reconocido. Se importará con la pertenencia pendiente. |
+| `seccion_por_elegir` | `advertencia` | El grado tiene varias secciones. Se importará con la pertenencia pendiente: elige su sección después. |
 | `grado_no_reconocido` | `advertencia` | Grado no reconocido. Se importará sin grado. |
 | `dni_no_valido` | `advertencia` | DNI no válido. Se importará sin DNI. |
 | `nombre_sin_separar` | `advertencia` | Nombre sin separar. Revisa los nombres y apellidos después de importar. |
@@ -999,7 +1036,8 @@ alumnos para importar en este archivo.").
 - El `id_importacion` es un UUID que el front genera **cuando el Supervisor elige el archivo**. Un archivo nuevo lleva
   un id nuevo.
 - La vista previa no se guarda en el servidor. La confirmación manda la `huella` recibida; si algo cambió (un colegio
-  inactivado, un grado retirado, un alumno nuevo con ese DNI o ese nombre), la huella ya no coincide.
+  inactivado, un grado retirado, un alumno nuevo con ese DNI o ese nombre, una sección nueva en el grado), la huella
+  ya no coincide.
 - **Sin respuesta al confirmar:** al recuperar la conexión, consultar `GET /alumnos/importaciones/{id_importacion}`. Con
   `200`, la importación se aplicó: cerrar el modal e informar el resultado. Con `404`, no se aplicó: habilitar de
   nuevo "Confirmar importación" con el mismo id.

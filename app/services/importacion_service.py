@@ -1,8 +1,12 @@
 """Importación de la nómina de alumnos (CU014): vista previa, confirmación y consulta.
 
 La vista previa no escribe nada ni se guarda en el servidor: su huella resume el análisis
-y la confirmación vuelve a analizar el archivo y exige la misma huella. Los alumnos
-importados quedan con la pertenencia pendiente.
+y la confirmación vuelve a analizar el archivo y exige la misma huella.
+
+Un alumno con colegio, grado y subprograma válidos (y una sola sección activa en su grado)
+se crea con su pertenencia completa, desde hoy en Lima (`hoy_lima`, nunca la fecha del
+navegador), como en "Nuevo alumno"; los demás quedan con la pertenencia pendiente. El
+historial registra la importación con el archivo y, si la tiene, la fecha de pertenencia.
 """
 import uuid
 from collections import defaultdict
@@ -15,10 +19,28 @@ from sqlmodel import Session, col, select
 from app.core.errores import ErrorNegocio
 from app.core.tiempo import ahora_utc, hoy_lima
 from app.core.texto import nombre_comparable
-from app.models.organizacion import Alumno, Colegio, ColegioGrado, Grado, ImportacionAlumnos, Usuario
-from app.schemas.importacion import ObservacionImportacion, ResultadoImportacion, VistaPreviaImportacion
+from app.models.organizacion import (
+    Alumno,
+    Colegio,
+    ColegioGrado,
+    ColegioPrograma,
+    Grado,
+    ImportacionAlumnos,
+    Programa,
+    Seccion,
+    Usuario,
+)
+from app.schemas.importacion import (
+    ObservacionImportacion,
+    PendientesPorMotivo,
+    ResultadoImportacion,
+    VistaPreviaImportacion,
+)
+from app.services import pertenencia
 from app.services.auditoria import IMPORTAR, registrar_auditoria
+from app.services.plantilla_nomina import generar_plantilla
 from app.services.importacion_nomina import (
+    DETALLES_PENDIENTE,
     Analisis,
     Contexto,
     Nomina,
@@ -35,6 +57,7 @@ MENSAJE_DESACTUALIZADA = "Los datos cambiaron desde la vista previa. Carga el ar
 MENSAJE_NO_ENCONTRADA = "No se encontró la importación."
 MENSAJE_EXISTENTE = "Ya existe una importación de otro usuario con ese identificador."
 CAMPO_ARCHIVO = "archivo"
+CAMPO_PERTENECE_DESDE = "pertenece_desde"
 TABLA_ALUMNO = "alumno"
 
 
@@ -63,7 +86,23 @@ def _contexto(db: Session, nomina: Nomina) -> Contexto:
         select(ColegioGrado.id_colegio, ColegioGrado.id_grado).where(col(ColegioGrado.id_colegio).in_(involucrados))
     ).all():
         grados_por_colegio[id_colegio].add(id_grado)
-    id_grado_por_numero = {leer_grado(g.nombre).valor: g.id_grado for g in db.exec(select(Grado)).all()}
+    grados = db.exec(select(Grado)).all()
+    id_grado_por_numero = {leer_grado(g.nombre).valor: g.id_grado for g in grados}
+
+    programas = db.exec(select(Programa)).all()
+    programas_por_colegio: dict[int, set[int]] = defaultdict(set)
+    for id_colegio, id_programa in db.exec(
+        select(ColegioPrograma.id_colegio, ColegioPrograma.id_programa)
+        .where(col(ColegioPrograma.id_colegio).in_(involucrados))
+    ).all():
+        programas_por_colegio[id_colegio].add(id_programa)
+    secciones: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for id_colegio, id_grado, id_seccion in db.exec(
+        select(Seccion.id_colegio, Seccion.id_grado, Seccion.id_seccion)
+        .where(col(Seccion.id_colegio).in_(involucrados), col(Seccion.activo).is_(True))
+        .order_by(Seccion.id_seccion)
+    ).all():
+        secciones[(id_colegio, id_grado)].append(id_seccion)
 
     alumnos: dict[tuple[int, tuple[str, ...]], list[Optional[str]]] = defaultdict(list)
     for id_colegio, apellidos, nombres, dni in db.exec(
@@ -73,7 +112,14 @@ def _contexto(db: Session, nomina: Nomina) -> Contexto:
         alumnos[(id_colegio, clave_de_nombre(apellidos, nombres))].append(dni)
 
     dnis_existentes = set(db.exec(select(Alumno.dni).where(col(Alumno.dni).in_(set(dnis_de(nomina))))).all())
-    return Contexto(colegios, grados_por_colegio, id_grado_por_numero, dnis_existentes, alumnos)
+    return Contexto(
+        colegios, grados_por_colegio, id_grado_por_numero, dnis_existentes, alumnos,
+        programas={nombre_comparable(p.nombre): p.id_programa for p in programas},
+        programas_por_colegio=programas_por_colegio,
+        nombre_grado={g.id_grado: g.nombre for g in grados},
+        nombre_programa={p.id_programa: p.nombre for p in programas},
+        secciones=secciones,
+    )
 
 
 def _analizar(db: Session, datos: bytes) -> Analisis:
@@ -89,11 +135,22 @@ def vista_previa(db: Session, datos: bytes) -> VistaPreviaImportacion:
         con_advertencia=analisis.con_advertencia,
         no_importadas=analisis.no_importadas,
         huella=analisis.huella,
+        pendientes=sum(analisis.pendientes.values()),
+        pendientes_por_motivo=[
+            PendientesPorMotivo(motivo=motivo, cantidad=analisis.pendientes[motivo], detalle=detalle)
+            for motivo, detalle in DETALLES_PENDIENTE.items()
+            if analisis.pendientes[motivo]
+        ],
         observaciones=[
             ObservacionImportacion(hoja=o.hoja, fila=o.fila, tipo=o.tipo, motivo=o.motivo, detalle=o.detalle)
             for o in analisis.observaciones
         ],
     )
+
+
+def plantilla(db: Session) -> bytes:
+    """La plantilla de la nómina, con los subprogramas del catálogo en el orden del catálogo."""
+    return generar_plantilla(list(db.exec(select(Programa.nombre).order_by(Programa.id_programa)).all()))
 
 
 # ── Consulta ────────────────────────────────────────────────────────────────────────
@@ -146,16 +203,24 @@ def _registrar(
     alumnos = [
         Alumno(
             nombres=a.nombres, apellidos=a.apellidos, dni=a.dni, id_colegio=a.id_colegio, id_grado=a.id_grado,
-            id_importacion=id_importacion, fecha_registro=hoy, activo=True, creado_por=actor.id_usuario, creado_en=ahora,
+            id_seccion=a.id_seccion, id_programa_actual=a.id_programa, id_importacion=id_importacion,
+            fecha_registro=hoy, activo=True, creado_por=actor.id_usuario, creado_en=ahora,
         )
         for a in analisis.altas
     ]
     db.add_all(alumnos)
     db.flush()
+    completos = [alumno for alumno, alta in zip(alumnos, analisis.altas, strict=True) if alta.completa]
+    pertenencia.abrir_altas(db, completos, hoy, CAMPO_PERTENECE_DESDE, pertenencia.Movimiento(actor.id_usuario, ahora))
+    ids_completos = {alumno.id_alumno for alumno in completos}
     for alumno in alumnos:
+        # Como en "Nuevo alumno": el campo virtual de la pertenencia lleva la fecha efectiva.
+        cambios = {CAMPO_ARCHIVO: (None, nombre_archivo)}
+        if alumno.id_alumno in ids_completos:
+            cambios[pertenencia.CAMPO_AUDITORIA] = (None, hoy)
         registrar_auditoria(
             db, tabla=TABLA_ALUMNO, id_registro=alumno.id_alumno, accion=IMPORTAR,
-            cambios={CAMPO_ARCHIVO: (None, nombre_archivo)}, id_usuario=actor.id_usuario, fecha=ahora, id_actividad=None,
+            cambios=cambios, id_usuario=actor.id_usuario, fecha=ahora, id_actividad=None,
         )
     return importacion
 
